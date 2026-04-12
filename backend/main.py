@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.routes import auth as auth_routes
-from app.db.session import get_db
+from app.shared.db.session import get_db
 
 app = FastAPI(title="API", version="0.1.0")
 

@@ -5,9 +5,10 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
-from app.models.user import User
-from app.core.security import parse_user_id_from_token
+from app.domain.user import repository as user_repository
+from app.domain.user.entity import User
+from app.shared.core.security import parse_user_id_from_token
+from app.shared.db.session import get_db
 
 http_bearer = HTTPBearer()
 
@@ -22,7 +23,7 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效或过期的令牌",
         )
-    user = db.get(User, uid)
+    user = user_repository.get_by_id(db, uid)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
