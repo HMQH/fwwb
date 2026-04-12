@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { forwardRef, useState, type ReactNode } from "react";
 import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
+  TextInput as RNTextInput,
   type TextInputProps,
   View,
 } from "react-native";
@@ -11,33 +12,42 @@ import {
 import { fontFamily, palette, radius } from "@/shared/theme";
 
 type AuthInputProps = TextInputProps & {
-  label: string;
+  label?: string;
   hint?: string;
   error?: string;
   accessory?: ReactNode;
+  leadingIcon?: keyof typeof MaterialCommunityIcons.glyphMap;
 };
 
-export function AuthInput({
-  label,
-  hint,
-  error,
-  accessory,
-  onFocus,
-  onBlur,
-  ...props
-}: AuthInputProps) {
+export const AuthInput = forwardRef<RNTextInput, AuthInputProps>(function AuthInput(
+  { label, hint, error, accessory, leadingIcon, onFocus, onBlur, ...props },
+  ref
+) {
   const [focused, setFocused] = useState(false);
 
   return (
     <View style={styles.wrapper}>
-      <View style={styles.metaRow}>
-        <Text style={styles.label}>{label}</Text>
-        {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-      </View>
+      {label || hint ? (
+        <View style={styles.metaBlock}>
+          {label ? <Text style={styles.label}>{label}</Text> : null}
+          {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+        </View>
+      ) : null}
 
       <View style={[styles.field, focused && styles.fieldFocused, !!error && styles.fieldError]}>
-        <TextInput
+        {leadingIcon ? (
+          <View style={styles.leadingIcon}>
+            <MaterialCommunityIcons
+              name={leadingIcon}
+              size={18}
+              color={focused ? palette.accentStrong : palette.lineStrong}
+            />
+          </View>
+        ) : null}
+
+        <RNTextInput
           {...props}
+          ref={ref}
           onFocus={(event) => {
             setFocused(true);
             onFocus?.(event);
@@ -47,9 +57,9 @@ export function AuthInput({
             onBlur?.(event);
           }}
           style={styles.input}
-          placeholderTextColor="#8b8d87"
-          selectionColor={palette.accent}
-          cursorColor={palette.accent}
+          placeholderTextColor={palette.inkSoft}
+          selectionColor={palette.accentStrong}
+          cursorColor={palette.accentStrong}
         />
 
         {accessory ? <View style={styles.accessory}>{accessory}</View> : null}
@@ -58,7 +68,9 @@ export function AuthInput({
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
-}
+});
+
+AuthInput.displayName = "AuthInput";
 
 export function TogglePill({
   label,
@@ -68,7 +80,10 @@ export function TogglePill({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
+    >
       <Text style={styles.toggleLabel}>{label}</Text>
     </Pressable>
   );
@@ -78,49 +93,51 @@ const styles = StyleSheet.create({
   wrapper: {
     gap: 8,
   },
-  metaRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    gap: 12,
+  metaBlock: {
+    gap: 2,
   },
   label: {
     color: palette.ink,
-    fontSize: 14,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: "700",
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
     fontFamily: fontFamily.body,
   },
   hint: {
-    flexShrink: 1,
     color: palette.inkSoft,
     fontSize: 12,
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
   field: {
-    minHeight: 58,
+    minHeight: 56,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: palette.white,
-    paddingHorizontal: 16,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
   },
   fieldFocused: {
     borderColor: palette.accent,
-    backgroundColor: "#fffdf9",
+    backgroundColor: palette.white,
   },
   fieldError: {
-    borderColor: palette.danger,
+    borderColor: palette.accentStrong,
+    backgroundColor: palette.dangerSoft,
+  },
+  leadingIcon: {
+    width: 20,
+    alignItems: "center",
   },
   input: {
     flex: 1,
     color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     paddingVertical: 16,
     fontFamily: fontFamily.body,
   },
@@ -129,27 +146,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   error: {
-    color: palette.danger,
+    color: palette.accentStrong,
     fontSize: 12,
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
   toggle: {
-    minHeight: 34,
+    minHeight: 32,
     borderRadius: radius.pill,
     paddingHorizontal: 12,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: palette.surfaceStrong,
+    backgroundColor: palette.accentSoft,
   },
   togglePressed: {
-    opacity: 0.72,
+    opacity: 0.82,
   },
   toggleLabel: {
     color: palette.accentStrong,
     fontSize: 12,
+    lineHeight: 16,
     fontWeight: "700",
-    letterSpacing: 0.4,
     fontFamily: fontFamily.body,
   },
 });

@@ -1,6 +1,7 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Redirect, useRouter } from "expo-router";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import {
   AuthInput,
@@ -20,6 +21,10 @@ import { fontFamily, palette, radius } from "@/shared/theme";
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const nameRef = useRef<TextInput>(null);
+  const birthDateRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
   const { status, signIn } = useAuth();
 
   const [showPassword, setShowPassword] = useState(false);
@@ -36,7 +41,7 @@ export default function RegisterScreen() {
   const [errors, setErrors] = useState<RegisterFormErrors>({});
 
   if (status === "loading") {
-    return <LoadingScreen label="加载中…" />;
+    return <LoadingScreen label="正在确认账户状态…" />;
   }
 
   if (status === "authenticated") {
@@ -72,7 +77,6 @@ export default function RegisterScreen() {
       });
 
       await signIn(session);
-      router.replace("/");
     } catch (error) {
       setErrors({
         form: error instanceof ApiError ? error.message : "注册失败，请稍后重试",
@@ -84,16 +88,15 @@ export default function RegisterScreen() {
 
   return (
     <AuthShell
-      eyebrow="注册"
       title="创建账户"
-      panelTitle="注册"
-      footer={
-        <View style={styles.footerRow}>
-          <Text style={styles.footerText}>已经有账户？</Text>
-          <Pressable onPress={() => router.replace("/login")}>
-            <Text style={styles.footerLink}>去登录</Text>
-          </Pressable>
-        </View>
+      description="填写基础信息即可开始使用。"
+      headerAction={
+        <Pressable
+          onPress={() => router.replace("/login")}
+          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+        >
+          <MaterialCommunityIcons name="chevron-left" size={22} color={palette.accentStrong} />
+        </Pressable>
       }
     >
       {errors.form ? (
@@ -103,8 +106,7 @@ export default function RegisterScreen() {
       ) : null}
 
       <AuthInput
-        label="手机号"
-        hint="11 位手机号"
+        leadingIcon="cellphone"
         value={values.phone}
         onChangeText={(text) => {
           clearFieldError("phone");
@@ -118,10 +120,12 @@ export default function RegisterScreen() {
         placeholder="请输入手机号"
         maxLength={11}
         returnKeyType="next"
+        onSubmitEditing={() => nameRef.current?.focus()}
       />
 
       <AuthInput
-        label="昵称"
+        ref={nameRef}
+        leadingIcon="account-outline"
         value={values.displayName}
         onChangeText={(text) => {
           clearFieldError("displayName");
@@ -133,11 +137,12 @@ export default function RegisterScreen() {
         textContentType="nickname"
         placeholder="请输入昵称"
         returnKeyType="next"
+        onSubmitEditing={() => birthDateRef.current?.focus()}
       />
 
       <AuthInput
-        label="生日"
-        hint="YYYY-MM-DD"
+        ref={birthDateRef}
+        leadingIcon="calendar-month-outline"
         value={values.birthDate}
         onChangeText={(text) => {
           clearFieldError("birthDate");
@@ -150,14 +155,15 @@ export default function RegisterScreen() {
         keyboardType="number-pad"
         autoCapitalize="none"
         autoCorrect={false}
-        placeholder="例如 1998-04-12"
+        placeholder="请输入生日 YYYY-MM-DD"
         maxLength={10}
         returnKeyType="next"
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
 
       <AuthInput
-        label="密码"
-        hint="至少 8 位"
+        ref={passwordRef}
+        leadingIcon="lock-outline"
         value={values.password}
         onChangeText={(text) => {
           clearFieldError("password");
@@ -170,6 +176,7 @@ export default function RegisterScreen() {
         textContentType="newPassword"
         placeholder="请输入密码"
         returnKeyType="next"
+        onSubmitEditing={() => confirmPasswordRef.current?.focus()}
         accessory={
           <TogglePill
             label={showPassword ? "隐藏" : "显示"}
@@ -179,7 +186,8 @@ export default function RegisterScreen() {
       />
 
       <AuthInput
-        label="确认密码"
+        ref={confirmPasswordRef}
+        leadingIcon="shield-key-outline"
         value={values.passwordConfirm}
         onChangeText={(text) => {
           clearFieldError("passwordConfirm");
@@ -190,7 +198,7 @@ export default function RegisterScreen() {
         autoCapitalize="none"
         autoCorrect={false}
         textContentType="password"
-        placeholder="再次输入密码"
+        placeholder="请再次输入密码"
         returnKeyType="done"
         onSubmitEditing={handleSubmit}
         accessory={
@@ -213,9 +221,11 @@ export default function RegisterScreen() {
         ]}
       >
         <View style={[styles.checkbox, values.agreeTerms && styles.checkboxChecked]}>
-          {values.agreeTerms ? <Text style={styles.checkboxTick}>✓</Text> : null}
+          {values.agreeTerms ? (
+            <MaterialCommunityIcons name="check" size={14} color={palette.inkInverse} />
+          ) : null}
         </View>
-        <Text style={styles.checkboxText}>我已阅读并同意用户协议与隐私政策</Text>
+        <Text style={styles.checkboxText}>我已阅读并同意《用户协议》《隐私政策》</Text>
       </Pressable>
 
       {errors.agreeTerms ? <Text style={styles.checkboxError}>{errors.agreeTerms}</Text> : null}
@@ -229,25 +239,43 @@ export default function RegisterScreen() {
           submitting && styles.primaryButtonDisabled,
         ]}
       >
-        <Text style={styles.primaryButtonText}>
-          {submitting ? "注册中…" : "注册"}
-        </Text>
+        <Text style={styles.primaryButtonText}>{submitting ? "注册中…" : "注册"}</Text>
       </Pressable>
+
+      <View style={styles.footerRow}>
+        <Text style={styles.footerText}>已有账号？</Text>
+        <Pressable onPress={() => router.replace("/login")}>
+          <Text style={styles.footerLink}>返回登录</Text>
+        </Pressable>
+      </View>
     </AuthShell>
   );
 }
 
 const styles = StyleSheet.create({
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  backButtonPressed: {
+    opacity: 0.82,
+  },
   messageBox: {
     borderRadius: radius.md,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    backgroundColor: "#f7e7df",
+    backgroundColor: palette.dangerSoft,
     borderWidth: 1,
-    borderColor: "#e7c0af",
+    borderColor: palette.line,
   },
   messageText: {
-    color: palette.danger,
+    color: palette.accentStrong,
     fontSize: 13,
     lineHeight: 20,
     fontFamily: fontFamily.body,
@@ -256,13 +284,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
   },
   checkboxRowPressed: {
-    opacity: 0.8,
+    opacity: 0.88,
   },
   checkboxRowError: {
-    opacity: 0.95,
+    borderColor: palette.accentStrong,
   },
   checkbox: {
     width: 22,
@@ -278,64 +311,59 @@ const styles = StyleSheet.create({
     borderColor: palette.accent,
     backgroundColor: palette.accent,
   },
-  checkboxTick: {
-    color: palette.white,
-    fontSize: 13,
-    lineHeight: 16,
-    fontWeight: "800",
-  },
   checkboxText: {
     flex: 1,
     color: palette.ink,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   checkboxError: {
-    marginTop: -8,
-    color: palette.danger,
+    marginTop: -6,
+    color: palette.accentStrong,
     fontSize: 12,
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
   primaryButton: {
-    minHeight: 56,
+    minHeight: 54,
     borderRadius: radius.pill,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: palette.accentStrong,
+    backgroundColor: palette.accent,
     paddingHorizontal: 18,
+    marginTop: 4,
   },
   primaryButtonPressed: {
-    opacity: 0.88,
+    opacity: 0.9,
   },
   primaryButtonDisabled: {
-    opacity: 0.56,
+    opacity: 0.6,
   },
   primaryButtonText: {
-    color: palette.white,
-    fontSize: 15,
+    color: palette.inkInverse,
+    fontSize: 16,
     lineHeight: 22,
     fontWeight: "800",
-    letterSpacing: 0.3,
     fontFamily: fontFamily.body,
   },
   footerRow: {
     flexDirection: "row",
+    justifyContent: "center",
     alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
+    gap: 6,
+    paddingTop: 2,
   },
   footerText: {
     color: palette.inkSoft,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   footerLink: {
     color: palette.accentStrong,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },

@@ -1,26 +1,17 @@
 import { memo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { palette, radius } from "@/shared/theme";
-
-const signalRows = Array.from({ length: 6 }, (_, index) => index);
 
 function AuthBackdropComponent() {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <View style={styles.glowTop} />
-      <View style={styles.glowBottom} />
-      <View style={styles.sheetTop} />
-      <View style={styles.sheetBottom} />
-      <View style={styles.ring} />
-
-      <View style={styles.signalGrid}>
-        {signalRows.map((row) => (
-          <View key={row} style={[styles.signalRow, { top: row * 18 }]} />
-        ))}
-      </View>
-
-      <Text style={styles.watermark}>SAFE PASS</Text>
+      <View style={styles.topCircle} />
+      <View style={styles.topPlate} />
+      <View style={styles.topSquare} />
+      <View style={styles.frame} />
+      <View style={styles.bottomCircle} />
+      <View style={styles.bottomPlate} />
     </View>
   );
 }
@@ -28,87 +19,69 @@ function AuthBackdropComponent() {
 export const AuthBackdrop = memo(AuthBackdropComponent);
 
 const styles = StyleSheet.create({
-  glowTop: {
+  topCircle: {
     position: "absolute",
-    top: -110,
-    right: -70,
-    width: 290,
-    height: 290,
+    top: -120,
+    left: -90,
+    width: 260,
+    height: 260,
     borderRadius: 999,
-    backgroundColor: palette.accentSoft,
-    opacity: 0.9,
+    backgroundColor: palette.backgroundMuted,
+    opacity: 0.72,
   },
-  glowBottom: {
+  topPlate: {
     position: "absolute",
-    bottom: -130,
-    left: -80,
-    width: 280,
-    height: 280,
-    borderRadius: 999,
-    backgroundColor: palette.warmSoft,
-    opacity: 0.75,
-  },
-  ring: {
-    position: "absolute",
-    bottom: 64,
-    right: -18,
-    width: 132,
-    height: 132,
-    borderRadius: 999,
+    top: 28,
+    right: -36,
+    width: 220,
+    height: 116,
+    borderRadius: 40,
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: palette.lineStrong,
-    opacity: 0.26,
+    borderColor: palette.line,
+    transform: [{ rotate: "-10deg" }],
+    opacity: 0.95,
   },
-  sheetTop: {
+  topSquare: {
     position: "absolute",
-    top: 100,
-    left: -36,
-    width: 160,
+    top: 78,
+    left: 24,
+    width: 76,
+    height: 76,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceStrong,
+    opacity: 0.72,
+  },
+  frame: {
+    position: "absolute",
+    top: 92,
+    right: 28,
+    width: 118,
+    height: 118,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: "rgba(255,255,255,0.5)",
+  },
+  bottomCircle: {
+    position: "absolute",
+    right: -108,
+    bottom: -148,
+    width: 330,
+    height: 330,
+    borderRadius: 999,
+    backgroundColor: palette.backgroundMuted,
+    opacity: 0.48,
+  },
+  bottomPlate: {
+    position: "absolute",
+    left: -52,
+    bottom: 112,
+    width: 238,
     height: 84,
     borderRadius: radius.xl,
-    backgroundColor: palette.white,
-    borderWidth: 1,
-    borderColor: palette.line,
-    transform: [{ rotate: "-14deg" }],
-    opacity: 0.5,
-  },
-  sheetBottom: {
-    position: "absolute",
-    bottom: 168,
-    right: 36,
-    width: 150,
-    height: 72,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: palette.line,
-    transform: [{ rotate: "12deg" }],
-    opacity: 0.5,
-  },
-  signalGrid: {
-    position: "absolute",
-    top: 172,
-    right: 34,
-    width: 130,
-    height: 100,
-    overflow: "hidden",
-  },
-  signalRow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: palette.lineStrong,
-    opacity: 0.2,
-  },
-  watermark: {
-    position: "absolute",
-    top: 110,
-    right: -48,
-    fontSize: 52,
-    letterSpacing: 8,
-    color: palette.lineStrong,
-    opacity: 0.14,
-    transform: [{ rotate: "90deg" }],
-    fontWeight: "700",
+    backgroundColor: palette.accentSoft,
+    transform: [{ rotate: "-12deg" }],
+    opacity: 0.72,
   },
 });

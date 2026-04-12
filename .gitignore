@@ -30,3 +30,10 @@ Thumbs.db
 others/
 .claude
 skills-lock.json
+
+# 仅忽略仓库根目录的 AGENTS.md（子目录里的 AGENTS.md 不受影响）
+/AGENTS.md
+
+# 用户上传文件（运行时生成；保留 storage/uploads/.gitkeep）
+storage/uploads/*
+!storage/uploads/.gitkeep

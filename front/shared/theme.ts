@@ -1,20 +1,31 @@
 import { Platform } from "react-native";
 
 export const palette = {
-  background: "#f5efe5",
-  surface: "#fbf8f2",
-  surfaceStrong: "#efe5d7",
-  ink: "#202722",
-  inkSoft: "#556159",
-  accent: "#216b58",
-  accentStrong: "#18483d",
-  accentSoft: "#d7e7dd",
-  warm: "#ba7246",
-  warmSoft: "#f2ddd0",
-  line: "#d7ccbf",
-  lineStrong: "#a79d91",
-  danger: "#b15a3c",
-  white: "#fffdf8",
+  background: "#F5F9FF",
+  backgroundDeep: "#EAF3FF",
+  backgroundRaised: "#FFFFFF",
+  backgroundMuted: "#DCEAFF",
+  surface: "#FFFFFF",
+  surfaceSoft: "#F4F8FF",
+  surfaceStrong: "#E8F1FF",
+  ink: "#234A78",
+  inkSoft: "#7C95B4",
+  inkInverse: "#FFFFFF",
+  accent: "#4B8DF8",
+  accentStrong: "#2F70E6",
+  accentSoft: "#E6F0FF",
+  shield: "#93BCFF",
+  shieldSoft: "#D8E8FF",
+  warm: "#4B8DF8",
+  warmSoft: "#E6F0FF",
+  danger: "#2F70E6",
+  dangerSoft: "#EEF5FF",
+  success: "#4B8DF8",
+  successSoft: "#E6F0FF",
+  line: "#D6E4FA",
+  lineStrong: "#9DBBE3",
+  overlay: "rgba(75, 141, 248, 0.14)",
+  white: "#FFFFFF",
 };
 
 export const fontFamily = Platform.select({
@@ -34,19 +45,19 @@ export const fontFamily = Platform.select({
 
 export const radius = {
   sm: 12,
-  md: 20,
-  lg: 28,
-  xl: 38,
+  md: 18,
+  lg: 24,
+  xl: 32,
   pill: 999,
 };
 
 export const panelShadow = {
-  shadowColor: "#5d4733",
-  shadowOpacity: 0.08,
-  shadowRadius: 26,
+  shadowColor: "#ABC9F4",
+  shadowOpacity: 0.18,
+  shadowRadius: 24,
   shadowOffset: {
     width: 0,
-    height: 18,
+    height: 12,
   },
-  elevation: 8,
+  elevation: 10,
 };

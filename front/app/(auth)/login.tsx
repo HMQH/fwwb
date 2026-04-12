@@ -1,6 +1,6 @@
 import { Redirect, useRouter } from "expo-router";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import {
   AuthInput,
@@ -19,6 +19,7 @@ import { fontFamily, palette, radius } from "@/shared/theme";
 
 export default function LoginScreen() {
   const router = useRouter();
+  const passwordRef = useRef<TextInput>(null);
   const { status, signIn } = useAuth();
 
   const [showPassword, setShowPassword] = useState(false);
@@ -30,7 +31,7 @@ export default function LoginScreen() {
   const [errors, setErrors] = useState<LoginFormErrors>({});
 
   if (status === "loading") {
-    return <LoadingScreen label="加载中…" />;
+    return <LoadingScreen label="正在确认账户状态…" />;
   }
 
   if (status === "authenticated") {
@@ -58,7 +59,6 @@ export default function LoginScreen() {
     try {
       const session = await authApi.login(values);
       await signIn(session);
-      router.replace("/");
     } catch (error) {
       setErrors({
         form: error instanceof ApiError ? error.message : "登录失败，请稍后重试",
@@ -69,19 +69,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <AuthShell
-      eyebrow="登录"
-      title="欢迎回来"
-      panelTitle="登录"
-      footer={
-        <View style={styles.footerRow}>
-          <Text style={styles.footerText}>还没有账户？</Text>
-          <Pressable onPress={() => router.push("/register")}>
-            <Text style={styles.footerLink}>去注册</Text>
-          </Pressable>
-        </View>
-      }
-    >
+    <AuthShell title="登录账户" description="">
       {errors.form ? (
         <View style={styles.messageBox}>
           <Text style={styles.messageText}>{errors.form}</Text>
@@ -89,8 +77,7 @@ export default function LoginScreen() {
       ) : null}
 
       <AuthInput
-        label="手机号"
-        hint="11 位手机号"
+        leadingIcon="account-outline"
         value={values.phone}
         onChangeText={(text) => {
           clearFieldError("phone");
@@ -104,10 +91,12 @@ export default function LoginScreen() {
         placeholder="请输入手机号"
         maxLength={11}
         returnKeyType="next"
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
 
       <AuthInput
-        label="密码"
+        ref={passwordRef}
+        leadingIcon="lock-outline"
         value={values.password}
         onChangeText={(text) => {
           clearFieldError("password");
@@ -138,10 +127,15 @@ export default function LoginScreen() {
           submitting && styles.primaryButtonDisabled,
         ]}
       >
-        <Text style={styles.primaryButtonText}>
-          {submitting ? "登录中…" : "登录"}
-        </Text>
+        <Text style={styles.primaryButtonText}>{submitting ? "登录中…" : "登录"}</Text>
       </Pressable>
+
+      <View style={styles.footerRow}>
+        <Text style={styles.footerText}>还没有账号？</Text>
+        <Pressable onPress={() => router.push("/register")}>
+          <Text style={styles.footerLink}>注册</Text>
+        </Pressable>
+      </View>
     </AuthShell>
   );
 }
@@ -151,54 +145,55 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    backgroundColor: "#f7e7df",
+    backgroundColor: palette.dangerSoft,
     borderWidth: 1,
-    borderColor: "#e7c0af",
+    borderColor: palette.line,
   },
   messageText: {
-    color: palette.danger,
+    color: palette.accentStrong,
     fontSize: 13,
     lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   primaryButton: {
-    minHeight: 56,
+    minHeight: 54,
     borderRadius: radius.pill,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: palette.ink,
+    backgroundColor: palette.accent,
     paddingHorizontal: 18,
+    marginTop: 4,
   },
   primaryButtonPressed: {
-    opacity: 0.88,
+    opacity: 0.9,
   },
   primaryButtonDisabled: {
-    opacity: 0.56,
+    opacity: 0.6,
   },
   primaryButtonText: {
-    color: palette.white,
-    fontSize: 15,
+    color: palette.inkInverse,
+    fontSize: 16,
     lineHeight: 22,
     fontWeight: "800",
-    letterSpacing: 0.3,
     fontFamily: fontFamily.body,
   },
   footerRow: {
     flexDirection: "row",
+    justifyContent: "center",
     alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
+    gap: 6,
+    paddingTop: 2,
   },
   footerText: {
     color: palette.inkSoft,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   footerLink: {
     color: palette.accentStrong,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },

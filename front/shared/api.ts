@@ -1,17 +1,9 @@
-import { Platform } from "react-native";
-
-const fallbackApiBase =
-  Platform.select({
-    android: "http://10.0.2.2:8000",
-    default: "http://127.0.0.1:8000",
-  }) ?? "http://127.0.0.1:8000";
+const fallbackApiBase = "http://127.0.0.1:8000";
 
 export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? fallbackApiBase).replace(
   /\/+$/,
   ""
 );
-
-export const API_BASE_IS_DEFAULT = !process.env.EXPO_PUBLIC_API_BASE_URL;
 
 export class ApiError extends Error {
   constructor(
@@ -23,6 +15,8 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
+
+const REQUEST_TIMEOUT_MS = 12000;
 
 function tryParseJson(raw: string) {
   try {
@@ -69,6 +63,9 @@ function getErrorMessage(payload: unknown, fallback: string) {
 
 export async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   headers.set("Accept", "application/json");
 
   if (!(init.body instanceof FormData)) {
@@ -83,6 +80,7 @@ export async function request<T>(path: string, init: RequestInit = {}, token?: s
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers,
+      signal: controller.signal,
     });
 
     const raw = await response.text();
@@ -102,6 +100,13 @@ export async function request<T>(path: string, init: RequestInit = {}, token?: s
       throw error;
     }
 
-    throw new ApiError(0, `无法连接服务器，请检查接口地址：${API_BASE}`, error);
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "请求超时，请检查网络后重试"
+        : "当前服务暂时不可用，请稍后再试";
+
+    throw new ApiError(0, message, error);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

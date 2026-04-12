@@ -1,65 +1,55 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   Animated,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthBackdrop } from "./AuthBackdrop";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
-type HighlightItem = {
-  eyebrow: string;
-  title: string;
-  detail: string;
-};
+const antiFraudLogo = require("../../../assets/images/anti-fraud-logo.png");
 
 type AuthShellProps = {
-  eyebrow: string;
   title: string;
   description?: string;
-  panelTitle: string;
-  panelDescription?: string;
-  highlights?: HighlightItem[];
   children: ReactNode;
   footer?: ReactNode;
+  headerAction?: ReactNode;
 };
 
 export function AuthShell({
-  eyebrow,
   title,
   description,
-  panelTitle,
-  panelDescription,
-  highlights,
   children,
   footer,
+  headerAction,
 }: AuthShellProps) {
-  const { width } = useWindowDimensions();
-  const isWide = width >= 980;
   const reveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(reveal, {
       toValue: 1,
-      duration: 650,
+      duration: 360,
       useNativeDriver: true,
     }).start();
   }, [reveal]);
 
-  const heroAnimation = useMemo(
+  const revealStyle = useMemo(
     () => ({
       opacity: reveal,
       transform: [
         {
           translateY: reveal.interpolate({
             inputRange: [0, 1],
-            outputRange: [28, 0],
+            outputRange: [18, 0],
           }),
         },
       ],
@@ -71,60 +61,46 @@ export function AuthShell({
     <View style={styles.root}>
       <AuthBackdrop />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.flex}
-      >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: width >= 640 ? 28 : 18 },
-          ]}
-          showsVerticalScrollIndicator={false}
+      <SafeAreaView style={styles.flex} edges={["top", "bottom"]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.flex}
         >
-          <Animated.View style={[styles.shell, isWide && styles.shellWide, heroAnimation]}>
-            <View style={[styles.editorial, isWide && styles.editorialWide]}>
-              <View style={styles.eyebrowRow}>
-                <Text style={styles.eyebrow}>{eyebrow}</Text>
-                <View style={styles.eyebrowDot} />
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <Animated.View style={[styles.shell, revealStyle]}>
+              <View style={styles.topBar}>
+                <View style={styles.actionSlot}>{headerAction}</View>
               </View>
 
-              <Text style={styles.title}>{title}</Text>
-              {description ? <Text style={styles.description}>{description}</Text> : null}
-
-              {highlights && highlights.length > 0 ? (
-                <View style={styles.highlightList}>
-                  {highlights.map((item, index) => (
-                    <View
-                      key={`${item.eyebrow}-${item.title}`}
-                      style={[styles.highlightRow, index === 0 && styles.highlightRowFirst]}
-                    >
-                      <Text style={styles.highlightEyebrow}>{item.eyebrow}</Text>
-                      <View style={styles.highlightContent}>
-                        <Text style={styles.highlightTitle}>{item.title}</Text>
-                        <Text style={styles.highlightDetail}>{item.detail}</Text>
-                      </View>
-                    </View>
-                  ))}
+              <View style={styles.logoBlock}>
+                <View style={styles.logoRing}>
+                  <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
                 </View>
-              ) : null}
-            </View>
+                <Text style={styles.brandName}>反诈守护</Text>
+                <View style={styles.pageTag}>
+                  <MaterialCommunityIcons
+                    name="shield-check-outline"
+                    size={14}
+                    color={palette.accentStrong}
+                  />
+                  <Text style={styles.pageTagText}>{title}</Text>
+                </View>
+                {description ? <Text style={styles.description}>{description}</Text> : null}
+              </View>
 
-            <View style={[styles.panel, isWide && styles.panelWide]}>
-              <View style={styles.panelSeal} />
-              <Text style={styles.panelTitle}>{panelTitle}</Text>
-              {panelDescription ? (
-                <Text style={styles.panelDescription}>{panelDescription}</Text>
-              ) : null}
+              <View style={styles.panel}>
+                <View style={styles.formStack}>{children}</View>
 
-              <View style={styles.formStack}>{children}</View>
-
-              {footer ? <View style={styles.footer}>{footer}</View> : null}
-            </View>
-          </Animated.View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+                {footer ? <View style={styles.footer}>{footer}</View> : null}
+              </View>
+            </Animated.View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </View>
   );
 }
@@ -140,151 +116,89 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingVertical: 28,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   shell: {
     width: "100%",
-    maxWidth: 1180,
+    maxWidth: 420,
     alignSelf: "center",
-    gap: 24,
+    gap: 18,
   },
-  shellWide: {
-    flexDirection: "row",
-    alignItems: "stretch",
-    gap: 34,
+  topBar: {
+    minHeight: 40,
+    justifyContent: "center",
   },
-  editorial: {
-    gap: 22,
+  actionSlot: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
   },
-  editorialWide: {
-    flex: 1,
-    paddingTop: 36,
-  },
-  eyebrowRow: {
-    flexDirection: "row",
+  logoBlock: {
     alignItems: "center",
     gap: 10,
+    paddingHorizontal: 8,
   },
-  eyebrow: {
-    color: palette.accentStrong,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 2.2,
-    textTransform: "uppercase",
-    fontFamily: fontFamily.display,
-  },
-  eyebrowDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: palette.warm,
-  },
-  title: {
-    maxWidth: 480,
-    color: palette.ink,
-    fontSize: 42,
-    lineHeight: 48,
-    fontWeight: "800",
-    letterSpacing: -1.2,
-    fontFamily: fontFamily.display,
-  },
-  description: {
-    maxWidth: 360,
-    color: palette.inkSoft,
-    fontSize: 16,
-    lineHeight: 26,
-    fontFamily: fontFamily.body,
-  },
-  highlightList: {
-    gap: 14,
-  },
-  highlightRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 16,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderColor: palette.line,
-  },
-  highlightRowFirst: {
-    paddingTop: 0,
-    borderTopWidth: 0,
-  },
-  highlightEyebrow: {
-    width: 54,
-    color: palette.lineStrong,
-    fontSize: 11,
-    lineHeight: 16,
-    letterSpacing: 1.8,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    fontFamily: fontFamily.display,
-  },
-  highlightContent: {
-    flex: 1,
-    gap: 3,
-  },
-  highlightTitle: {
-    color: palette.ink,
-    fontSize: 17,
-    lineHeight: 24,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  highlightDetail: {
-    color: palette.inkSoft,
-    fontSize: 14,
-    lineHeight: 22,
-    fontFamily: fontFamily.body,
-  },
-  panel: {
-    position: "relative",
-    width: "100%",
-    maxWidth: 460,
-    padding: 22,
-    gap: 18,
-    borderRadius: radius.xl,
+  logoRing: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: palette.white,
     borderWidth: 1,
     borderColor: palette.line,
-    backgroundColor: palette.surface,
-    alignSelf: "flex-start",
-    overflow: "hidden",
     ...panelShadow,
   },
-  panelWide: {
-    flexBasis: 460,
+  logo: {
+    width: 84,
+    height: 84,
   },
-  panelSeal: {
-    position: "absolute",
-    top: -16,
-    right: -8,
-    width: 92,
-    height: 92,
-    borderRadius: 999,
-    backgroundColor: palette.accentSoft,
-    opacity: 0.85,
-  },
-  panelTitle: {
+  brandName: {
     color: palette.ink,
     fontSize: 28,
     lineHeight: 34,
     fontWeight: "800",
-    letterSpacing: -0.5,
     fontFamily: fontFamily.display,
   },
-  panelDescription: {
-    color: palette.inkSoft,
-    fontSize: 14,
-    lineHeight: 22,
+  pageTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: palette.accentSoft,
+  },
+  pageTagText: {
+    color: palette.accentStrong,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
     fontFamily: fontFamily.body,
   },
-  formStack: {
+  description: {
+    maxWidth: 260,
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: "center",
+    fontFamily: fontFamily.body,
+  },
+  panel: {
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
     gap: 16,
+    ...panelShadow,
+  },
+  formStack: {
+    gap: 14,
   },
   footer: {
     marginTop: 4,
-    paddingTop: 18,
-    borderTopWidth: 1,
-    borderColor: palette.line,
   },
 });

@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
 import { AuthProvider } from "@/features/auth";
+import { palette } from "@/shared/theme";
 
 export default function RootLayout() {
   return (
@@ -11,7 +12,7 @@ export default function RootLayout() {
         screenOptions={{
           headerShown: false,
           animation: "fade_from_bottom",
-          contentStyle: { backgroundColor: "#f5efe5" },
+          contentStyle: { backgroundColor: palette.background },
         }}
       />
     </AuthProvider>
