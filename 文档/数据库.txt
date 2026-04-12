@@ -1,0 +1,44 @@
+PostgreSQL 数据库设计（登录/注册 + 生日推导角色）
+
+密码123456
+
+————————————————————————————————————————————一、枚举类型
+
+CREATE TYPE role AS ENUM ('child', 'youth', 'elder');
+
+————————————————————————————————————————————
+二、表 users（账号主表）
+
+字段名             类型                 约束/说明
+id                  uuid                 PRIMARY KEY, DEFAULT gen_random_uuid()
+phone               text                 UNIQUE NOT NULL（登录主键，与开发文档一致）
+password_hash       text                 NOT NULL（Argon2id/bcrypt，仅存哈希）
+birth_date          date                 NOT NULL
+role                role                 NOT NULL（由后端根据 birth_date 与「当前日期」计算后写入）
+display_name        text                 NOT NULL（昵称）
+created_at          timestamptz          NOT NULL DEFAULT now()
+updated_at          timestamptz          NOT NULL DEFAULT now()
+
+索引：
+ UNIQUE(phone)
+  INDEX idx_users_age_role ON users(age_role)
+
+业务规则：
+1）注册接口收到 birth_date 后，服务端计算年龄并映射为 age_role，再 INSERT。
+  2）可选：用户修改生日时重新计算 age_role；或每日首次登录时根据 birth_date 重算 age_role（跨18/60 岁生日时角色自动变更）。
+
+————————————————————————————————————————————
+三、表 refresh_tokens（可选，JWT 刷新用）
+
+字段名              类型                 说明
+id                  uuid                 PK
+user_id             uuid                 FK → users(id) ON DELETE CASCADE
+token_hash          text                 UNIQUE NOT NULL
+expires_at          timestamptz          NOT NULL
+revoked_at          timestamptz          NULL
+created_at          timestamptz          NOT NULL DEFAULT now()
+
+索引：user_id；token_hash
+
+若 Demo 阶段仅用长有效期 access_token，可暂不建此表。
+
