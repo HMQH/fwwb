@@ -8,6 +8,8 @@ CREATE TABLE users (
   birth_date date NOT NULL,
   role role NOT NULL,
   display_name text NOT NULL,
+  avatar_url text,
+  guardian_relation text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

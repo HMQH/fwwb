@@ -1,70 +1,56 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Redirect } from "expo-router";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useRouter } from "expo-router";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AuthBackdrop, LoadingScreen, roleMeta, useAuth } from "@/features/auth";
+import { AuthBackdrop, roleMeta, useAuth } from "@/features/auth";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 const antiFraudLogo = require("../../assets/images/anti-fraud-logo.png");
 
-type ActionCard = {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  title: string;
-  detail: string;
-};
-
-const actions: ActionCard[] = [
-  {
-    icon: "message-text-outline",
-    title: "文本检测",
-    detail: "甄别聊天与短信内容",
-  },
-  {
-    icon: "image-outline",
-    title: "图片检测",
-    detail: "核验截图与二维码页面",
-  },
-  {
-    icon: "microphone-outline",
-    title: "语音检测",
-    detail: "识别可疑语音诱导",
-  },
-];
-
-function maskPhone(phone: string) {
-  if (phone.length !== 11) {
-    return phone;
-  }
-
-  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
-}
-
-function getWarnings(role: "child" | "youth" | "elder") {
+function getRecentSummary(role: "child" | "youth" | "elder") {
   if (role === "child") {
     return [
-      "游戏交易和低价代充链接要先核验来源。",
-      "任何要求共享验证码或扫码授权的请求都先暂停。",
+      {
+        title: "游戏交易提醒",
+        detail: "近期应重点关注低价代充、皮肤交易与陌生群聊链接。",
+      },
+      {
+        title: "扫码授权提醒",
+        detail: "遇到索要验证码或要求扫码登录时，先暂停并核验来源。",
+      },
     ];
   }
 
   if (role === "elder") {
     return [
-      "涉及转账、保健投资、紧急借钱时先联系家人确认。",
-      "陌生来电索要验证码、银行卡信息时立即停止操作。",
+      {
+        title: "转账核验提醒",
+        detail: "凡是涉及借钱、理财或保健产品付款，建议先联系家人确认。",
+      },
+      {
+        title: "陌生来电提醒",
+        detail: "对方索要验证码、银行卡信息时，立即停止操作。",
+      },
     ];
   }
 
   return [
-    "兼职返利、贷款解冻、征信修复等话术要优先警惕。",
-    "验证码、屏幕共享、远程协助请求都应先暂停核验。",
+    {
+      title: "高频风险摘要",
+      detail: "兼职返利、贷款解冻、征信修复等话术近期仍是主要风险来源。",
+    },
+    {
+      title: "操作核验摘要",
+      detail: "验证码、屏幕共享、远程协助请求出现时应优先暂停处理。",
+    },
   ];
 }
 
-export default function Index() {
-  const { status, user, signOut } = useAuth();
-  const [signingOut, setSigningOut] = useState(false);
+export default function HomeScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
 
   const currentRole = useMemo(() => {
     if (!user) {
@@ -74,41 +60,22 @@ export default function Index() {
     return roleMeta[user.role];
   }, [user]);
 
-  const warnings = useMemo(() => {
+  const recentSummary = useMemo(() => {
     if (!user) {
       return [];
     }
 
-    return getWarnings(user.role);
+    return getRecentSummary(user.role);
   }, [user]);
 
-  if (status === "loading") {
-    return <LoadingScreen label="正在恢复账户状态…" />;
+  if (!user || !currentRole) {
+    return null;
   }
-
-  if (status === "guest" || !user || !currentRole) {
-    return <Redirect href="/login" />;
-  }
-
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    try {
-      await signOut();
-    } finally {
-      setSigningOut(false);
-    }
-  };
-
-  const accountRows = [
-    { label: "手机号", value: maskPhone(user.phone) },
-    { label: "生日", value: user.birth_date },
-    { label: "守护模式", value: currentRole.label },
-  ];
 
   return (
     <View style={styles.root}>
       <AuthBackdrop />
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.topBar}>
             <View style={styles.brandBlock}>
@@ -117,66 +84,56 @@ export default function Index() {
               </View>
               <View style={styles.brandTextBlock}>
                 <Text style={styles.brandName}>反诈守护</Text>
-                <Text style={styles.brandCaption}>实时风险提醒已开启</Text>
+                <Text style={styles.brandCaption}>首页</Text>
               </View>
             </View>
 
-            <Pressable
-              onPress={handleSignOut}
-              disabled={signingOut}
-              style={({ pressed }) => [
-                styles.exitButton,
-                pressed && styles.buttonPressed,
-                signingOut && styles.buttonDisabled,
-              ]}
-            >
-              <Text style={styles.exitButtonText}>{signingOut ? "退出中…" : "退出"}</Text>
-            </Pressable>
+            <View style={styles.livePill}>
+              <View style={styles.liveDot} />
+              <Text style={styles.livePillText}>实时防护中</Text>
+            </View>
           </View>
 
           <View style={styles.heroCard}>
             <Text style={styles.heroGreeting}>你好，{user.display_name}</Text>
             <Text style={styles.heroRole}>{currentRole.label}</Text>
-            <Text style={styles.heroTone}>{currentRole.tone}</Text>
-            <Text style={styles.heroDetail}>{currentRole.detail}</Text>
+            <Text style={styles.heroDetail}>{currentRole.tone}</Text>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>快速功能</Text>
-            <View style={styles.groupCard}>
-              {actions.map((item, index) => (
-                <View key={item.title} style={[styles.row, index < actions.length - 1 && styles.rowDivider]}>
-                  <View style={styles.rowIconWrap}>
-                    <MaterialCommunityIcons name={item.icon} size={20} color={palette.accentStrong} />
-                  </View>
-                  <View style={styles.rowBody}>
-                    <Text style={styles.rowTitle}>{item.title}</Text>
-                    <Text style={styles.rowDetail}>{item.detail}</Text>
-                  </View>
-                </View>
-              ))}
+          <Pressable
+            style={({ pressed }) => [styles.entryCard, pressed && styles.entryCardPressed]}
+            onPress={() => router.push("/submit")}
+          >
+            <View style={styles.entryIconWrap}>
+              <MaterialCommunityIcons
+                name="layers-triple-outline"
+                size={22}
+                color={palette.accentStrong}
+              />
             </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>账户信息</Text>
-            <View style={styles.groupCard}>
-              {accountRows.map((item, index) => (
-                <View key={item.label} style={[styles.accountRow, index < accountRows.length - 1 && styles.rowDivider]}>
-                  <Text style={styles.accountLabel}>{item.label}</Text>
-                  <Text style={styles.accountValue}>{item.value}</Text>
-                </View>
-              ))}
+            <View style={styles.entryBody}>
+              <Text style={styles.entryTitle}>多模态检测提交</Text>
+              <Text style={styles.entryDetail}>
+                文字（聊天、短信、转账话术）、图片（截图、海报、二维码页面）、语音与视频可一并填写或上传，一次提交至服务端。
+              </Text>
+              <Text style={styles.entryBrief}>与单次检测接口一致，至少提供一种有效内容即可</Text>
             </View>
-          </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color={palette.lineStrong} />
+          </Pressable>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>重点提醒</Text>
+            <Text style={styles.sectionTitle}>最近摘要</Text>
             <View style={styles.groupCard}>
-              {warnings.map((item, index) => (
-                <View key={item} style={[styles.warningRow, index < warnings.length - 1 && styles.rowDivider]}>
-                  <View style={styles.warningDot} />
-                  <Text style={styles.warningText}>{item}</Text>
+              {recentSummary.map((item, index) => (
+                <View
+                  key={item.title}
+                  style={[styles.summaryRow, index < recentSummary.length - 1 && styles.rowDivider]}
+                >
+                  <View style={styles.summaryDot} />
+                  <View style={styles.summaryBody}>
+                    <Text style={styles.summaryTitle}>{item.title}</Text>
+                    <Text style={styles.summaryDetail}>{item.detail}</Text>
+                  </View>
                 </View>
               ))}
             </View>
@@ -198,7 +155,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 28,
+    paddingBottom: 24,
     gap: 18,
   },
   topBar: {
@@ -243,26 +200,29 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
-  exitButton: {
+  livePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.pill,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.line,
   },
-  exitButtonText: {
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: palette.accent,
+  },
+  livePillText: {
     color: palette.accentStrong,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "700",
     fontFamily: fontFamily.body,
-  },
-  buttonPressed: {
-    opacity: 0.82,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
   },
   heroCard: {
     borderRadius: radius.xl,
@@ -285,15 +245,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: fontFamily.body,
   },
-  heroTone: {
-    color: "rgba(255,255,255,0.92)",
-    fontSize: 14,
-    lineHeight: 20,
-    fontFamily: fontFamily.body,
-  },
   heroDetail: {
-    color: "rgba(255,255,255,0.84)",
-    fontSize: 13,
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 14,
     lineHeight: 20,
     fontFamily: fontFamily.body,
   },
@@ -307,6 +261,52 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.display,
   },
+  entryCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    ...panelShadow,
+  },
+  entryCardPressed: {
+    opacity: 0.92,
+  },
+  entryIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: palette.accentSoft,
+  },
+  entryBody: {
+    flex: 1,
+    gap: 2,
+  },
+  entryTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  entryDetail: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: fontFamily.body,
+  },
+  entryBrief: {
+    color: palette.lineStrong,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
   groupCard: {
     borderRadius: radius.lg,
     backgroundColor: palette.surface,
@@ -315,10 +315,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     ...panelShadow,
   },
-  row: {
+  summaryRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    alignItems: "flex-start",
+    gap: 10,
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
@@ -326,71 +326,28 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: palette.line,
   },
-  rowIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: palette.accentSoft,
-  },
-  rowBody: {
-    flex: 1,
-    gap: 2,
-  },
-  rowTitle: {
-    color: palette.ink,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  rowDetail: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: fontFamily.body,
-  },
-  accountRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  accountLabel: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: fontFamily.body,
-  },
-  accountValue: {
-    color: palette.ink,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  warningRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  warningDot: {
+  summaryDot: {
     width: 8,
     height: 8,
     borderRadius: 999,
     backgroundColor: palette.accent,
     marginTop: 6,
   },
-  warningText: {
+  summaryBody: {
     flex: 1,
-    color: palette.inkSoft,
+    gap: 3,
+  },
+  summaryTitle: {
+    color: palette.ink,
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 20,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  summaryDetail: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
 });

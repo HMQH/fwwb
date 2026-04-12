@@ -33,6 +33,8 @@ class User(Base):
     birth_date: Mapped[date] = mapped_column(Date, nullable=False)
     role: Mapped[str] = mapped_column(role_pg, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    guardian_relation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

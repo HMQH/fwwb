@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -20,6 +21,8 @@ const antiFraudLogo = require("../../../assets/images/anti-fraud-logo.png");
 type AuthShellProps = {
   title: string;
   description?: string;
+  /** 为 false 时隐藏顶部 logo、应用名与说明文案，适合分步注册等需腾出空间的页面 */
+  showBranding?: boolean;
   children: ReactNode;
   footer?: ReactNode;
   headerAction?: ReactNode;
@@ -28,10 +31,12 @@ type AuthShellProps = {
 export function AuthShell({
   title,
   description,
+  showBranding = true,
   children,
   footer,
   headerAction,
 }: AuthShellProps) {
+  const { height: windowHeight } = useWindowDimensions();
   const reveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -68,29 +73,41 @@ export function AuthShell({
         >
           <ScrollView
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.scrollContent}
+            keyboardDismissMode="on-drag"
+            contentContainerStyle={[
+              styles.scrollContent,
+              {
+                minHeight: showBranding
+                  ? Math.max(windowHeight * 0.92, 520)
+                  : Math.max(windowHeight * 0.72, 420),
+              },
+            ]}
             showsVerticalScrollIndicator={false}
           >
-            <Animated.View style={[styles.shell, revealStyle]}>
+            <Animated.View
+              style={[styles.shell, showBranding ? revealStyle : undefined, !showBranding && styles.shellCompact]}
+            >
               <View style={styles.topBar}>
                 <View style={styles.actionSlot}>{headerAction}</View>
               </View>
 
-              <View style={styles.logoBlock}>
-                <View style={styles.logoRing}>
-                  <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
+              {showBranding ? (
+                <View style={styles.logoBlock}>
+                  <View style={styles.logoRing}>
+                    <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
+                  </View>
+                  <Text style={styles.brandName}>反诈守护</Text>
+                  <View style={styles.pageTag}>
+                    <MaterialCommunityIcons
+                      name="shield-check-outline"
+                      size={14}
+                      color={palette.accentStrong}
+                    />
+                    <Text style={styles.pageTagText}>{title}</Text>
+                  </View>
+                  {description ? <Text style={styles.description}>{description}</Text> : null}
                 </View>
-                <Text style={styles.brandName}>反诈守护</Text>
-                <View style={styles.pageTag}>
-                  <MaterialCommunityIcons
-                    name="shield-check-outline"
-                    size={14}
-                    color={palette.accentStrong}
-                  />
-                  <Text style={styles.pageTagText}>{title}</Text>
-                </View>
-                {description ? <Text style={styles.description}>{description}</Text> : null}
-              </View>
+              ) : null}
 
               <View style={styles.panel}>
                 <View style={styles.formStack}>{children}</View>
@@ -115,15 +132,19 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: "center",
+    justifyContent: "flex-start",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 12,
+    paddingBottom: 40,
   },
   shell: {
     width: "100%",
     maxWidth: 420,
     alignSelf: "center",
     gap: 18,
+  },
+  shellCompact: {
+    gap: 10,
   },
   topBar: {
     minHeight: 40,

@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _PHONE_RE = re.compile(r"^1\d{10}$")
+GuardianRelation = Literal["self", "parent", "spouse", "child", "relative"]
+UserRole = Literal["child", "youth", "elder"]
 
 
 class RegisterRequest(BaseModel):
@@ -16,6 +19,7 @@ class RegisterRequest(BaseModel):
     password_confirm: str = Field(..., min_length=8, max_length=128)
     birth_date: date
     display_name: str = Field(..., min_length=1, max_length=64)
+    role: UserRole
     agree_terms: bool = False
 
     @field_validator("phone")
@@ -54,6 +58,12 @@ class UserPublic(BaseModel):
     display_name: str
     role: str
     birth_date: date
+    avatar_url: str | None = None
+    guardian_relation: GuardianRelation | None = None
+
+
+class UpdateGuardianRequest(BaseModel):
+    guardian_relation: GuardianRelation
 
 
 class TokenResponse(BaseModel):

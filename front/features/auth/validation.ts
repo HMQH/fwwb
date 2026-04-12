@@ -7,6 +7,7 @@ export type RegisterFormValues = {
   phone: string;
   displayName: string;
   birthDate: string;
+  role: "child" | "youth" | "elder" | "";
   password: string;
   passwordConfirm: string;
   agreeTerms: boolean;
@@ -91,6 +92,10 @@ export function validateRegister(values: RegisterFormValues): RegisterFormErrors
 
   if (!isValidBirthDate(values.birthDate)) {
     errors.birthDate = "请输入合法生日，格式为 YYYY-MM-DD";
+  }
+
+  if (!values.role) {
+    errors.role = "请选择角色";
   }
 
   if (values.password.length < 8) {

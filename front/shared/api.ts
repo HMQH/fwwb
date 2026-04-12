@@ -5,6 +5,18 @@ export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? fallbackApiBase
   ""
 );
 
+export function resolveApiFileUrl(path?: string | null) {
+  if (!path) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -61,10 +73,20 @@ function getErrorMessage(payload: unknown, fallback: string) {
   return fallback;
 }
 
-export async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
+export type RequestExtras = {
+  timeoutMs?: number;
+};
+
+export async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  token?: string,
+  extras?: RequestExtras
+): Promise<T> {
   const headers = new Headers(init.headers);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutMs = extras?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   headers.set("Accept", "application/json");
 

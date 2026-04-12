@@ -1,6 +1,7 @@
 """用户域：注册、登录等业务。"""
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
 from fastapi import HTTPException, status
@@ -10,7 +11,18 @@ from sqlalchemy.orm import Session
 from app.domain.user import repository as user_repository
 from app.domain.user.entity import User
 from app.shared.core.security import create_access_token, hash_password, verify_password
-from app.shared.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserPublic
+from app.shared.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UpdateGuardianRequest,
+    UserPublic,
+)
+from app.shared.storage.upload_paths import (
+    resolved_upload_root,
+    safe_suffix,
+    save_avatar_bytes,
+)
 
 
 def role_from_birth_date(birth: date, today: date | None = None) -> str:
@@ -31,17 +43,48 @@ def _user_public(u: User) -> UserPublic:
         display_name=u.display_name,
         role=u.role,
         birth_date=u.birth_date,
+        avatar_url=u.avatar_url,
+        guardian_relation=u.guardian_relation,
     )
 
 
-def register_user(db: Session, body: RegisterRequest) -> TokenResponse:
-    role = role_from_birth_date(body.birth_date)
+def _default_guardian_relation(role: str) -> str:
+    if role == "child":
+        return "parent"
+    return "self"
+
+
+def register_user(
+    db: Session,
+    body: RegisterRequest,
+    *,
+    avatar_upload: tuple[bytes, str] | None = None,
+    upload_root_cfg: str | None = None,
+) -> TokenResponse:
+    role = body.role
+    user_id = uuid.uuid4()
+    avatar_url: str | None = None
+
+    if avatar_upload and upload_root_cfg:
+        upload_root = resolved_upload_root(upload_root_cfg)
+        upload_root.mkdir(parents=True, exist_ok=True)
+        avatar_bytes, avatar_name = avatar_upload
+        avatar_url = save_avatar_bytes(
+            upload_root=upload_root,
+            user_id=user_id,
+            data=avatar_bytes,
+            suffix=safe_suffix(avatar_name, ".png"),
+        )
+
     user = User(
+        id=user_id,
         phone=body.phone,
         password_hash=hash_password(body.password),
         birth_date=body.birth_date,
         role=role,
         display_name=body.display_name.strip(),
+        avatar_url=avatar_url,
+        guardian_relation=_default_guardian_relation(role),
     )
     try:
         user_repository.save(db, user)
@@ -63,3 +106,34 @@ def login_user(db: Session, body: LoginRequest) -> TokenResponse:
         )
     token = create_access_token(row.id)
     return TokenResponse(access_token=token, user=_user_public(row))
+
+
+def update_guardian(
+    db: Session,
+    *,
+    current_user: User,
+    body: UpdateGuardianRequest,
+) -> UserPublic:
+    current_user.guardian_relation = body.guardian_relation
+    user_repository.save(db, current_user)
+    return _user_public(current_user)
+
+
+def update_avatar(
+    db: Session,
+    *,
+    current_user: User,
+    avatar_upload: tuple[bytes, str],
+    upload_root_cfg: str,
+) -> UserPublic:
+    upload_root = resolved_upload_root(upload_root_cfg)
+    avatar_bytes, avatar_name = avatar_upload
+    avatar_url = save_avatar_bytes(
+        upload_root=upload_root,
+        user_id=current_user.id,
+        data=avatar_bytes,
+        suffix=safe_suffix(avatar_name, ".png"),
+    )
+    current_user.avatar_url = avatar_url
+    user_repository.save(db, current_user)
+    return _user_public(current_user)
