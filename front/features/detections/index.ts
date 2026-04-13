@@ -1,2 +1,3 @@
 export { detectionsApi, buildDetectionSubmitFormData } from "./api";
-export type { DetectionSubmitResponse, PickedFile } from "./types";
+export { DetectionModeScreen } from "./screens/DetectionModeScreen";
+export type { DetectionMode, DetectionSubmitResponse, PickedFile } from "./types";

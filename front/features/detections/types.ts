@@ -1,4 +1,5 @@
-/** 与后端 SubmissionResponse 对齐（UUID 在 JSON 中为字符串） */
+export type DetectionMode = "text" | "visual" | "audio" | "mixed";
+
 export type DetectionSubmitResponse = {
   id: string;
   user_id: string;
@@ -16,7 +17,6 @@ export type DetectionSubmitResponse = {
   updated_at: string;
 };
 
-/** React Native multipart 使用的本地文件描述 */
 export type PickedFile = {
   uri: string;
   name: string;

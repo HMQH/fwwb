@@ -1,5 +1,5 @@
 import { DetectionModeScreen } from "@/features/detections";
 
-export default function SubmitDetectionScreen() {
+export default function DetectMixedScreen() {
   return <DetectionModeScreen mode="mixed" />;
 }

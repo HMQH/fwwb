@@ -66,12 +66,8 @@ export default function MainTabsLayout() {
         name="records"
         options={{
           title: "记录",
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? "history" : "history"}
-              size={22}
-              color={color}
-            />
+          tabBarIcon: ({ color }) => (
+            <MaterialCommunityIcons name="history" size={22} color={color} />
           ),
         }}
       />
@@ -88,13 +84,11 @@ export default function MainTabsLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="submit"
-        options={{
-          href: null,
-          title: "提交检测",
-        }}
-      />
+      <Tabs.Screen name="submit" options={{ href: null, title: "提交检测" }} />
+      <Tabs.Screen name="detect-text" options={{ href: null, title: "文本检测" }} />
+      <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测" }} />
+      <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测" }} />
+      <Tabs.Screen name="detect-mixed" options={{ href: null, title: "混合检测" }} />
     </Tabs>
   );
 }
