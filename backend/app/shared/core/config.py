@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     upload_root: str = Field(default_factory=_default_upload_root)
     # 单个上传文件大小上限（字节）
     max_upload_bytes: int = 50 * 1024 * 1024
+    rag_text_chunk_soft_limit: int = 320
+    rag_text_chunk_hard_limit: int = 640
+    rag_text_chunk_overlap: int = 80
+    rag_source_batch_size: int = 64
+    rag_embedding_batch_size: int = 32
+    rag_worker_poll_seconds: int = 5
+    rag_embedding_provider: str = "hash"
+    rag_embedding_model: str = "hash-1024"
+    rag_embedding_dimensions: int = 1024
+    rag_embedding_api_url: str = "https://api.openai.com/v1/embeddings"
+    rag_embedding_api_key: str | None = None
+    rag_embedding_timeout_seconds: int = 60
 
 
 settings = Settings()

@@ -15,10 +15,7 @@ env/
 dist/
 build/
 
-# Environment & secrets
-.env
-.env.*
-!.env.example
+
 
 # IDE & OS
 .idea/
@@ -37,3 +34,6 @@ skills-lock.json
 # 用户上传文件（运行时生成；保留 storage/uploads/.gitkeep）
 storage/uploads/*
 !storage/uploads/.gitkeep
+
+/fraud_source/
+/文档/
