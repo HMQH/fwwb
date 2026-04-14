@@ -1,20 +1,10 @@
-﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
@@ -22,8 +12,10 @@ import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { buildDetectionSubmitFormData, detectionsApi } from "../api";
+import { DetectionPipelineCard } from "../components/DetectionPipelineCard";
 import { DetectionResultCard } from "../components/DetectionResultCard";
 import { EvidenceListCard } from "../components/EvidenceListCard";
+import { ReasoningGraphCard } from "../components/ReasoningGraphCard";
 import type { DetectionJob, DetectionMode, DetectionSubmissionDetail, PickedFile } from "../types";
 
 type AppendixSlot = "text" | "audio" | "image" | "video";
@@ -33,33 +25,33 @@ const modeConfig: Record<
   DetectionMode,
   {
     title: string;
-    subtitle: string;
     icon: keyof typeof MaterialCommunityIcons.glyphMap;
+    tags: string[];
     allow: { text: boolean; textFiles: boolean; image: boolean; video: boolean; audio: boolean };
   }
 > = {
   text: {
     title: "文本检测",
-    subtitle: "适合聊天记录、短信、售后对话、可复制文本。",
     icon: "message-text-outline",
+    tags: ["文本", "RAG", "图谱"],
     allow: { text: true, textFiles: true, image: false, video: false, audio: false },
   },
   visual: {
-    title: "图像 / 视频检测",
-    subtitle: "这一版仍以文本 RAG 为主，可先留存截图与视频证据。",
+    title: "图像 / 视频",
     icon: "image-search-outline",
+    tags: ["截图", "视频", "归档"],
     allow: { text: true, textFiles: false, image: true, video: true, audio: false },
   },
   audio: {
     title: "音频检测",
-    subtitle: "优先补充通话文本或文字摘要，便于进入文本分析链路。",
     icon: "microphone-outline",
+    tags: ["音频", "摘要", "文本"],
     allow: { text: true, textFiles: false, image: false, video: false, audio: true },
   },
   mixed: {
     title: "混合检测",
-    subtitle: "文本为主、附件为辅：先判定话术，再保留其他证据。",
     icon: "layers-triple-outline",
+    tags: ["混合", "RAG", "归档"],
     allow: { text: true, textFiles: true, image: true, video: true, audio: true },
   },
 };
@@ -101,41 +93,73 @@ function isImageFile(file: PickedFile) {
   return file.type.toLowerCase().startsWith("image/") || IMAGE_EXT.has(extOf(file.name));
 }
 
+function CountPill({ label, value }: { label: string; value: number | string }) {
+  return (
+    <View style={styles.countPill}>
+      <Text style={styles.countPillLabel}>{label}</Text>
+      <Text style={styles.countPillValue}>{value}</Text>
+    </View>
+  );
+}
+
 function PreviewGrid({
-  title,
   items,
   onRemove,
 }: {
-  title: string;
   items: AppendixItem[];
   onRemove: (key: string) => void;
 }) {
+  if (!items.length) {
+    return (
+      <View style={styles.emptyTile}>
+        <Text style={styles.emptyTileText}>空</Text>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.previewSection}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {items.length ? (
-        <View style={styles.previewGrid}>
-          {items.map((item) => (
-            <View key={item.key} style={styles.previewTile}>
-              {isImageFile(item) ? (
-                <Image source={{ uri: item.uri }} style={styles.previewImage} contentFit="cover" />
-              ) : (
-                <View style={styles.previewFile}>
-                  <MaterialCommunityIcons name="file-outline" size={22} color={palette.accentStrong} />
-                </View>
-              )}
-              <Text style={styles.previewName} numberOfLines={2}>
-                {item.name}
-              </Text>
-              <Pressable style={({ pressed }) => [styles.removeChip, pressed && styles.buttonPressed]} onPress={() => onRemove(item.key)}>
-                <MaterialCommunityIcons name="close" size={14} color={palette.ink} />
-              </Pressable>
+    <View style={styles.previewGrid}>
+      {items.map((item) => (
+        <View key={item.key} style={styles.previewTile}>
+          {isImageFile(item) ? (
+            <Image source={{ uri: item.uri }} style={styles.previewImage} contentFit="cover" />
+          ) : (
+            <View style={styles.previewFile}>
+              <MaterialCommunityIcons name="file-outline" size={22} color={palette.accentStrong} />
             </View>
-          ))}
+          )}
+          <Text style={styles.previewName} numberOfLines={2}>
+            {item.name}
+          </Text>
+          <Pressable style={({ pressed }) => [styles.removeChip, pressed && styles.buttonPressed]} onPress={() => onRemove(item.key)}>
+            <MaterialCommunityIcons name="close" size={14} color={palette.ink} />
+          </Pressable>
         </View>
-      ) : (
-        <Text style={styles.helperText}>还没有添加文件。</Text>
-      )}
+      ))}
+    </View>
+  );
+}
+
+function SectionHeader({
+  title,
+  count,
+  actions,
+}: {
+  title: string;
+  count?: number;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <View style={styles.sectionHeaderRow}>
+      <View style={styles.sectionHeaderCopy}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {typeof count === "number" ? (
+          <View style={styles.sectionCount}>
+            <Text style={styles.sectionCountText}>{count}</Text>
+          </View>
+        ) : null}
+      </View>
+      {actions}
     </View>
   );
 }
@@ -161,7 +185,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     (
       assets: { uri: string; name?: string | null; mimeType?: string | null }[],
       slot: AppendixSlot,
-      setter: Dispatch<SetStateAction<AppendixItem[]>>
+      setter: Dispatch<SetStateAction<AppendixItem[]>>,
     ) => {
       const valid: AppendixItem[] = [];
       const invalid: string[] = [];
@@ -175,19 +199,19 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         valid.push({ uri: asset.uri, name, type: mimeType, key: nextKey() });
       }
       if (invalid.length) {
-        Alert.alert("部分文件未添加", `以下文件与当前入口不匹配：\n${invalid.join("\n")}`);
+        Alert.alert("部分文件未添加", invalid.join("\n"));
       }
       if (valid.length) {
         setter((prev) => [...prev, ...valid]);
       }
     },
-    []
+    [],
   );
 
   const pickDocumentsForSlot = useCallback(
     async (slot: Extract<AppendixSlot, "text" | "audio" | "video">, setter: Dispatch<SetStateAction<AppendixItem[]>>) => {
       if (Platform.OS === "web") {
-        Alert.alert("当前平台受限", "请优先在手机端选择文件。");
+        Alert.alert("当前平台受限", "请在手机端选择文件");
         return;
       }
       const typeOption = slot === "audio" ? "audio/*" : slot === "video" ? "video/*" : "*/*";
@@ -200,17 +224,17 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         ingestAssets(result.assets, slot, setter);
       }
     },
-    [ingestAssets]
+    [ingestAssets],
   );
 
   const pickImages = useCallback(async () => {
     if (Platform.OS === "web") {
-      Alert.alert("当前平台受限", "请优先在手机端选择图片。");
+      Alert.alert("当前平台受限", "请在手机端选择文件");
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("需要相册权限", "请在系统设置中允许访问相册。");
+      Alert.alert("需要相册权限", "请先开启相册权限");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -227,19 +251,19 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           mimeType: asset.mimeType ?? "image/jpeg",
         })),
         "image",
-        setImageFiles
+        setImageFiles,
       );
     }
   }, [ingestAssets]);
 
   const pickVideos = useCallback(async () => {
     if (Platform.OS === "web") {
-      Alert.alert("当前平台受限", "请优先在手机端选择视频。");
+      Alert.alert("当前平台受限", "请在手机端选择文件");
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("需要相册权限", "请在系统设置中允许访问相册。");
+      Alert.alert("需要相册权限", "请先开启相册权限");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -255,7 +279,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           mimeType: asset.mimeType ?? "video/mp4",
         })),
         "video",
-        setVideoFiles
+        setVideoFiles,
       );
     }
   }, [ingestAssets]);
@@ -287,17 +311,17 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       const detailResponse = await detectionsApi.getSubmission(token, activeSubmissionId);
       setDetail(detailResponse);
     } catch {
-      // 忽略静默刷新失败，主状态仍以 job 轮询为准。
+      // silent
     }
   }, [activeSubmissionId, token]);
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
-      Alert.alert("未登录", "请先登录后再提交检测。");
+      Alert.alert("未登录", "请先登录");
       return;
     }
     if (!hasPayload) {
-      Alert.alert("缺少内容", "请至少输入一段文本或添加一个附件。");
+      Alert.alert("缺少内容", "请先添加检测材料");
       return;
     }
 
@@ -320,21 +344,13 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         content_preview: response.submission.text_content?.slice(0, 88) ?? null,
       });
       resetForm();
-      Alert.alert("已加入检测队列", "系统已开始进行规则分析、黑白样本检索与模型判定。", [
-        { text: "继续留在当前页" },
-        {
-          text: "查看详情",
-          onPress: () =>
-            router.push({ pathname: "/records/[id]", params: { id: response.submission.id } }),
-        },
-      ]);
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : "提交失败，请稍后重试。";
+      const message = error instanceof ApiError ? error.message : "提交失败，请稍后重试";
       Alert.alert("提交失败", message);
     } finally {
       setSubmitting(false);
     }
-  }, [audioFiles, hasPayload, imageFiles, openDetail, resetForm, textContent, textFiles, token, videoFiles]);
+  }, [audioFiles, hasPayload, imageFiles, resetForm, textContent, textFiles, token, videoFiles]);
 
   const handleRerun = useCallback(async () => {
     if (!token || !activeSubmissionId) {
@@ -345,7 +361,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       setActiveJob(job);
       setDetail((prev) => (prev ? { ...prev, latest_job: job, latest_result: job.result } : prev));
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : "重试失败，请稍后再试。";
+      const message = error instanceof ApiError ? error.message : "无法重跑，请稍后重试";
       Alert.alert("无法重跑", message);
     }
   }, [activeSubmissionId, token]);
@@ -372,23 +388,25 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 latest_job: latestJob,
                 latest_result: latestJob.result,
               }
-            : prev
+            : prev,
         );
         if (latestJob.status === "completed") {
           void refreshDetail();
         }
       } catch {
-        // 下一轮轮询继续尝试
+        // ignore
       }
-    }, 2500);
+    }, 2200);
 
     return () => clearTimeout(timer);
   }, [activeJob, refreshDetail, token]);
 
-  const attachmentCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length;
+  const materialCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
 
   return (
     <View style={styles.root}>
+      <View style={styles.backgroundOrbTop} />
+      <View style={styles.backgroundOrbBottom} />
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.heroCard}>
@@ -397,32 +415,29 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 <MaterialCommunityIcons name={config.icon} size={24} color={palette.accentStrong} />
               </View>
               <View style={styles.heroCopy}>
-                <Text style={styles.eyebrow}>反诈工作台</Text>
                 <Text style={styles.heroTitle}>{config.title}</Text>
-                <Text style={styles.heroSubtitle}>{config.subtitle}</Text>
+                <View style={styles.heroTagRow}>
+                  {config.tags.map((tag) => (
+                    <View key={tag} style={styles.heroTag}>
+                      <Text style={styles.heroTagText}>{tag}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
-
-            <View style={styles.heroMetaRow}>
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>规则预判</Text>
-              </View>
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>黑白对比 RAG</Text>
-              </View>
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>结构化结论</Text>
-              </View>
+            <View style={styles.heroMetricRow}>
+              <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
+              <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
+              <CountPill label="总数" value={materialCount} />
             </View>
           </View>
 
           {config.allow.text ? (
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>核心文本</Text>
-              <Text style={styles.sectionHint}>尽量贴入关键对话原文，系统会优先基于文本做真实 RAG 检索。</Text>
+              <SectionHeader title="核心文本" count={textContent.trim() ? 1 : 0} />
               <TextInput
                 style={styles.textArea}
-                placeholder="例如：对方要求你点击链接、下载 APP、转账、提供验证码、共享屏幕……"
+                placeholder="粘贴文本"
                 placeholderTextColor={palette.inkSoft}
                 value={textContent}
                 onChangeText={setTextContent}
@@ -434,108 +449,101 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
           {config.allow.textFiles ? (
             <View style={styles.sectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>文本附件</Text>
-                  <Text style={styles.sectionHint}>适合 txt / md / csv / json / 聊天导出文件；可与手动输入一起提交。</Text>
-                </View>
-                <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("text", setTextFiles)}>
-                  <MaterialCommunityIcons name="plus" size={16} color={palette.accentStrong} />
-                  <Text style={styles.addButtonText}>添加</Text>
-                </Pressable>
-              </View>
-              <PreviewGrid title="已添加文本文件" items={textFiles} onRemove={(key) => setTextFiles((prev) => prev.filter((item) => item.key !== key))} />
+              <SectionHeader
+                title="文本附件"
+                count={textFiles.length}
+                actions={
+                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("text", setTextFiles)}>
+                    <MaterialCommunityIcons name="plus" size={16} color={palette.accentStrong} />
+                    <Text style={styles.addButtonText}>添加</Text>
+                  </Pressable>
+                }
+              />
+              <PreviewGrid items={textFiles} onRemove={(key) => setTextFiles((prev) => prev.filter((item) => item.key !== key))} />
             </View>
           ) : null}
 
           {config.allow.image ? (
             <View style={styles.sectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>图片证据</Text>
-                  <Text style={styles.sectionHint}>截图、二维码、页面信息会一起存档，便于后续复查。</Text>
-                </View>
-                <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
-                  <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
-                  <Text style={styles.addButtonText}>相册</Text>
-                </Pressable>
-              </View>
-              <PreviewGrid title="已添加图片" items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
+              <SectionHeader
+                title="图片"
+                count={imageFiles.length}
+                actions={
+                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
+                    <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
+                    <Text style={styles.addButtonText}>相册</Text>
+                  </Pressable>
+                }
+              />
+              <PreviewGrid items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
             </View>
           ) : null}
 
           {config.allow.video ? (
             <View style={styles.sectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>视频证据</Text>
-                  <Text style={styles.sectionHint}>录屏、短视频等将保留在记录详情中。</Text>
-                </View>
-                <View style={styles.inlineButtonRow}>
-                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickVideos()}>
-                    <MaterialCommunityIcons name="video-plus-outline" size={16} color={palette.accentStrong} />
-                    <Text style={styles.addButtonText}>相册</Text>
-                  </Pressable>
-                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("video", setVideoFiles)}>
-                    <MaterialCommunityIcons name="folder-plus-outline" size={16} color={palette.accentStrong} />
-                    <Text style={styles.addButtonText}>文件</Text>
-                  </Pressable>
-                </View>
-              </View>
-              <PreviewGrid title="已添加视频" items={videoFiles} onRemove={(key) => setVideoFiles((prev) => prev.filter((item) => item.key !== key))} />
+              <SectionHeader
+                title="视频"
+                count={videoFiles.length}
+                actions={
+                  <View style={styles.inlineButtonRow}>
+                    <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickVideos()}>
+                      <MaterialCommunityIcons name="video-plus-outline" size={16} color={palette.accentStrong} />
+                      <Text style={styles.addButtonText}>相册</Text>
+                    </Pressable>
+                    <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("video", setVideoFiles)}>
+                      <MaterialCommunityIcons name="folder-plus-outline" size={16} color={palette.accentStrong} />
+                      <Text style={styles.addButtonText}>文件</Text>
+                    </Pressable>
+                  </View>
+                }
+              />
+              <PreviewGrid items={videoFiles} onRemove={(key) => setVideoFiles((prev) => prev.filter((item) => item.key !== key))} />
             </View>
           ) : null}
 
           {config.allow.audio ? (
             <View style={styles.sectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionHeaderCopy}>
-                  <Text style={styles.sectionTitle}>音频证据</Text>
-                  <Text style={styles.sectionHint}>当前仍建议同时补一段文字摘要，效果会明显更好。</Text>
-                </View>
-                <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("audio", setAudioFiles)}>
-                  <MaterialCommunityIcons name="microphone-plus" size={16} color={palette.accentStrong} />
-                  <Text style={styles.addButtonText}>添加</Text>
-                </Pressable>
-              </View>
-              <PreviewGrid title="已添加音频" items={audioFiles} onRemove={(key) => setAudioFiles((prev) => prev.filter((item) => item.key !== key))} />
+              <SectionHeader
+                title="音频"
+                count={audioFiles.length}
+                actions={
+                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("audio", setAudioFiles)}>
+                    <MaterialCommunityIcons name="microphone-plus" size={16} color={palette.accentStrong} />
+                    <Text style={styles.addButtonText}>添加</Text>
+                  </Pressable>
+                }
+              />
+              <PreviewGrid items={audioFiles} onRemove={(key) => setAudioFiles((prev) => prev.filter((item) => item.key !== key))} />
             </View>
           ) : null}
 
           <View style={styles.commandCard}>
-            <View style={styles.commandCopy}>
-              <Text style={styles.commandTitle}>
-                {hasPayload ? `准备提交 ${attachmentCount + (textContent.trim() ? 1 : 0)} 项检测材料` : "先补充至少一段文本或一个附件"}
-              </Text>
-              <Text style={styles.commandText}>
-                系统会先跑规则与黑白样本对比检索，再交给模型生成结构化结论与建议。
-              </Text>
+            <View style={styles.commandStatsRow}>
+              <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
+              <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
+              <CountPill label="材料" value={materialCount} />
             </View>
-            <Pressable style={({ pressed }) => [styles.submitButton, pressed && !submitting && styles.buttonPressed, submitting && styles.submitDisabled]} onPress={() => void handleSubmit()} disabled={submitting}>
-              {submitting ? (
-                <ActivityIndicator size="small" color={palette.inkInverse} />
-              ) : (
-                <>
-                  <Text style={styles.submitButtonText}>开始检测</Text>
-                  <MaterialCommunityIcons name="arrow-right" size={16} color={palette.inkInverse} />
-                </>
-              )}
+            <Pressable
+              style={({ pressed }) => [styles.submitButton, pressed && !submitting && styles.buttonPressed, (!hasPayload || submitting) && styles.submitDisabled]}
+              onPress={() => void handleSubmit()}
+              disabled={!hasPayload || submitting}
+            >
+              <Text style={styles.submitButtonText}>{submitting ? "提交中" : "开始检测"}</Text>
+              <MaterialCommunityIcons name="arrow-right" size={16} color={palette.inkInverse} />
             </Pressable>
           </View>
 
-          {(activeJob || currentResult) ? (
-            <View style={styles.resultStack}>
-              <Text style={styles.stackTitle}>本次检测结果</Text>
+          {(activeJob || currentResult) ? <DetectionPipelineCard job={activeJob} result={currentResult} /> : null}
+
+          {currentResult ? (
+            <>
               <DetectionResultCard result={currentResult} job={activeJob} onOpenDetail={activeSubmissionId ? openDetail : undefined} onRerun={activeSubmissionId ? handleRerun : undefined} />
-              {currentResult?.retrieved_evidence?.length ? (
-                <EvidenceListCard title="支撑判断的黑样本" subtitle="这些内容与当前文本在语义或关键词上更相近。" items={currentResult.retrieved_evidence} tone="black" />
-              ) : null}
-              {currentResult?.counter_evidence?.length ? (
-                <EvidenceListCard title="用于校正的白样本" subtitle="这些证据更接近正常沟通，用来帮助系统降低误报。" items={currentResult.counter_evidence} tone="white" />
-              ) : null}
-              {currentResult?.advice?.length ? (
+              <ReasoningGraphCard result={currentResult} />
+              {currentResult.retrieved_evidence.length ? <EvidenceListCard title="风险参照" items={currentResult.retrieved_evidence} tone="black" /> : null}
+              {currentResult.counter_evidence.length ? <EvidenceListCard title="安全参照" items={currentResult.counter_evidence} tone="white" /> : null}
+              {currentResult.advice.length ? (
                 <View style={styles.sectionCard}>
-                  <Text style={styles.sectionTitle}>立即建议</Text>
+                  <Text style={styles.sectionTitle}>建议</Text>
                   <View style={styles.adviceList}>
                     {currentResult.advice.map((item) => (
                       <View key={item} style={styles.adviceRow}>
@@ -546,7 +554,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                   </View>
                 </View>
               ) : null}
-            </View>
+            </>
           ) : null}
         </ScrollView>
       </SafeAreaView>
@@ -555,19 +563,27 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: palette.background,
+  root: { flex: 1, backgroundColor: palette.background },
+  safeArea: { flex: 1 },
+  backgroundOrbTop: {
+    position: "absolute",
+    top: -92,
+    left: -34,
+    width: 220,
+    height: 220,
+    borderRadius: 999,
+    backgroundColor: "rgba(117, 167, 255, 0.14)",
   },
-  safeArea: {
-    flex: 1,
+  backgroundOrbBottom: {
+    position: "absolute",
+    right: -74,
+    bottom: 160,
+    width: 230,
+    height: 230,
+    borderRadius: 999,
+    backgroundColor: "rgba(196, 218, 255, 0.18)",
   },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
-    gap: 16,
-  },
+  content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28, gap: 16 },
   heroCard: {
     borderRadius: radius.xl,
     backgroundColor: palette.surface,
@@ -578,30 +594,16 @@ const styles = StyleSheet.create({
     gap: 14,
     ...panelShadow,
   },
-  heroRow: {
-    flexDirection: "row",
-    gap: 14,
-    alignItems: "flex-start",
-  },
+  heroRow: { flexDirection: "row", gap: 14, alignItems: "center" },
   heroIconWrap: {
-    width: 52,
-    height: 52,
+    width: 54,
+    height: 54,
     borderRadius: 18,
     backgroundColor: palette.accentSoft,
     alignItems: "center",
     justifyContent: "center",
   },
-  heroCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  eyebrow: {
-    color: palette.accentStrong,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
+  heroCopy: { flex: 1, gap: 8 },
   heroTitle: {
     color: palette.ink,
     fontSize: 24,
@@ -609,29 +611,36 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  heroSubtitle: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 20,
-    fontFamily: fontFamily.body,
-  },
-  heroMetaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  metaPill: {
+  heroTagRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  heroTag: {
     borderRadius: radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 7,
     backgroundColor: palette.surfaceSoft,
   },
-  metaPillText: {
+  heroTagText: {
     color: palette.accentStrong,
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: "700",
+    fontWeight: "800",
     fontFamily: fontFamily.body,
+  },
+  heroMetricRow: { flexDirection: "row", gap: 10 },
+  countPill: {
+    flex: 1,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  countPillLabel: { color: palette.inkSoft, fontSize: 11, lineHeight: 14, fontFamily: fontFamily.body },
+  countPillValue: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
   },
   sectionCard: {
     borderRadius: radius.lg,
@@ -647,12 +656,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
   },
-  sectionHeaderCopy: {
-    flex: 1,
-    gap: 4,
-  },
+  sectionHeaderCopy: { flexDirection: "row", alignItems: "center", gap: 8 },
   sectionTitle: {
     color: palette.ink,
     fontSize: 17,
@@ -660,16 +666,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  sectionHint: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: fontFamily.body,
+  sectionCount: {
+    minWidth: 26,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: palette.surfaceSoft,
+    alignItems: "center",
   },
-  helperText: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 18,
+  sectionCountText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
     fontFamily: fontFamily.body,
   },
   textArea: {
@@ -685,11 +694,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontFamily: fontFamily.body,
   },
-  inlineButtonRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
+  inlineButtonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   addButton: {
     minHeight: 38,
     borderRadius: radius.pill,
@@ -706,14 +711,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  previewGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  previewSection: {
-    gap: 10,
-  },
+  previewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   previewTile: {
     width: "48.5%",
     borderRadius: radius.md,
@@ -757,6 +755,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
   },
+  emptyTile: {
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingVertical: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyTileText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
   commandCard: {
     borderRadius: radius.xl,
     backgroundColor: palette.surface,
@@ -767,60 +781,27 @@ const styles = StyleSheet.create({
     gap: 14,
     ...panelShadow,
   },
-  commandCopy: {
-    gap: 6,
-  },
-  commandTitle: {
-    color: palette.ink,
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: "900",
-    fontFamily: fontFamily.display,
-  },
-  commandText: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: fontFamily.body,
-  },
+  commandStatsRow: { flexDirection: "row", gap: 10 },
   submitButton: {
-    alignSelf: "flex-start",
-    minHeight: 46,
+    minHeight: 48,
     borderRadius: radius.pill,
     backgroundColor: palette.accentStrong,
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
   },
   submitButtonText: {
     color: palette.inkInverse,
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 18,
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  submitDisabled: {
-    opacity: 0.6,
-  },
-  resultStack: {
-    gap: 16,
-  },
-  stackTitle: {
-    color: palette.ink,
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: "900",
-    fontFamily: fontFamily.display,
-  },
-  adviceList: {
-    gap: 10,
-  },
-  adviceRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "flex-start",
-  },
+  submitDisabled: { opacity: 0.55 },
+  adviceList: { gap: 10 },
+  adviceRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   adviceDot: {
     width: 8,
     height: 8,
@@ -835,7 +816,5 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontFamily: fontFamily.body,
   },
-  buttonPressed: {
-    transform: [{ scale: 0.98 }],
-  },
+  buttonPressed: { transform: [{ scale: 0.98 }] },
 });

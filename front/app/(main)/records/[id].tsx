@@ -1,1 +1,1 @@
-﻿export { default } from "@/features/records/RecordDetailScreen";
+export { default } from "@/features/records/RecordDetailScreen";

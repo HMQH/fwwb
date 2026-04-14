@@ -1,4 +1,4 @@
-﻿import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -18,7 +18,7 @@ export function EvidenceListCard({
   tone = "black",
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   items: DetectionEvidence[];
   tone?: "black" | "white";
 }) {
@@ -31,7 +31,7 @@ export function EvidenceListCard({
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
-        <Text style={styles.subtitle}>{subtitle}</Text>
+        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
 
       {items.length ? (
@@ -41,26 +41,26 @@ export function EvidenceListCard({
               <View style={styles.rowTop}>
                 <View style={[styles.badge, { backgroundColor: theme.soft }]}>
                   <Text style={[styles.badgeText, { color: theme.ink }]}>
-                    {item.sample_label === "black" ? "黑样本" : "白样本"}
+                    {item.sample_label === "black" ? "风险参照" : "安全参照"}
                   </Text>
                 </View>
-                <Text style={styles.scoreText}>{Math.round(item.similarity_score * 100)} 分相似</Text>
+                <Text style={styles.scoreText}>{Math.round(item.similarity_score * 100)} 分</Text>
               </View>
 
               <Text style={styles.chunkText} numberOfLines={4}>
                 {item.chunk_text}
               </Text>
-              <Text style={styles.reasonText}>{item.reason}</Text>
+              {item.reason ? <Text style={styles.reasonText}>{item.reason}</Text> : null}
 
               <View style={styles.metaRow}>
-                {item.fraud_type ? <Text style={styles.metaText}>类型：{item.fraud_type}</Text> : null}
-                {item.data_source ? <Text style={styles.metaText}>来源：{item.data_source}</Text> : null}
+                {item.fraud_type ? <Text style={styles.metaText}>{item.fraud_type}</Text> : null}
+                {item.data_source ? <Text style={styles.metaText}>{item.data_source}</Text> : null}
               </View>
 
               {item.url ? (
                 <Pressable style={({ pressed }) => [styles.linkChip, pressed && styles.linkChipPressed]} onPress={() => openMaybe(item.url)}>
                   <Text style={styles.linkChipText} numberOfLines={1}>
-                    查看原始链接
+                    原链
                   </Text>
                 </Pressable>
               ) : null}
@@ -69,7 +69,7 @@ export function EvidenceListCard({
         </View>
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>当前没有召回到这一类证据。</Text>
+          <Text style={styles.emptyText}>暂无</Text>
         </View>
       )}
     </View>

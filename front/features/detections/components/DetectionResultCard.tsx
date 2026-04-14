@@ -1,9 +1,10 @@
-﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import type { DetectionJob, DetectionResult } from "../types";
+import { normalizeDetectionStep, pipelineStepMeta } from "../visualization";
 
 const riskMeta = {
   high: {
@@ -19,7 +20,7 @@ const riskMeta = {
     soft: "#FFF7E8",
   },
   low: {
-    label: "暂低风险",
+    label: "低风险",
     icon: "shield-check-outline",
     tone: "#2F70E6",
     soft: "#EAF2FF",
@@ -40,6 +41,32 @@ export function formatConfidence(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function isKnownFraudType(value?: string | null) {
+  const normalized = String(value ?? "").trim();
+  return Boolean(normalized && !["未知", "未分类", "待定", "不确定"].includes(normalized));
+}
+
+export function getVisibleFraudType(result?: Pick<DetectionResult, "risk_level" | "fraud_type"> | null) {
+  if (!result || result.risk_level === "low") {
+    return null;
+  }
+  return isKnownFraudType(result.fraud_type) ? String(result.fraud_type).trim() : null;
+}
+
+export function getResultHeadline(
+  result?: Pick<DetectionResult, "risk_level" | "fraud_type" | "summary"> | null,
+) {
+  const visibleFraudType = getVisibleFraudType(result ? { risk_level: result.risk_level, fraud_type: result.fraud_type } : null);
+  if (visibleFraudType) {
+    return visibleFraudType;
+  }
+  const summary = String(result?.summary ?? "").trim();
+  if (!summary) {
+    return result?.risk_level === "low" ? "低风险结果" : "待分析文本";
+  }
+  return summary.split(/[。！!？?\n]/)[0]?.trim() || summary;
+}
+
 export function DetectionResultCard({
   result,
   job,
@@ -54,27 +81,34 @@ export function DetectionResultCard({
   onRerun?: () => void;
 }) {
   if (!result) {
-    const pending = job?.status === "pending" || job?.status === "running";
     const failed = job?.status === "failed";
+    const running = job?.status === "pending" || job?.status === "running";
+    const step = normalizeDetectionStep(job?.current_step ?? undefined, job?.status ?? undefined);
+    const meta = pipelineStepMeta[step];
     return (
       <View style={[styles.card, compact && styles.cardCompact, failed && styles.cardFailed]}>
         <View style={styles.headerRow}>
-          <View style={[styles.heroIcon, { backgroundColor: failed ? "#FFF0EA" : palette.accentSoft }]}>
+          <View style={[styles.heroIcon, { backgroundColor: failed ? "#FFF0EA" : meta.soft }]}>
             <MaterialCommunityIcons
-              name={failed ? "alert-circle-outline" : "progress-clock"}
+              name={failed ? "alert-circle-outline" : (meta.icon as never)}
               size={compact ? 18 : 22}
-              color={failed ? "#D96A4A" : palette.accentStrong}
+              color={failed ? "#D96A4A" : meta.accent}
             />
           </View>
           <View style={styles.headerCopy}>
             <Text style={[styles.title, compact && styles.titleCompact]}>
-              {failed ? "检测失败" : pending ? "正在分析文本" : "等待分析结果"}
+              {failed ? "检测失败" : running ? meta.label : "等待结果"}
             </Text>
-            <Text style={styles.subtitle}>
-              {failed
-                ? job?.error_message ?? "本次任务未完成，可稍后重试。"
-                : "规则引擎、黑白样本检索和模型判定正在协同处理。"}
-            </Text>
+            <View style={styles.inlineMetaRow}>
+              {typeof job?.progress_percent === "number" ? (
+                <View style={[styles.inlinePill, { backgroundColor: meta.soft }]}>
+                  <Text style={[styles.inlinePillText, { color: meta.accent }]}>
+                    {Math.round(job.progress_percent)}%
+                  </Text>
+                </View>
+              ) : null}
+              {job?.error_message ? <Text style={styles.pendingText}>{job.error_message}</Text> : null}
+            </View>
           </View>
         </View>
 
@@ -89,6 +123,7 @@ export function DetectionResultCard({
   }
 
   const meta = getRiskMeta(result.risk_level);
+  const visibleFraudType = getVisibleFraudType(result);
   const evidenceCount = result.retrieved_evidence.length;
   const counterCount = result.counter_evidence.length;
 
@@ -101,11 +136,15 @@ export function DetectionResultCard({
         <View style={styles.headerCopy}>
           <View style={styles.titleRow}>
             <Text style={[styles.title, compact && styles.titleCompact]}>{meta.label}</Text>
-            <View style={[styles.riskPill, { backgroundColor: meta.soft }]}>
-              <Text style={[styles.riskPillText, { color: meta.tone }]}>{result.fraud_type ?? "未分类"}</Text>
-            </View>
+            {visibleFraudType ? (
+              <View style={[styles.riskPill, { backgroundColor: meta.soft }]}>
+                <Text style={[styles.riskPillText, { color: meta.tone }]}>
+                  {visibleFraudType}
+                </Text>
+              </View>
+            ) : null}
           </View>
-          <Text style={styles.subtitle}>{result.summary ?? "暂无总结"}</Text>
+          <Text style={styles.summaryText}>{result.summary ?? "--"}</Text>
         </View>
       </View>
 
@@ -115,11 +154,11 @@ export function DetectionResultCard({
           <Text style={styles.metricValue}>{formatConfidence(result.confidence)}</Text>
         </View>
         <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>黑样本证据</Text>
+          <Text style={styles.metricLabel}>风险参照</Text>
           <Text style={styles.metricValue}>{evidenceCount}</Text>
         </View>
         <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>白样本对照</Text>
+          <Text style={styles.metricLabel}>安全参照</Text>
           <Text style={styles.metricValue}>{counterCount}</Text>
         </View>
       </View>
@@ -134,7 +173,7 @@ export function DetectionResultCard({
         </View>
       ) : null}
 
-      <Text style={styles.reasonText}>{result.final_reason ?? ""}</Text>
+      {result.final_reason ? <Text style={styles.reasonText}>{result.final_reason}</Text> : null}
 
       {(onOpenDetail || onRerun) && !compact ? (
         <View style={styles.actionRow}>
@@ -208,10 +247,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
   },
-  subtitle: {
+  inlineMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+  },
+  inlinePill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  inlinePillText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  pendingText: {
     color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  summaryText: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   riskPill: {

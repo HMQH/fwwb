@@ -1,4 +1,4 @@
-﻿"""检测 API schema。"""
+"""?? API schema?"""
 from __future__ import annotations
 
 import uuid
@@ -81,6 +81,9 @@ class DetectionJobResponse(BaseModel):
     job_type: str
     input_modality: str
     status: str
+    current_step: str | None = None
+    progress_percent: int = 0
+    progress_detail: dict[str, Any] | None = None
     rule_score: int = 0
     retrieval_query: str | None = None
     llm_model: str | None = None

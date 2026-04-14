@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthBackdrop, useAuth } from "@/features/auth";
-import { getRiskMeta } from "@/features/detections";
+import { getResultHeadline, getRiskMeta } from "@/features/detections";
 import type { RecordHistoryItem } from "@/features/records/types";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
@@ -151,7 +151,7 @@ export default function RecordsScreen() {
                     <View style={styles.recordBody}>
                       <View style={styles.recordTop}>
                         <Text style={styles.recordTitle} numberOfLines={1}>
-                          {item.latest_result?.fraud_type ?? "待分析文本"}
+                          {getResultHeadline(item.latest_result)}
                         </Text>
                         <Text style={styles.recordTime}>{formatDateTime(item.submission.created_at)}</Text>
                       </View>

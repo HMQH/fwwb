@@ -332,24 +332,37 @@ def replace_text_chunks(
 
 
 # ===== 文本检测检索 =====
-def _map_search_rows(rows: list[dict[str, Any]], *, match_source: str) -> list[TextChunkSearchHit]:
-    return [
-        TextChunkSearchHit(
-            source_id=int(row["source_id"]),
-            chunk_index=int(row["chunk_index"]),
-            chunk_text=str(row["chunk_text"]),
-            sample_label=str(row["sample_label"]),
-            fraud_type=row["fraud_type"],
-            data_source=row["data_source"],
-            url=row["url"],
-            content_hash=str(row["content_hash"]),
-            embedding_model=str(row["embedding_model"]),
-            score=float(row["score"]),
-            match_source=match_source,
-            extra_meta=dict(row["extra_meta"] or {}),
+def _map_search_rows(
+    rows: list[dict[str, Any]],
+    *,
+    match_source: str,
+    score_component_key: str,
+) -> list[TextChunkSearchHit]:
+    mapped: list[TextChunkSearchHit] = []
+    for row in rows:
+        score = float(row["score"])
+        extra_meta = dict(row["extra_meta"] or {})
+        score_components = dict(extra_meta.get("score_components") or {})
+        score_components[score_component_key] = round(score, 4)
+        score_components.setdefault("final_score", round(score, 4))
+        extra_meta["score_components"] = score_components
+        mapped.append(
+            TextChunkSearchHit(
+                source_id=int(row["source_id"]),
+                chunk_index=int(row["chunk_index"]),
+                chunk_text=str(row["chunk_text"]),
+                sample_label=str(row["sample_label"]),
+                fraud_type=row["fraud_type"],
+                data_source=row["data_source"],
+                url=row["url"],
+                content_hash=str(row["content_hash"]),
+                embedding_model=str(row["embedding_model"]),
+                score=score,
+                match_source=match_source,
+                extra_meta=extra_meta,
+            )
         )
-        for row in rows
-    ]
+    return mapped
 
 
 def search_text_chunks_by_vector(
@@ -391,7 +404,11 @@ def search_text_chunks_by_vector(
             "limit": int(limit),
         },
     ).mappings().all()
-    return _map_search_rows(rows, match_source="vector")
+    return _map_search_rows(
+        rows,
+        match_source="vector",
+        score_component_key="vector_score",
+    )
 
 
 def search_text_chunks_by_keyword(
@@ -462,4 +479,8 @@ def search_text_chunks_by_keyword(
         """
     )
     rows = db.execute(statement, params).mappings().all()
-    return _map_search_rows(rows, match_source="keyword")
+    return _map_search_rows(
+        rows,
+        match_source="keyword",
+        score_component_key="keyword_score",
+    )

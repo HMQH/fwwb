@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     detection_retrieval_keyword_top_k: int = 6
     detection_retrieval_black_top_k: int = 5
     detection_retrieval_white_top_k: int = 3
+    detection_retrieval_hybrid_bonus: float = 0.1
+    detection_fusion_rule_weight: float = 0.34
+    detection_fusion_retrieval_weight: float = 0.33
+    detection_fusion_llm_weight: float = 0.33
     detection_low_risk_threshold: int = 24
     detection_high_risk_threshold: int = 55
     detection_manual_review_confidence_threshold: float = 0.62
