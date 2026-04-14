@@ -1,4 +1,4 @@
-﻿"""检测提交流程与任务执行。"""
+"""检测任务编排与执行服务。"""
 from __future__ import annotations
 
 import logging
@@ -26,6 +26,14 @@ from app.shared.storage.upload_paths import (
 logger = logging.getLogger(__name__)
 
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
+_PIPELINE_STEPS = [
+    ("preprocess", "清洗"),
+    ("embedding", "编码"),
+    ("vector_retrieval", "召回"),
+    ("graph_reasoning", "图谱"),
+    ("llm_reasoning", "判别"),
+    ("finalize", "完成"),
+]
 
 
 def _utcnow() -> datetime:
@@ -73,6 +81,97 @@ def _build_merged_text_content(
     return _truncate_for_storage("\n\n".join(part.strip() for part in parts if part and part.strip()))
 
 
+def _build_module_trace(current_step: str | None, *, status: str) -> list[dict[str, Any]]:
+    if status == "completed":
+        current_index = len(_PIPELINE_STEPS) - 1
+    elif status == "failed":
+        current_index = max(0, next((i for i, (key, _) in enumerate(_PIPELINE_STEPS) if key == current_step), 0))
+    else:
+        current_index = next((i for i, (key, _) in enumerate(_PIPELINE_STEPS) if key == current_step), -1)
+
+    trace: list[dict[str, Any]] = []
+    for index, (key, label) in enumerate(_PIPELINE_STEPS):
+        if status == "completed":
+            step_status = "completed"
+        elif status == "failed":
+            if index < current_index:
+                step_status = "completed"
+            elif index == current_index:
+                step_status = "failed"
+            else:
+                step_status = "pending"
+        else:
+            if current_index < 0:
+                step_status = "pending"
+            elif index < current_index:
+                step_status = "completed"
+            elif index == current_index:
+                step_status = "running"
+            else:
+                step_status = "pending"
+        trace.append({"key": key, "label": label, "status": step_status})
+    return trace
+
+
+def _build_progress_detail(
+    *,
+    current_step: str | None,
+    status: str,
+    percent: int,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "status": status,
+        "current_step": current_step,
+        "progress_percent": percent,
+        "module_trace": _build_module_trace(current_step, status=status),
+    }
+    if extra:
+        detail.update(extra)
+        detail.setdefault("module_trace", _build_module_trace(current_step, status=status))
+    return detail
+
+
+def _set_job_progress(
+    db: Session,
+    job: DetectionJob,
+    *,
+    status: str | None = None,
+    step: str | None = None,
+    percent: int | None = None,
+    extra: dict[str, Any] | None = None,
+) -> DetectionJob:
+    if status is not None:
+        job.status = status
+    if step is not None:
+        job.current_step = step
+    if percent is not None:
+        job.progress_percent = max(0, min(100, int(percent)))
+    current_step = job.current_step or "queued"
+    current_percent = max(0, min(100, int(job.progress_percent or 0)))
+    job.progress_detail = _build_progress_detail(
+        current_step=current_step,
+        status=job.status,
+        percent=current_percent,
+        extra=extra,
+    )
+    return detection_repository.save_job(db, job)
+
+
+def _initialize_job_progress(db: Session, job: DetectionJob) -> DetectionJob:
+    return _set_job_progress(
+        db,
+        job,
+        status=job.status,
+        step=job.current_step or "queued",
+        percent=0,
+        extra={
+            "input_modality": job.input_modality,
+            "job_type": job.job_type,
+        },
+    )
+
+
 def create_submission(
     db: Session,
     *,
@@ -89,7 +188,7 @@ def create_submission(
             if len(data) > max_upload_bytes:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"文件过大，超过 {max_upload_bytes} 字节限制",
+                    detail=f"单个文件超过 {max_upload_bytes} 字节限制",
                 )
 
     validate_bundle_filenames(file_bundles)
@@ -167,7 +266,7 @@ def create_submission(
     if not (has_text or has_audio or has_image or has_video):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="至少提供一种输入：文字内容或任意附件文件",
+            detail="提交内容为空，请至少提供文本或附件",
         )
 
     row = DetectionSubmission(
@@ -193,6 +292,9 @@ def _build_job_snapshot(job: DetectionJob, result: DetectionResult | None = None
         "job_type": job.job_type,
         "input_modality": job.input_modality,
         "status": job.status,
+        "current_step": job.current_step,
+        "progress_percent": job.progress_percent,
+        "progress_detail": dict(job.progress_detail or {}),
         "rule_score": job.rule_score,
         "retrieval_query": job.retrieval_query,
         "llm_model": job.llm_model,
@@ -245,13 +347,15 @@ def _build_submission_snapshot(
         preview = preview[:88].rstrip() + "…"
     if not preview:
         attachment_parts: list[str] = []
+        if submission.text_paths:
+            attachment_parts.append(f"文本 {len(submission.text_paths)}")
         if submission.image_paths:
             attachment_parts.append(f"图片 {len(submission.image_paths)}")
         if submission.audio_paths:
             attachment_parts.append(f"音频 {len(submission.audio_paths)}")
         if submission.video_paths:
             attachment_parts.append(f"视频 {len(submission.video_paths)}")
-        preview = "、".join(attachment_parts) if attachment_parts else None
+        preview = " / ".join(attachment_parts) if attachment_parts else None
 
     return {
         "submission": {
@@ -300,6 +404,7 @@ def submit_detection(
         input_modality="text" if submission.text_content else "attachment_only",
         llm_model=settings.detection_llm_model,
     )
+    job = _initialize_job_progress(db, job)
     return submission, job
 
 
@@ -336,7 +441,7 @@ def get_submission_detail(
         user_id=user_id,
     )
     if submission is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="检测记录不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
     latest_job = detection_repository.get_latest_job_for_submission(db, submission_id=submission.id)
     latest_result = detection_repository.get_latest_result_for_submission(db, submission_id=submission.id)
     return _build_submission_snapshot(
@@ -354,14 +459,14 @@ def get_job_detail(
 ) -> dict[str, Any]:
     job = detection_repository.get_job(db, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="检测任务不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     submission = detection_repository.get_submission_for_user(
         db,
         submission_id=job.submission_id,
         user_id=user_id,
     )
     if submission is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="检测任务不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
     result = detection_repository.get_result_for_job(db, job_id=job.id)
     return _build_job_snapshot(job, result)
 
@@ -378,35 +483,65 @@ def rerun_submission(
         user_id=user_id,
     )
     if submission is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="检测记录不存在")
-    return detection_repository.create_job(
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
+    job = detection_repository.create_job(
         db,
         submission_id=submission.id,
         job_type="text_rag",
         input_modality="text" if submission.text_content else "attachment_only",
         llm_model=settings.detection_llm_model,
     )
+    return _initialize_job_progress(db, job)
+
+
+def _attachment_only_graph(submission: DetectionSubmission) -> dict[str, Any]:
+    attachment_count = len(submission.text_paths or []) + len(submission.audio_paths or []) + len(submission.image_paths or []) + len(submission.video_paths or [])
+    return {
+        "nodes": [
+            {"id": "input", "label": "附件", "kind": "input", "tone": "primary", "lane": 0, "order": 0, "strength": 0.6, "meta": {"count": attachment_count}},
+            {"id": "lack_text", "label": "缺少文本", "kind": "signal", "tone": "warning", "lane": 1, "order": 0, "strength": 0.72, "meta": {}},
+            {"id": "manual_review", "label": "人工复核", "kind": "risk", "tone": "warning", "lane": 2, "order": 0, "strength": 0.7, "meta": {}},
+        ],
+        "edges": [
+            {"id": "edge:input:lack_text", "source": "input", "target": "lack_text", "tone": "warning", "kind": "reasoning", "weight": 0.64},
+            {"id": "edge:lack_text:manual_review", "source": "lack_text", "target": "manual_review", "tone": "warning", "kind": "decision", "weight": 0.68},
+        ],
+        "highlighted_path": ["input", "lack_text", "manual_review"],
+        "highlighted_labels": ["附件", "缺少文本", "人工复核"],
+        "summary_metrics": {"attachment_count": attachment_count},
+    }
 
 
 def _build_attachment_only_result(submission: DetectionSubmission, job: DetectionJob) -> DetectionResult:
     detail = {
-        "message": "当前版本优先支持文本 RAG 检测；本次提交未提取到可分析文本。",
+        "message": "当前仅上传附件，文本 RAG 尚未获得可直接分析的正文内容。",
         "attachment_counts": {
             "text_files": len(submission.text_paths or []),
             "audio_files": len(submission.audio_paths or []),
             "image_files": len(submission.image_paths or []),
             "video_files": len(submission.video_paths or []),
         },
+        "used_modules": ["preprocess", "finalize"],
+        "module_trace": [
+            {"key": "preprocess", "label": "清洗", "status": "completed"},
+            {"key": "embedding", "label": "编码", "status": "pending"},
+            {"key": "vector_retrieval", "label": "召回", "status": "pending"},
+            {"key": "graph_reasoning", "label": "图谱", "status": "pending"},
+            {"key": "llm_reasoning", "label": "判别", "status": "pending", "enabled": False},
+            {"key": "finalize", "label": "完成", "status": "completed"},
+        ],
+        "reasoning_graph": _attachment_only_graph(submission),
+        "reasoning_path": ["附件", "缺少文本", "人工复核"],
     }
     return DetectionResult(
         submission_id=submission.id,
         job_id=job.id,
         risk_level="low",
-        fraud_type="待补充文本",
+        fraud_type="待人工复核",
         confidence=0.12,
         is_fraud=False,
-        summary="未提取到可分析文本，暂无法做文本 RAG 判断。",
-        final_reason="当前任务没有可直接送入文本检索与分析链路的文字内容，因此仅保留附件记录。",
+        summary="当前材料缺少可直接分析的正文。",
+        final_reason="系统检测到本次提交主要为附件材料，缺少可直接进入文本 RAG 的正文内容，因此暂不输出明确诈骗类型结论，建议先补充文本摘要、OCR 结果或转人工复核。",
         need_manual_review=True,
         stage_tags=[],
         hit_rules=[],
@@ -415,7 +550,7 @@ def _build_attachment_only_result(submission: DetectionSubmission, job: Detectio
         input_highlights=[],
         retrieved_evidence=[],
         counter_evidence=[],
-        advice=["请补充聊天文本、短信内容或可复制的文字后重新检测。"],
+        advice=["补充文字说明、OCR 提取文本或摘要后再发起检测。"],
         llm_model=None,
         result_detail=detail,
     )
@@ -432,11 +567,20 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
     if submission is None:
         raise RuntimeError(f"Detection submission not found for job: {job_id}")
 
-    job.status = "running"
     job.error_message = None
     job.started_at = _utcnow()
     job.finished_at = None
-    detection_repository.save_job(db, job)
+    job = _set_job_progress(
+        db,
+        job,
+        status="running",
+        step="preprocess",
+        percent=8,
+        extra={
+            "submission_id": str(submission.id),
+            "input_modality": job.input_modality,
+        },
+    )
 
     try:
         if not _strip(submission.text_content):
@@ -445,12 +589,29 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
             job.rule_score = 0
             job.retrieval_query = None
             job.llm_model = settings.detection_llm_model
-            job.status = "completed"
             job.finished_at = _utcnow()
-            detection_repository.save_job(db, job)
+            job = _set_job_progress(
+                db,
+                job,
+                status="completed",
+                step="finalize",
+                percent=100,
+                extra={
+                    "used_modules": ["preprocess", "finalize"],
+                    "reasoning_path": ["附件", "缺少文本", "人工复核"],
+                    "module_trace": result_row.result_detail.get("module_trace", []),
+                },
+            )
             return job
 
-        analysis = analyzer.analyze_text_submission(db, text=submission.text_content or "")
+        def progress_callback(step: str, percent: int, detail: dict[str, Any] | None = None) -> None:
+            _set_job_progress(db, job, status="running", step=step, percent=percent, extra=detail)
+
+        analysis = analyzer.analyze_text_submission(
+            db,
+            text=submission.text_content or "",
+            progress_callback=progress_callback,
+        )
         result_payload = analysis.result_payload
         result_row = DetectionResult(
             submission_id=submission.id,
@@ -475,20 +636,42 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
         )
         detection_repository.save_result(db, result_row)
 
+        result_detail = result_payload.get("result_detail") if isinstance(result_payload, dict) else {}
+        if not isinstance(result_detail, dict):
+            result_detail = {}
+
         job.rule_score = analysis.rule_score
         job.retrieval_query = analysis.retrieval_query
         job.llm_model = analysis.llm_model or settings.detection_llm_model
-        job.status = "completed"
         job.finished_at = _utcnow()
-        detection_repository.save_job(db, job)
+        job = _set_job_progress(
+            db,
+            job,
+            status="completed",
+            step="finalize",
+            percent=100,
+            extra={
+                "used_modules": result_detail.get("used_modules", []),
+                "reasoning_path": result_detail.get("reasoning_path", []),
+                "module_trace": result_detail.get("module_trace", []),
+                "final_score": result_detail.get("final_score"),
+                "reasoning_graph": result_detail.get("reasoning_graph"),
+            },
+        )
         return job
     except Exception as exc:  # noqa: BLE001
         logger.exception("Detection job failed: %s", job.id)
         db.rollback()
-        job.status = "failed"
         job.error_message = str(exc)[:4000]
         job.finished_at = _utcnow()
-        detection_repository.save_job(db, job)
+        job = _set_job_progress(
+            db,
+            job,
+            status="failed",
+            step=job.current_step or "finalize",
+            percent=job.progress_percent or 0,
+            extra={"error": job.error_message},
+        )
         raise
 
 

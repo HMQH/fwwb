@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, useCallback, useState } from "react";
 import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import Animated, {
   FadeInDown,
   FadeInUp,
@@ -15,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import type { DetectionMode } from "@/features/detections";
+import { floatingCaptureService, type FloatingCaptureStatus } from "@/features/floating-capture";
 import { fontFamily, palette, panelShadow } from "@/shared/theme";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
@@ -207,6 +209,13 @@ export default function HomeScreen() {
   const router = useRouter();
   const reduceMotion = useReduceMotionEnabled();
   const { user } = useAuth();
+  const [captureStatus, setCaptureStatus] = useState<FloatingCaptureStatus>({
+    platformSupported: false,
+    overlayPermission: false,
+    bubbleActive: false,
+    hasPendingCapture: false,
+    screenCapturePermission: false,
+  });
 
   const score = useMemo(() => {
     if (!user) {
@@ -216,9 +225,66 @@ export default function HomeScreen() {
     return getScore(user.role, user.guardian_relation);
   }, [user]);
 
+  const refreshCaptureStatus = useCallback(async () => {
+    const nextStatus = await floatingCaptureService.getStatus();
+    setCaptureStatus(nextStatus);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshCaptureStatus();
+    }, [refreshCaptureStatus])
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        void refreshCaptureStatus();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [refreshCaptureStatus]);
+
   if (!user) {
     return null;
   }
+
+  const handleFloatingAssistant = async () => {
+    if (!floatingCaptureService.isSupported()) {
+      Alert.alert("当前版本不支持", "请使用安卓 development build 运行悬浮截图助手。");
+      return;
+    }
+
+    if (!captureStatus.overlayPermission) {
+      Alert.alert(
+        "需要悬浮窗权限",
+        "请先在系统设置中允许本应用显示悬浮窗，开启后再返回首页继续。",
+        [
+          {
+            text: "去设置",
+            onPress: () => floatingCaptureService.openOverlaySettings(),
+          },
+          { text: "稍后再说", style: "cancel" },
+        ]
+      );
+      return;
+    }
+
+    const nextStatus = captureStatus.bubbleActive
+      ? await floatingCaptureService.stopAssistant()
+      : await floatingCaptureService.startAssistant();
+    setCaptureStatus(nextStatus);
+
+    Alert.alert(
+      captureStatus.bubbleActive ? "悬浮助手已关闭" : "悬浮助手已开启",
+      captureStatus.bubbleActive
+        ? "系统悬浮按钮已经关闭。"
+        : "现在可以切到任意页面，点击悬浮按钮框选区域并带回识图页。"
+    );
+  };
 
   return (
     <View style={styles.root}>
@@ -251,6 +317,77 @@ export default function HomeScreen() {
               </Animated.View>
             ))}
           </View>
+
+          <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(420).delay(360)}>
+            <View style={styles.assistantCard}>
+              <View style={styles.assistantHead}>
+                <View style={styles.assistantIconWrap}>
+                  <MaterialCommunityIcons
+                    name="gesture-tap-button"
+                    size={20}
+                    color={palette.accentStrong}
+                  />
+                </View>
+                <View style={styles.assistantCopy}>
+                  <Text style={styles.assistantTitle}>悬浮截图助手</Text>
+                  <Text style={styles.assistantText}>
+                    开启后可在任意界面点击悬浮按钮，框选区域并自动带回图片检测页。
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.assistantMetaRow}>
+                <View
+                  style={[
+                    styles.assistantPill,
+                    captureStatus.bubbleActive && styles.assistantPillActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.assistantPillText,
+                      captureStatus.bubbleActive && styles.assistantPillTextActive,
+                    ]}
+                  >
+                    {captureStatus.bubbleActive ? "已开启" : "未开启"}
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.assistantPill,
+                    captureStatus.overlayPermission && styles.assistantPillActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.assistantPillText,
+                      captureStatus.overlayPermission && styles.assistantPillTextActive,
+                    ]}
+                  >
+                    {captureStatus.overlayPermission ? "权限已就绪" : "需开启权限"}
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.assistantButton,
+                  pressed && styles.entryCardPressed,
+                ]}
+                onPress={() => void handleFloatingAssistant()}
+              >
+                <Text style={styles.assistantButtonText}>
+                  {captureStatus.bubbleActive ? "关闭悬浮助手" : "开启悬浮助手"}
+                </Text>
+                <MaterialCommunityIcons
+                  name={captureStatus.bubbleActive ? "close" : "arrow-right"}
+                  size={16}
+                  color={palette.inkInverse}
+                />
+              </Pressable>
+            </View>
+          </Animated.View>
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -494,6 +631,87 @@ const styles = StyleSheet.create({
   },
   entryTitle: {
     color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  assistantCard: {
+    borderRadius: 24,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 14,
+    ...panelShadow,
+  },
+  assistantHead: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  assistantIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 15,
+    backgroundColor: palette.accentSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  assistantCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  assistantTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  assistantText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  assistantMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  assistantPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: palette.surfaceSoft,
+  },
+  assistantPillActive: {
+    backgroundColor: palette.accentSoft,
+  },
+  assistantPillText: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  assistantPillTextActive: {
+    color: palette.accentStrong,
+  },
+  assistantButton: {
+    minHeight: 48,
+    borderRadius: 18,
+    backgroundColor: palette.accentStrong,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  assistantButtonText: {
+    color: palette.inkInverse,
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "800",

@@ -49,11 +49,16 @@ def _merge_hits(
     limit: int,
 ) -> list[repository.TextChunkSearchHit]:
     merged: dict[tuple[int, int, str], repository.TextChunkSearchHit] = {}
+    hybrid_bonus = max(0.0, min(0.2, settings.detection_retrieval_hybrid_bonus))
 
     def upsert(hit: repository.TextChunkSearchHit) -> None:
         key = (hit.source_id, hit.chunk_index, hit.sample_label)
         current = merged.get(key)
         if current is None:
+            extra_meta = dict(hit.extra_meta or {})
+            score_components = dict(extra_meta.get("score_components") or {})
+            score_components["final_score"] = round(float(hit.score), 4)
+            extra_meta["score_components"] = score_components
             merged[key] = repository.TextChunkSearchHit(
                 source_id=hit.source_id,
                 chunk_index=hit.chunk_index,
@@ -66,14 +71,29 @@ def _merge_hits(
                 embedding_model=hit.embedding_model,
                 score=hit.score,
                 match_source=hit.match_source,
-                extra_meta=hit.extra_meta,
+                extra_meta=extra_meta,
             )
             return
 
-        current.score = max(current.score, hit.score)
-        if current.match_source != hit.match_source:
+        current_meta = dict(current.extra_meta or {})
+        current_components = dict(current_meta.get("score_components") or {})
+        incoming_components = dict((hit.extra_meta or {}).get("score_components") or {})
+        current_components.update(incoming_components)
+
+        vector_score = float(current_components.get("vector_score", 0.0) or 0.0)
+        keyword_score = float(current_components.get("keyword_score", 0.0) or 0.0)
+
+        if hit.match_source != current.match_source and vector_score > 0 and keyword_score > 0:
             current.match_source = "hybrid"
-            current.score += 0.12
+            final_score = min(1.0, max(vector_score, keyword_score) + hybrid_bonus)
+            current_components["hybrid_bonus"] = round(hybrid_bonus, 4)
+        else:
+            final_score = max(float(current.score), float(hit.score), vector_score, keyword_score)
+
+        current.score = round(final_score, 4)
+        current_components["final_score"] = current.score
+        current_meta["score_components"] = current_components
+        current.extra_meta = current_meta
 
     for item in vector_hits:
         upsert(item)

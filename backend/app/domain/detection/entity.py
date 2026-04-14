@@ -1,4 +1,4 @@
-﻿"""检测提交流程相关 ORM。"""
+"""???????? ORM?"""
 from __future__ import annotations
 
 import uuid
@@ -72,6 +72,13 @@ class DetectionJob(Base):
     job_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=sql_text("'text_rag'"))
     input_modality: Mapped[str] = mapped_column(Text, nullable=False, server_default=sql_text("'text'"))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=sql_text("'pending'"))
+    current_step: Mapped[str | None] = mapped_column(Text, nullable=True, server_default=sql_text("'queued'"))
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
+    progress_detail: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=sql_text("'{}'::jsonb"),
+    )
     rule_score: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
     retrieval_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     llm_model: Mapped[str | None] = mapped_column(Text, nullable=True)

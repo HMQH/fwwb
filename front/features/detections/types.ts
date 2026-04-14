@@ -1,4 +1,15 @@
-﻿export type DetectionMode = "text" | "visual" | "audio" | "mixed";
+export type DetectionMode = "text" | "visual" | "audio" | "mixed";
+
+export type KnownDetectionPipelineStep =
+  | "queued"
+  | "preprocess"
+  | "embedding"
+  | "vector_retrieval"
+  | "graph_reasoning"
+  | "llm_reasoning"
+  | "finalize";
+
+export type DetectionPipelineStep = KnownDetectionPipelineStep | string;
 
 export type PickedFile = {
   uri: string;
@@ -46,6 +57,74 @@ export type DetectionEvidence = {
   reason: string;
 };
 
+export type DetectionModuleTraceItem = {
+  key: string;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  enabled?: boolean;
+  metrics?: Record<string, number | string | null>;
+  [key: string]: unknown;
+};
+
+export type DetectionGraphNode = {
+  id: string;
+  label: string;
+  kind: string;
+  tone?: string | null;
+  lane?: number | null;
+  order?: number | null;
+  strength?: number | null;
+  meta?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+
+export type DetectionGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  tone?: string | null;
+  kind?: string | null;
+  weight?: number | null;
+  [key: string]: unknown;
+};
+
+export type DetectionReasoningGraph = {
+  nodes: DetectionGraphNode[];
+  edges: DetectionGraphEdge[];
+  highlighted_path?: string[];
+  highlighted_labels?: string[];
+  lane_labels?: string[];
+  summary_metrics?: Record<string, number | string | null>;
+  [key: string]: unknown;
+};
+
+export type DetectionResultDetail = {
+  reasoning_graph?: DetectionReasoningGraph | null;
+  reasoning_path?: string[];
+  used_modules?: string[];
+  module_trace?: DetectionModuleTraceItem[];
+  final_score?: number | null;
+  llm_used?: boolean | null;
+  semantic_rule_used?: boolean | null;
+  semantic_rule_model?: string | null;
+  risk_evidence?: string[];
+  counter_evidence?: string[];
+  [key: string]: unknown;
+};
+
+export type DetectionPipelineProgressDetail = {
+  status?: string;
+  current_step?: string | null;
+  progress_percent?: number | null;
+  module_trace?: DetectionModuleTraceItem[];
+  reasoning_graph?: DetectionReasoningGraph | null;
+  reasoning_path?: string[];
+  used_modules?: string[];
+  final_score?: number | null;
+  error?: string | null;
+  [key: string]: unknown;
+};
+
 export type DetectionResult = {
   id: string;
   submission_id: string;
@@ -66,7 +145,7 @@ export type DetectionResult = {
   counter_evidence: DetectionEvidence[];
   advice: string[];
   llm_model: string | null;
-  result_detail: Record<string, unknown> | unknown[] | null;
+  result_detail: DetectionResultDetail | Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -77,6 +156,9 @@ export type DetectionJob = {
   job_type: string;
   input_modality: string;
   status: "pending" | "running" | "completed" | "failed" | string;
+  current_step: DetectionPipelineStep | null;
+  progress_percent: number;
+  progress_detail: DetectionPipelineProgressDetail | Record<string, unknown> | null;
   rule_score: number;
   retrieval_query: string | null;
   llm_model: string | null;

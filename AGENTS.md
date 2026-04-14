@@ -14,12 +14,35 @@
 - `cd backend && python -m venv .venv && .\.venv\Scripts\Activate.ps1 && pip install -r requirements.txt`：创建并安装后端虚拟环境（PowerShell）。
 - `cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000`：本地启动 API。
 - `curl http://127.0.0.1:8000/health` 与 `/health/db`：快速检查后端与数据库连通性。
-电脑上开启adb reverse tcp:8081 tcp:8081
-adb reverse tcp:8000 tcp:8000 手机转发
+- 电脑上开启 `adb reverse tcp:8081 tcp:8081`
+- 电脑上开启 `adb reverse tcp:8000 tcp:8000`：手机转发
 
 ## 代码风格与命名
 优先小范围、局部修改。TypeScript 为 `strict`，沿用现有风格：2 空格缩进、双引号、分号；组件 PascalCase（如 `AuthProvider.tsx`），工具/hooks 用 camelCase。Python 遵循 PEP 8：4 空格缩进，模块与函数 snake_case，并写清类型注解。FastAPI 路由文件保持精简；业务规则放在 `domain/*/service.py`。真正共用的代码放在 `front/shared/` 或 `backend/app/shared/`，避免无关功能之间互相 import。
 
+## 前端展示约束
+- 不要大段营销文案，同步改成 App 卡片流，避免一进去又看到“网页感”布局。
+- 前端不要出现描述性小字、说明性长句、解释性段落；界面只保留必要标签、数据、按钮与结果。
+- 推理图、流程图必须是真正的节点连线图或阶段动画，不要用静态文案、假图、纯列表替代。
+- 不做“网页感”大横幅、大段说明区，优先卡片化、分段、移动端友好的信息密度。
+- 文案要短、直接、可操作；避免“系统会先……再……”这类解释性句子。
 
-不要大段营销文案,同步改成 App 卡片流，避免你下次一进去又看到“网页感”布局
-
+## 编码、文案与占位符安全
+- 所有中文文件必须使用 UTF-8；前端 `ts/tsx` 优先使用 UTF-8 无 BOM，禁止用会把中文写成 `????` 的编码保存。
+- 任何面向用户的文本，禁止提交 `?`、`??`、`???` 这类占位符；包括：
+  - 前端页面标题、按钮、卡片标签、空态
+  - 后端 fallback `summary` / `advice` / `final_reason`
+  - 推理图节点名、链路标签、管线步骤名
+  - 数据库初始化、测试数据、演示数据中的显示文案
+- 搜索问号占位时，要区分真正的脏文案与语法符号，不能误伤 TypeScript 的 `??`、`?.`、可选属性 `?:`。
+- 如果页面文字来自后端或数据库，不能只改前端；必须同时检查：
+  - 前端静态文案
+  - 后端返回字段
+  - 历史库里的脏数据
+  - 前端对历史脏标签的兜底清洗
+- 控制台若出现中文乱码，先确认是终端编码问题还是文件实际损坏；不要只凭 PowerShell 输出判断源码已坏。
+- 改完后至少执行：
+  - `cd front && npx tsc --noEmit`
+  - `cd front && npm run lint`
+  - `python -m py_compile backend\\app\\domain\\detection\\analyzer.py backend\\app\\domain\\detection\\service.py`
+- 提交前对 `front/app`、`front/features`、`front/shared`、`backend/app` 做一轮用户文案扫描，确保没有残留 `??` 占位。
