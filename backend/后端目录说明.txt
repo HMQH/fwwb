@@ -1,0 +1,88 @@
+backend 目录结构说明
+
+本文说明 G:\Document\contest\fwwb\Code\backend 下各文件夹及根目录常见文件的用途，便于开发与答辩时对照。
+
+————————————————————————————————————————————
+一、根目录 backend/
+
+main.py
+  FastAPI 应用入口：创建 app、中间件（如 CORS）、挂载路由、/health 等。启动命令一般在该目录执行：
+  uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+requirements.txt
+  Python 依赖列表，用于 pip install -r requirements.txt。
+
+.env（本地自建，勿提交仓库）
+  环境变量，如 DATABASE_URL；具体键名见 app/shared/core/config.py。
+
+.env.example
+  .env 示例，不含真实密码，方便他人复制改名使用。
+
+__pycache__/
+  Python 解释器生成的字节码缓存，可忽略或加入 .gitignore，勿当作业务代码维护。
+
+————————————————————————————————————————————
+二、app/
+
+Python 包根目录，存放可导入的业务代码（from app.xxx import ...）。与根目录 main.py 配合：main 负责组装，具体逻辑在 app 子包中。
+
+app/__init__.py 标识 app 为包，可为空或写简短包说明。
+
+————————————————————————————————————————————
+三、app/api/
+
+HTTP /接口层相关公共代码（若存在）。
+
+典型文件（可按需新增）：
+  deps.py — FastAPI Depends：如 get_db（数据库会话）、get_current_user（解析 JWT 后的当前用户）等，供路由注入使用。
+
+app/api/routes/
+
+按业务拆分的**路由模块**（每个 .py 内定义 APIRouter，包含若干 @router.get/post）。
+例如：auth.py（注册/登录）、users.py。main.py 或 app 入口里通过 include_router 挂载前缀（如 /api/auth）。
+
+职责：接收请求、调用 domain 下对应 service、返回响应；不写复杂业务与 SQL 细节。
+
+————————————————————————————————————————————
+四、app/shared/
+
+与具体业务域无关的**共用基础设施**（多域复用），集中放在 shared 下。
+
+  shared/db/       — engine、SessionLocal、get_db()、ORM 声明基类 Base
+  shared/core/     — config.py（环境变量 / .env）、security.py（密码哈希、JWT）
+  shared/schemas/  — Pydantic：请求体、响应体、校验（HTTP JSON 层）
+
+职责：domain 通过 app.shared.* 引用；不在此写某一业务的专属规则。
+
+————————————————————————————————————————————
+五、app/domain/
+
+按**业务域**分包（类似 Spring 里按模块分包），每个子目录自洽。
+
+当前示例：app/domain/user/
+  entity.py      — SQLAlchemy ORM（User ↔ users 表）
+  repository.py  — 仅数据访问（按手机号/主键查询、保存等）
+  service.py     — 域内业务（注册、登录、角色计算等）
+  __init__.py    — 对外导出常用符号（可选）
+
+职责：路由不写 SQL；service 编排业务；repository 封装 Session操作。
+
+————————————————————————————————————————————
+六、（已合并进 domain）
+
+原全局 app/services/、app/models/ 已按域迁入 domain/<域名>/，避免跨层散乱。
+
+————————————————————————————————————————————
+七、tests/
+
+**自动化测试**（如 pytest）：接口测试、单元测试。Demo 阶段可为空，随项目完善再补充。
+
+————————————————————————————————————————————
+八、数据流简记
+
+请求 → api/routes（路由）→ shared/schemas（校验）→ domain/*/service（业务）→ domain/*/repository + shared/db 会话（持久化）→ 返回 shared/schemas / 字典。
+
+配置与安全 → shared/core；连接 → shared/db。
+
+————————————————————————————————————————————
+文档随目录演进可更新；若新增 alembic/、scripts/ 等，在后续版本中补充条目即可。

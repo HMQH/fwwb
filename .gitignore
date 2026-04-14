@@ -1,0 +1,38 @@
+# Dependencies (front / any JS tooling)
+node_modules/
+
+# Python (backend)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.eggs/
+*.egg-info/
+dist/
+build/
+
+
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+others/
+.claude
+skills-lock.json
+
+
+
+# 用户上传文件（运行时生成；保留 storage/uploads/.gitkeep）
+storage/uploads/*
+!storage/uploads/.gitkeep
+
+/fraud_source/
+/文档/
