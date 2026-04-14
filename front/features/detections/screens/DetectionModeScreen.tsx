@@ -5,9 +5,11 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
+import { floatingCaptureService } from "@/features/floating-capture";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -314,6 +316,33 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       // silent
     }
   }, [activeSubmissionId, token]);
+
+  const consumeFloatingCapture = useCallback(async () => {
+    if (!config.allow.image) {
+      return;
+    }
+
+    const captured = await floatingCaptureService.consumePendingCapture();
+    if (!captured) {
+      return;
+    }
+
+    setImageFiles((prev) => {
+      if (prev.some((item) => item.uri === captured.uri)) {
+        return prev;
+      }
+
+      return [...prev, { ...captured, key: nextKey() }];
+    });
+
+    Alert.alert("截图已带回", "悬浮截图已加入图片素材，你可以继续补充内容后再开始检测。");
+  }, [config.allow.image]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void consumeFloatingCapture();
+    }, [consumeFloatingCapture])
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
