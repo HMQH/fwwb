@@ -10,6 +10,9 @@ CREATE TABLE users (
   display_name text NOT NULL,
   avatar_url text,
   guardian_relation text,
+   profile_summary text,
+   safety_score integer NOT NULL DEFAULT 95,
+   memory_urgency_score integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

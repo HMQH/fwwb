@@ -75,6 +75,25 @@ def save_avatar_bytes(
     return f"/uploads/{relative}"
 
 
+def save_relation_avatar_bytes(
+    *,
+    upload_root: Path,
+    user_id: uuid.UUID,
+    relation_id: uuid.UUID,
+    data: bytes,
+    suffix: str,
+) -> str:
+    """写入关系对象头像文件，返回可直接访问的 URL 路径。"""
+    directory = upload_root / "relations" / str(user_id) / str(relation_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    ext = suffix if suffix.startswith(".") else f".{suffix}" if suffix else ".png"
+    name = f"avatar-{uuid.uuid4()}{ext}"
+    path = directory / name
+    path.write_bytes(data)
+    relative = path.relative_to(upload_root.resolve()).as_posix()
+    return f"/uploads/{relative}"
+
+
 def safe_suffix(filename: str | None, fallback: str) -> str:
     if not filename:
         return fallback

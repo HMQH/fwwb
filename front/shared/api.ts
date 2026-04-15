@@ -1,9 +1,6 @@
 const fallbackApiBase = "http://127.0.0.1:8000";
 
-export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? fallbackApiBase).replace(
-  /\/+$/,
-  ""
-);
+export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL ?? fallbackApiBase).replace(/\/+$/, "");
 
 export function resolveApiFileUrl(path?: string | null) {
   if (!path) {
@@ -15,6 +12,23 @@ export function resolveApiFileUrl(path?: string | null) {
   }
 
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+export function resolveUploadFileUrl(path?: string | null) {
+  if (!path) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  if (path.startsWith("/uploads/")) {
+    return `${API_BASE}${path}`;
+  }
+
+  const normalized = path.replace(/^\/+/, "");
+  return `${API_BASE}/uploads/${normalized}`;
 }
 
 export class ApiError extends Error {
@@ -63,7 +77,7 @@ function getErrorMessage(payload: unknown, fallback: string) {
 
         return null;
       })
-      .filter(Boolean);
+      .filter((item): item is string => Boolean(item));
 
     if (messages.length > 0) {
       return messages.join("；");
@@ -125,7 +139,7 @@ export async function request<T>(
     const message =
       error instanceof Error && error.name === "AbortError"
         ? "请求超时，请检查网络后重试"
-        : "当前服务暂时不可用，请稍后再试";
+        : "当前服务暂不可用，请稍后再试";
 
     throw new ApiError(0, message, error);
   } finally {

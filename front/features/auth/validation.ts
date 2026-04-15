@@ -14,9 +14,7 @@ export type RegisterFormValues = {
 };
 
 export type LoginFormErrors = Partial<Record<keyof LoginFormValues | "form", string>>;
-export type RegisterFormErrors = Partial<
-  Record<keyof RegisterFormValues | "form", string>
->;
+export type RegisterFormErrors = Partial<Record<keyof RegisterFormValues | "form", string>>;
 
 const PHONE_RE = /^1\d{10}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

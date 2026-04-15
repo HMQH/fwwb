@@ -55,6 +55,16 @@ def _form_str(value: object | None) -> str | None:
     return None
 
 
+def _form_uuid(value: object | None) -> uuid.UUID | None:
+    normalized = _form_str(value)
+    if not normalized:
+        return None
+    try:
+        return uuid.UUID(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="关系对象参数无效") from exc
+
+
 @router.post(
     "/submit",
     response_model=DetectionSubmitAcceptedResponse,
@@ -69,7 +79,8 @@ async def submit_detection(
     max_b = settings.max_upload_bytes
     form = await request.form()
 
-    tc = _form_str(form.get("text_content"))
+    text_content = _form_str(form.get("text_content"))
+    relation_profile_id = _form_uuid(form.get("relation_profile_id"))
     bundles: dict[UploadKind, list[tuple[bytes, str]]] = {
         "text": await _collect_uploads(form, "text_files", max_bytes=max_b),
         "audio": await _collect_uploads(form, "audio_files", max_bytes=max_b),
@@ -82,29 +93,15 @@ async def submit_detection(
         user_id=current.id,
         upload_root_cfg=settings.upload_root,
         max_upload_bytes=max_b,
-        text_content=tc,
+        text_content=text_content,
+        relation_profile_id=relation_profile_id,
         file_bundles=bundles,
     )
     if settings.detection_background_on_submit:
         background_tasks.add_task(detection_service.process_job_in_new_session, job.id)
     return DetectionSubmitAcceptedResponse.model_validate(
         {
-            "submission": {
-                "id": submission.id,
-                "user_id": submission.user_id,
-                "storage_batch_id": submission.storage_batch_id,
-                "has_text": submission.has_text,
-                "has_audio": submission.has_audio,
-                "has_image": submission.has_image,
-                "has_video": submission.has_video,
-                "text_paths": list(submission.text_paths or []),
-                "audio_paths": list(submission.audio_paths or []),
-                "image_paths": list(submission.image_paths or []),
-                "video_paths": list(submission.video_paths or []),
-                "text_content": submission.text_content,
-                "created_at": submission.created_at,
-                "updated_at": submission.updated_at,
-            },
+            "submission": detection_service.build_submission_payload(db, submission),
             "job": detection_service.get_job_detail(db, user_id=current.id, job_id=job.id),
         }
     )
@@ -142,6 +139,16 @@ def get_submission_detail(
         submission_id=submission_id,
     )
     return DetectionSubmissionDetailResponse.model_validate(detail)
+
+
+def _form_uuid(value: object | None) -> uuid.UUID | None:
+    normalized = _form_str(value)
+    if not normalized:
+        return None
+    try:
+        return uuid.UUID(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="关系对象参数无效") from exc
 
 
 @router.post("/submissions/{submission_id}/run", response_model=DetectionJobResponse)

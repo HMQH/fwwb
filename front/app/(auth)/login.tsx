@@ -24,14 +24,11 @@ export default function LoginScreen() {
 
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [values, setValues] = useState<LoginFormValues>({
-    phone: "",
-    password: "",
-  });
+  const [values, setValues] = useState<LoginFormValues>({ phone: "", password: "" });
   const [errors, setErrors] = useState<LoginFormErrors>({});
 
   if (status === "loading") {
-    return <LoadingScreen label="正在确认账户状态…" />;
+    return <LoadingScreen label="正在确认账号状态…" />;
   }
 
   if (status === "authenticated") {
@@ -39,11 +36,7 @@ export default function LoginScreen() {
   }
 
   const clearFieldError = (field: keyof LoginFormValues) => {
-    setErrors((prev) => ({
-      ...prev,
-      [field]: undefined,
-      form: undefined,
-    }));
+    setErrors((prev) => ({ ...prev, [field]: undefined, form: undefined }));
   };
 
   const handleSubmit = async () => {
@@ -110,12 +103,7 @@ export default function LoginScreen() {
         placeholder="请输入密码"
         returnKeyType="done"
         onSubmitEditing={handleSubmit}
-        accessory={
-          <TogglePill
-            label={showPassword ? "隐藏" : "显示"}
-            onPress={() => setShowPassword((prev) => !prev)}
-          />
-        }
+        accessory={<TogglePill label={showPassword ? "隐藏" : "显示"} onPress={() => setShowPassword((prev) => !prev)} />}
       />
 
       <Pressable
@@ -131,9 +119,9 @@ export default function LoginScreen() {
       </Pressable>
 
       <View style={styles.footerRow}>
-        <Text style={styles.footerText}>还没有账号？</Text>
+        <Text style={styles.footerText}>{"还没有账号？"}</Text>
         <Pressable onPress={() => router.push("/register")}>
-          <Text style={styles.footerLink}>注册</Text>
+          <Text style={styles.footerLink}>{"注册"}</Text>
         </Pressable>
       </View>
     </AuthShell>
@@ -164,12 +152,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     marginTop: 4,
   },
-  primaryButtonPressed: {
-    opacity: 0.9,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.6,
-  },
+  primaryButtonPressed: { opacity: 0.9 },
+  primaryButtonDisabled: { opacity: 0.6 },
   primaryButtonText: {
     color: palette.inkInverse,
     fontSize: 16,
@@ -184,12 +168,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingTop: 2,
   },
-  footerText: {
-    color: palette.inkSoft,
-    fontSize: 14,
-    lineHeight: 20,
-    fontFamily: fontFamily.body,
-  },
+  footerText: { color: palette.inkSoft, fontSize: 14, lineHeight: 20, fontFamily: fontFamily.body },
   footerLink: {
     color: palette.accentStrong,
     fontSize: 14,

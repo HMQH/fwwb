@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Text, func
+from sqlalchemy import Date, DateTime, Integer, Text, func, text as sql_text
 from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
@@ -35,6 +35,9 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     guardian_relation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    profile_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    safety_score: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("95"))
+    memory_urgency_score: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

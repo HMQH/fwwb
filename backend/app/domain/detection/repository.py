@@ -154,3 +154,19 @@ def get_latest_result_for_submission(
         .limit(1)
     )
     return db.execute(stmt).scalars().first()
+
+
+def list_recent_results_for_user(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    limit: int,
+) -> list[tuple[DetectionResult, DetectionSubmission]]:
+    stmt = (
+        select(DetectionResult, DetectionSubmission)
+        .join(DetectionSubmission, DetectionSubmission.id == DetectionResult.submission_id)
+        .where(DetectionSubmission.user_id == user_id)
+        .order_by(DetectionResult.created_at.desc())
+        .limit(limit)
+    )
+    return [(result, submission) for result, submission in db.execute(stmt).all()]

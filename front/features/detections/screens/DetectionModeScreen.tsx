@@ -4,12 +4,14 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import { floatingCaptureService } from "@/features/floating-capture";
+import { relationsApi } from "@/features/relations/api";
+import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -168,7 +170,7 @@ function SectionHeader({
 
 export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, refreshCurrentUser } = useAuth();
   const config = modeConfig[mode];
 
   const [textContent, setTextContent] = useState("");
@@ -176,6 +178,9 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [audioFiles, setAudioFiles] = useState<AppendixItem[]>([]);
   const [imageFiles, setImageFiles] = useState<AppendixItem[]>([]);
   const [videoFiles, setVideoFiles] = useState<AppendixItem[]>([]);
+  const [relations, setRelations] = useState<RelationProfileSummary[]>([]);
+  const [relationsLoading, setRelationsLoading] = useState(false);
+  const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [activeJob, setActiveJob] = useState<DetectionJob | null>(null);
   const [detail, setDetail] = useState<DetectionSubmissionDetail | null>(null);
@@ -289,6 +294,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const hasPayload = useMemo(() => {
     return Boolean(textContent.trim()) || textFiles.length > 0 || audioFiles.length > 0 || imageFiles.length > 0 || videoFiles.length > 0;
   }, [audioFiles.length, imageFiles.length, textContent, textFiles.length, videoFiles.length]);
+  const selectedRelation = useMemo(
+    () => relations.find((item) => item.id === selectedRelationId) ?? null,
+    [relations, selectedRelationId]
+  );
 
   const resetForm = useCallback(() => {
     setTextContent("");
@@ -338,10 +347,30 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     Alert.alert("截图已带回", "悬浮截图已加入图片素材，你可以继续补充内容后再开始检测。");
   }, [config.allow.image]);
 
+  const loadRelations = useCallback(async () => {
+    if (!token) {
+      setRelations([]);
+      setSelectedRelationId(null);
+      return;
+    }
+
+    setRelationsLoading(true);
+    try {
+      const items = await relationsApi.list(token);
+      setRelations(items);
+      setSelectedRelationId((prev) => (prev && items.some((item) => item.id === prev) ? prev : null));
+    } catch {
+      // ignore relation loading failure, detection can still continue
+    } finally {
+      setRelationsLoading(false);
+    }
+  }, [token]);
+
   useFocusEffect(
     useCallback(() => {
       void consumeFloatingCapture();
-    }, [consumeFloatingCapture])
+      void loadRelations();
+    }, [consumeFloatingCapture, loadRelations])
   );
 
   const handleSubmit = useCallback(async () => {
@@ -356,6 +385,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
     const formData = buildDetectionSubmitFormData({
       text_content: textContent,
+      relation_profile_id: selectedRelationId,
       text_files: textFiles,
       audio_files: audioFiles,
       image_files: imageFiles,
@@ -402,6 +432,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     if (activeJob.status !== "pending" && activeJob.status !== "running") {
       if (activeJob.status === "completed") {
         void refreshDetail();
+        void refreshCurrentUser();
       }
       return;
     }
@@ -421,6 +452,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         );
         if (latestJob.status === "completed") {
           void refreshDetail();
+          void refreshCurrentUser();
         }
       } catch {
         // ignore
@@ -428,7 +460,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     }, 2200);
 
     return () => clearTimeout(timer);
-  }, [activeJob, refreshDetail, token]);
+  }, [activeJob, refreshCurrentUser, refreshDetail, token]);
 
   const materialCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
 
@@ -451,6 +483,11 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                       <Text style={styles.heroTagText}>{tag}</Text>
                     </View>
                   ))}
+                  {selectedRelation ? (
+                    <View style={[styles.heroTag, styles.heroRelationTag]}>
+                      <Text style={styles.heroRelationTagText}>{selectedRelation.name}</Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -459,6 +496,72 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
               <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
               <CountPill label="总数" value={materialCount} />
             </View>
+          </View>
+
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              title="关联对象"
+              count={relations.length}
+              actions={
+                <Pressable
+                  style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
+                  onPress={() => router.push({ pathname: "/relations" })}
+                >
+                  <MaterialCommunityIcons name="account-plus-outline" size={16} color={palette.accentStrong} />
+                  <Text style={styles.addButtonText}>管理</Text>
+                </Pressable>
+              }
+            />
+            {relations.length ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.relationChipRow}
+              >
+                <Pressable
+                  onPress={() => setSelectedRelationId(null)}
+                  style={({ pressed }) => [
+                    styles.relationChip,
+                    !selectedRelationId && styles.relationChipActive,
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text style={[styles.relationChipText, !selectedRelationId && styles.relationChipTextActive]}>
+                    不关联
+                  </Text>
+                </Pressable>
+                {relations.map((relation) => {
+                  const active = selectedRelationId === relation.id;
+                  const meta = relationTypeMeta[relation.relation_type];
+                  return (
+                    <Pressable
+                      key={relation.id}
+                      onPress={() => setSelectedRelationId(relation.id)}
+                      style={({ pressed }) => [
+                        styles.relationChip,
+                        active && styles.relationChipActive,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={[styles.relationChipText, active && styles.relationChipTextActive]}>
+                        {relation.name}
+                      </Text>
+                      <Text style={[styles.relationChipMeta, active && styles.relationChipMetaActive]}>
+                        {meta?.label ?? "对象"}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptyTile}>
+                {relationsLoading ? (
+                  <ActivityIndicator size="small" color={palette.accentStrong} />
+                ) : (
+                  <Text style={styles.emptyTileText}>暂无关系对象</Text>
+                )}
+              </View>
+            )}
           </View>
 
           {config.allow.text ? (
@@ -498,10 +601,21 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 title="图片"
                 count={imageFiles.length}
                 actions={
-                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
-                    <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
-                    <Text style={styles.addButtonText}>相册</Text>
-                  </Pressable>
+                  <View style={styles.inlineButtonRow}>
+                    <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
+                      <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
+                      <Text style={styles.addButtonText}>相册</Text>
+                    </Pressable>
+                    {mode === "visual" ? (
+                      <Pressable
+                        style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
+                        onPress={() => router.push("/detect-ai-face")}
+                      >
+                        <MaterialCommunityIcons name="face-recognition" size={16} color={palette.accentStrong} />
+                        <Text style={styles.addButtonText}>AI换脸</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 }
               />
               <PreviewGrid items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
@@ -654,6 +768,16 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
+  heroRelationTag: {
+    backgroundColor: palette.accent,
+  },
+  heroRelationTagText: {
+    color: palette.inkInverse,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
   heroMetricRow: { flexDirection: "row", gap: 10 },
   countPill: {
     flex: 1,
@@ -724,6 +848,43 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.body,
   },
   inlineButtonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  relationChipRow: {
+    gap: 10,
+    paddingRight: 6,
+  },
+  relationChip: {
+    minWidth: 92,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  relationChipActive: {
+    backgroundColor: palette.accentStrong,
+    borderColor: palette.accentStrong,
+  },
+  relationChipText: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  relationChipTextActive: {
+    color: palette.inkInverse,
+  },
+  relationChipMeta: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
+  },
+  relationChipMetaActive: {
+    color: "rgba(255,255,255,0.78)",
+  },
   addButton: {
     minHeight: 38,
     borderRadius: radius.pill,

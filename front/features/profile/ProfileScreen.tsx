@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -26,51 +27,30 @@ import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 const fallbackAvatar = require("../../assets/images/anti-fraud-logo.png");
 
+const guardianOptions = ["self", "parent", "spouse", "child", "relative"] as const;
+
+const quickEntries = [
+  { icon: "account-details-outline", title: "用户画像", route: "/profile-memory" as const },
+  { icon: "folder-multiple-image", title: "上传管理", route: "/uploads" as const },
+  { icon: "timeline-text-outline", title: "检测记录", route: "/records" as const },
+  { icon: "account-network-outline", title: "关系记忆", route: "/relations" as const },
+] as const;
+
+const serviceEntries = [
+  { icon: "help-circle-outline", title: "帮助中心" },
+  { icon: "shield-lock-outline", title: "账号安全" },
+  { icon: "file-document-outline", title: "隐私协议" },
+] as const;
+
 function maskPhone(phone: string) {
   if (phone.length !== 11) {
     return phone;
   }
-
   return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
 }
 
-const guardianOptions = ["self", "parent", "spouse", "child", "relative"] as const;
-
-const quickEntries = [
-  {
-    icon: "account-multiple-outline",
-    title: "监护人管理",
-  },
-  {
-    icon: "shield-check-outline",
-    title: "安全报告",
-  },
-  {
-    icon: "bell-ring-outline",
-    title: "风险消息",
-  },
-  {
-    icon: "cog-outline",
-    title: "设置中心",
-  },
-] as const;
-
-const serviceEntries = [
-  {
-    icon: "help-circle-outline",
-    title: "帮助中心",
-  },
-  {
-    icon: "shield-lock-outline",
-    title: "账号安全",
-  },
-  {
-    icon: "file-document-outline",
-    title: "隐私与协议",
-  },
-] as const;
-
 export default function ProfileScreen() {
+  const router = useRouter();
   const { user, token, signOut, refreshCurrentUser } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -81,7 +61,6 @@ export default function ProfileScreen() {
     if (!user) {
       return null;
     }
-
     return roleMeta[user.role];
   }, [user]);
 
@@ -91,13 +70,13 @@ export default function ProfileScreen() {
     return null;
   }
 
-  const selectedGuardian = user.guardian_relation ?? (user.role === "child" ? "parent" : "self");
+  const selectedGuardian = (user.guardian_relation ?? (user.role === "child" ? "parent" : "self")) as (typeof guardianOptions)[number];
   const selectedMeta = guardianMeta[selectedGuardian];
 
   const stats = [
-    { label: "守护模式", value: currentRole.label },
-    { label: "监护关系", value: selectedMeta.label },
-    { label: "手机号", value: maskPhone(user.phone) },
+    { label: "模式", value: currentRole.label },
+    { label: "监护", value: selectedMeta.label },
+    { label: "手机", value: maskPhone(user.phone) },
   ];
 
   const handleSignOut = async () => {
@@ -121,7 +100,7 @@ export default function ProfileScreen() {
       await authApi.updateGuardian({ guardian_relation: guardianRelation }, token);
       await refreshCurrentUser();
     } catch (error) {
-      setGuardianError(error instanceof Error ? error.message : "监护人设置失败，请稍后重试");
+      setGuardianError(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSavingGuardian(false);
     }
@@ -134,7 +113,7 @@ export default function ProfileScreen() {
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("需要相册权限", "请在系统设置中允许访问相册后再更换头像。");
+      Alert.alert("需要相册权限", "请先允许访问相册");
       return;
     }
 
@@ -150,12 +129,10 @@ export default function ProfileScreen() {
     }
 
     const asset = result.assets[0];
-    const fileName = asset.fileName?.trim() || `avatar-${Date.now()}.jpg`;
-    const mimeType = asset.mimeType || "image/jpeg";
     const file: LocalImageAsset = {
       uri: asset.uri,
-      name: fileName,
-      mimeType,
+      name: asset.fileName?.trim() || `avatar-${Date.now()}.jpg`,
+      mimeType: asset.mimeType || "image/jpeg",
     };
 
     setUploadingAvatar(true);
@@ -163,8 +140,7 @@ export default function ProfileScreen() {
       await authApi.uploadAvatar(file, token);
       await refreshCurrentUser();
     } catch (error) {
-      const message =
-        error instanceof ApiError ? error.message : "头像上传失败，请稍后重试";
+      const message = error instanceof ApiError ? error.message : "头像上传失败";
       Alert.alert("上传失败", message);
     } finally {
       setUploadingAvatar(false);
@@ -191,11 +167,7 @@ export default function ProfileScreen() {
                 ]}
               >
                 <View style={styles.avatarWrap}>
-                  <Image
-                    source={avatarUri ? { uri: avatarUri } : fallbackAvatar}
-                    style={styles.avatar}
-                    resizeMode="cover"
-                  />
+                  <Image source={avatarUri ? { uri: avatarUri } : fallbackAvatar} style={styles.avatar} resizeMode="cover" />
                   {uploadingAvatar ? (
                     <View style={styles.avatarLoadingOverlay}>
                       <ActivityIndicator color={palette.white} />
@@ -228,26 +200,32 @@ export default function ProfileScreen() {
 
           <View style={styles.quickGrid}>
             {quickEntries.map((item) => (
-              <View key={item.title} style={styles.quickCard}>
+              <Pressable
+                key={item.title}
+                onPress={() => router.push(item.route as never)}
+                style={({ pressed }) => [styles.quickCard, styles.quickCardInteractive, pressed && styles.buttonPressed]}
+              >
                 <View style={styles.quickIconWrap}>
                   <MaterialCommunityIcons name={item.icon} size={20} color={palette.accentStrong} />
                 </View>
-                <Text style={styles.quickTitle}>{item.title}</Text>
-              </View>
+                <View style={styles.quickTitleRow}>
+                  <Text style={styles.quickTitle}>{item.title}</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={palette.lineStrong} />
+                </View>
+              </Pressable>
             ))}
           </View>
 
           <View style={styles.managementCard}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>监护人管理</Text>
-              {savingGuardian ? <Text style={styles.cardStatus}>保存中…</Text> : null}
+              <Text style={styles.cardTitle}>监护关系</Text>
+              {savingGuardian ? <Text style={styles.cardStatus}>保存中</Text> : null}
             </View>
 
             <View style={styles.guardianList}>
               {guardianOptions.map((item) => {
                 const meta = guardianMeta[item];
                 const active = selectedGuardian === item;
-
                 return (
                   <Pressable
                     key={item}
@@ -258,12 +236,8 @@ export default function ProfileScreen() {
                       pressed && styles.guardianOptionPressed,
                     ]}
                   >
-                    <Text style={[styles.guardianLabel, active && styles.guardianLabelActive]}>
-                      {meta.label}
-                    </Text>
-                    <Text style={[styles.guardianDetail, active && styles.guardianDetailActive]}>
-                      {meta.detail}
-                    </Text>
+                    <Text style={[styles.guardianLabel, active && styles.guardianLabelActive]}>{meta.label}</Text>
+                    <Text style={[styles.guardianDetail, active && styles.guardianDetailActive]}>{meta.detail}</Text>
                   </Pressable>
                 );
               })}
@@ -303,19 +277,9 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: palette.background,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 24,
-    gap: 16,
-  },
+  root: { flex: 1, backgroundColor: palette.background },
+  safeArea: { flex: 1 },
+  content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 16 },
   headerCard: {
     borderRadius: radius.xl,
     paddingHorizontal: 18,
@@ -326,16 +290,8 @@ const styles = StyleSheet.create({
     gap: 18,
     ...panelShadow,
   },
-  profileTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-  },
-  avatarOuter: {
-    width: 76,
-    height: 76,
-    position: "relative",
-  },
+  profileTop: { flexDirection: "row", alignItems: "center", gap: 14 },
+  avatarOuter: { width: 76, height: 76, position: "relative" },
   avatarWrap: {
     width: 76,
     height: 76,
@@ -345,10 +301,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: palette.white,
   },
-  avatar: {
-    width: "100%",
-    height: "100%",
-  },
+  avatar: { width: "100%", height: "100%" },
   avatarLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.38)",
@@ -369,10 +322,7 @@ const styles = StyleSheet.create({
     borderColor: palette.white,
     ...panelShadow,
   },
-  profileMeta: {
-    flex: 1,
-    gap: 6,
-  },
+  profileMeta: { flex: 1, gap: 6 },
   profileName: {
     color: palette.ink,
     fontSize: 22,
@@ -400,10 +350,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontFamily: fontFamily.body,
   },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
+  statsRow: { flexDirection: "row", gap: 10 },
   statCard: {
     flex: 1,
     minHeight: 82,
@@ -428,11 +375,7 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontFamily: fontFamily.body,
   },
-  quickGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
+  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   quickCard: {
     width: "48%",
     borderRadius: radius.lg,
@@ -444,6 +387,7 @@ const styles = StyleSheet.create({
     gap: 12,
     ...panelShadow,
   },
+  quickCardInteractive: { justifyContent: "space-between" },
   quickIconWrap: {
     width: 42,
     height: 42,
@@ -451,6 +395,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: palette.accentSoft,
+  },
+  quickTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
   quickTitle: {
     color: palette.ink,
@@ -489,9 +439,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: fontFamily.body,
   },
-  guardianList: {
-    gap: 10,
-  },
+  guardianList: { gap: 10 },
   guardianOption: {
     borderRadius: radius.md,
     paddingHorizontal: 14,
@@ -505,9 +453,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.accent,
     borderColor: palette.accent,
   },
-  guardianOptionPressed: {
-    opacity: 0.9,
-  },
+  guardianOptionPressed: { opacity: 0.92 },
   guardianLabel: {
     color: palette.ink,
     fontSize: 14,
@@ -515,18 +461,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: fontFamily.body,
   },
-  guardianLabelActive: {
-    color: palette.inkInverse,
-  },
+  guardianLabelActive: { color: palette.inkInverse },
   guardianDetail: {
     color: palette.inkSoft,
     fontSize: 12,
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
-  guardianDetailActive: {
-    color: "rgba(255,255,255,0.86)",
-  },
+  guardianDetailActive: { color: "rgba(255,255,255,0.86)" },
   guardianError: {
     color: palette.accentStrong,
     fontSize: 12,
@@ -548,10 +490,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
-  rowDivider: {
-    borderBottomWidth: 1,
-    borderColor: palette.line,
-  },
+  rowDivider: { borderBottomWidth: 1, borderColor: palette.line },
   serviceIconWrap: {
     width: 42,
     height: 42,
@@ -585,10 +524,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  buttonPressed: {
-    opacity: 0.9,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
+  buttonPressed: { opacity: 0.9 },
+  buttonDisabled: { opacity: 0.6 },
 });

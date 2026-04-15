@@ -17,9 +17,50 @@ export type PickedFile = {
   type: string;
 };
 
+export type AIFaceImageSize = {
+  width: number;
+  height: number;
+};
+
+export type AIFaceFaceResult = {
+  face_id: number;
+  bbox: [number, number, number, number] | number[];
+  det_score: number;
+  fake_score: number;
+  label: "fake" | "real" | string;
+  landmarks: Array<[number, number] | number[]>;
+};
+
+export type AIFaceCheckResponse = {
+  status: string;
+  message: string;
+  source: string;
+  prediction: "fake" | "real" | string;
+  is_ai_face: boolean;
+  confidence: number;
+  fake_probability: number;
+  real_probability?: number;
+  image_fake_score?: number | null;
+  raw_label?: string;
+  model?: string;
+  face_detector_model?: string;
+  backend?: string;
+  device?: string;
+  threshold?: number | null;
+  num_faces: number;
+  image_size: AIFaceImageSize;
+  faces: AIFaceFaceResult[];
+  storage_batch_id?: string | null;
+  stored_file_path?: string | null;
+  upload_id?: string | null;
+};
+
 export type DetectionSubmission = {
   id: string;
   user_id: string;
+  relation_profile_id: string | null;
+  relation_profile_name: string | null;
+  relation_profile_type: string | null;
   storage_batch_id: string;
   has_text: boolean;
   has_audio: boolean;

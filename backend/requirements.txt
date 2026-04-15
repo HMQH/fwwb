@@ -4,3 +4,7 @@ python-multipart==0.0.17
 sqlalchemy==2.0.48
 psycopg[binary]==3.3.3
 pydantic-settings==2.6.1
+Pillow==10.4.0
+torch==2.5.1
+torchvision==0.20.1
+opencv-python==4.10.0.84
