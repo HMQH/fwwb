@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.domain.user import repository as user_repository
 from app.domain.user.entity import User
 from app.shared.core.security import create_access_token, hash_password, verify_password
+from app.shared.core.config import settings
 from app.shared.schemas.auth import (
     LoginRequest,
     RegisterRequest,
@@ -45,6 +46,9 @@ def _user_public(u: User) -> UserPublic:
         birth_date=u.birth_date,
         avatar_url=u.avatar_url,
         guardian_relation=u.guardian_relation,
+        profile_summary=u.profile_summary,
+        safety_score=u.safety_score,
+        memory_urgency_score=u.memory_urgency_score,
     )
 
 
@@ -85,6 +89,9 @@ def register_user(
         display_name=body.display_name.strip(),
         avatar_url=avatar_url,
         guardian_relation=_default_guardian_relation(role),
+        profile_summary=None,
+        safety_score=settings.user_profile_default_safety_score,
+        memory_urgency_score=0,
     )
     try:
         user_repository.save(db, user)

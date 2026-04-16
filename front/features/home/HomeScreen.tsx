@@ -52,7 +52,7 @@ const detectionEntries: {
   },
 ];
 
-function getScore(userRole: "child" | "youth" | "elder", guardianRelation: string | null) {
+function getFallbackScore(userRole: "child" | "youth" | "elder", guardianRelation: string | null) {
   const baseScore = {
     child: 97,
     youth: 95,
@@ -208,7 +208,7 @@ function ScoreBubble({ score }: { score: number }) {
 export default function HomeScreen() {
   const router = useRouter();
   const reduceMotion = useReduceMotionEnabled();
-  const { user } = useAuth();
+  const { user, refreshCurrentUser } = useAuth();
   const [captureStatus, setCaptureStatus] = useState<FloatingCaptureStatus>({
     platformSupported: false,
     overlayPermission: false,
@@ -219,10 +219,14 @@ export default function HomeScreen() {
 
   const score = useMemo(() => {
     if (!user) {
-      return 5;
+      return 95;
     }
 
-    return getScore(user.role, user.guardian_relation);
+    if (Number.isFinite(user.safety_score)) {
+      return Math.max(0, Math.min(100, Math.round(user.safety_score)));
+    }
+
+    return getFallbackScore(user.role, user.guardian_relation);
   }, [user]);
 
   const refreshCaptureStatus = useCallback(async () => {
@@ -233,20 +237,22 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       void refreshCaptureStatus();
-    }, [refreshCaptureStatus])
+      void refreshCurrentUser();
+    }, [refreshCaptureStatus, refreshCurrentUser])
   );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState === "active") {
         void refreshCaptureStatus();
+        void refreshCurrentUser();
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [refreshCaptureStatus]);
+  }, [refreshCaptureStatus, refreshCurrentUser]);
 
   if (!user) {
     return null;
@@ -297,6 +303,8 @@ export default function HomeScreen() {
             <ScoreBubble score={score} />
           </Animated.View>
 
+          
+
           <View style={styles.entryGrid}>
             {detectionEntries.map((item, index) => (
               <Animated.View
@@ -317,6 +325,22 @@ export default function HomeScreen() {
               </Animated.View>
             ))}
           </View>
+
+          <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(420).delay(300)}>
+            <Pressable
+              style={({ pressed }) => [styles.aiEntryCard, pressed && styles.entryCardPressed]}
+              onPress={() => router.push("/assistant" as never)}
+            >
+              <View style={styles.aiEntryIconWrap}>
+                <MaterialCommunityIcons name="robot-outline" size={20} color={palette.accentStrong} />
+              </View>
+              <View style={styles.aiEntryCopy}>
+                <Text style={styles.aiEntryTitle}>反诈助手</Text>
+                <Text style={styles.aiEntryText}>连续咨询</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={palette.lineStrong} />
+            </Pressable>
+          </Animated.View>
 
           <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(420).delay(360)}>
             <View style={styles.assistantCard}>
@@ -603,6 +627,48 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 12,
   },
+  profileCard: {
+    borderRadius: 24,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    gap: 10,
+    ...panelShadow,
+  },
+  profileHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  profileTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  profilePill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: palette.accentSoft,
+  },
+  profilePillText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  profileSummary: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: fontFamily.body,
+  },
   entryCell: {
     width: "48%",
   },
@@ -620,6 +686,43 @@ const styles = StyleSheet.create({
   entryCardPressed: {
     opacity: 0.92,
     transform: [{ scale: 0.99 }],
+  },
+  aiEntryCard: {
+    borderRadius: 24,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    ...panelShadow,
+  },
+  aiEntryIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    backgroundColor: palette.accentSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  aiEntryCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  aiEntryTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  aiEntryText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
   },
   entryIconWrap: {
     width: 34,

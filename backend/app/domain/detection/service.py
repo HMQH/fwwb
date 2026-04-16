@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session
 from app.domain.detection import analyzer, repository as detection_repository
 from app.domain.detection.entity import DetectionJob, DetectionResult, DetectionSubmission
 from app.domain.detection.kinds import UploadKind
+from app.domain.relations import repository as relation_repository
+from app.domain.relations import service as relation_service
+from app.domain.uploads import service as upload_service
+from app.domain.user import profile_memory as user_profile_memory
 from app.shared.core.config import settings
 from app.shared.db.session import SessionLocal
 from app.shared.storage.file_validation import validate_bundle_filenames
@@ -179,6 +183,7 @@ def create_submission(
     upload_root_cfg: str,
     max_upload_bytes: int,
     text_content: str | None,
+    relation_profile_id: uuid.UUID | None,
     file_bundles: dict[UploadKind, list[tuple[bytes, str]]],
 ) -> DetectionSubmission:
     upload_root = resolved_upload_root(upload_root_cfg)
@@ -271,6 +276,7 @@ def create_submission(
 
     row = DetectionSubmission(
         user_id=user_id,
+        relation_profile_id=relation_profile_id,
         storage_batch_id=batch_folder,
         has_text=has_text,
         has_audio=has_audio,
@@ -336,7 +342,53 @@ def _build_result_snapshot(result: DetectionResult | None) -> dict[str, Any] | N
     }
 
 
+def _build_relation_profile_payload(db: Session, submission: DetectionSubmission) -> dict[str, Any]:
+    payload = {
+        "relation_profile_id": submission.relation_profile_id,
+        "relation_profile_name": None,
+        "relation_profile_type": None,
+    }
+    if submission.relation_profile_id is None:
+        return payload
+
+    profile = relation_repository.get_profile_for_user(
+        db,
+        user_id=submission.user_id,
+        relation_id=submission.relation_profile_id,
+    )
+    if profile is None:
+        return payload
+
+    payload["relation_profile_name"] = profile.name
+    payload["relation_profile_type"] = profile.relation_type
+    return payload
+
+
+def build_submission_payload(db: Session, submission: DetectionSubmission) -> dict[str, Any]:
+    relation_payload = _build_relation_profile_payload(db, submission)
+    return {
+        "id": submission.id,
+        "user_id": submission.user_id,
+        "relation_profile_id": relation_payload["relation_profile_id"],
+        "relation_profile_name": relation_payload["relation_profile_name"],
+        "relation_profile_type": relation_payload["relation_profile_type"],
+        "storage_batch_id": submission.storage_batch_id,
+        "has_text": submission.has_text,
+        "has_audio": submission.has_audio,
+        "has_image": submission.has_image,
+        "has_video": submission.has_video,
+        "text_paths": list(submission.text_paths or []),
+        "audio_paths": list(submission.audio_paths or []),
+        "image_paths": list(submission.image_paths or []),
+        "video_paths": list(submission.video_paths or []),
+        "text_content": submission.text_content,
+        "created_at": submission.created_at,
+        "updated_at": submission.updated_at,
+    }
+
+
 def _build_submission_snapshot(
+    db: Session,
     submission: DetectionSubmission,
     *,
     latest_job: DetectionJob | None = None,
@@ -358,22 +410,7 @@ def _build_submission_snapshot(
         preview = " / ".join(attachment_parts) if attachment_parts else None
 
     return {
-        "submission": {
-            "id": submission.id,
-            "user_id": submission.user_id,
-            "storage_batch_id": submission.storage_batch_id,
-            "has_text": submission.has_text,
-            "has_audio": submission.has_audio,
-            "has_image": submission.has_image,
-            "has_video": submission.has_video,
-            "text_paths": list(submission.text_paths or []),
-            "audio_paths": list(submission.audio_paths or []),
-            "image_paths": list(submission.image_paths or []),
-            "video_paths": list(submission.video_paths or []),
-            "text_content": submission.text_content,
-            "created_at": submission.created_at,
-            "updated_at": submission.updated_at,
-        },
+        "submission": build_submission_payload(db, submission),
         "latest_job": _build_job_snapshot(latest_job, latest_result) if latest_job is not None else None,
         "latest_result": _build_result_snapshot(latest_result),
         "content_preview": preview,
@@ -387,15 +424,44 @@ def submit_detection(
     upload_root_cfg: str,
     max_upload_bytes: int,
     text_content: str | None,
+    relation_profile_id: uuid.UUID | None,
     file_bundles: dict[UploadKind, list[tuple[bytes, str]]],
 ) -> tuple[DetectionSubmission, DetectionJob]:
+    if relation_profile_id is not None:
+        relation = relation_repository.get_profile_for_user(
+            db,
+            user_id=user_id,
+            relation_id=relation_profile_id,
+        )
+        if relation is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="关系对象不存在")
+
     submission = create_submission(
         db,
         user_id=user_id,
         upload_root_cfg=upload_root_cfg,
         max_upload_bytes=max_upload_bytes,
         text_content=text_content,
+        relation_profile_id=relation_profile_id,
         file_bundles=file_bundles,
+    )
+    upload_rows = upload_service.sync_submission_uploads(
+        db,
+        submission_id=submission.id,
+        user_id=submission.user_id,
+        storage_batch_id=submission.storage_batch_id,
+        text_paths=list(submission.text_paths or []),
+        audio_paths=list(submission.audio_paths or []),
+        image_paths=list(submission.image_paths or []),
+        video_paths=list(submission.video_paths or []),
+    )
+    relation_service.attach_submission_context(
+        db,
+        user_id=submission.user_id,
+        relation_id=submission.relation_profile_id,
+        submission_id=submission.id,
+        text_content=submission.text_content,
+        upload_rows=upload_rows,
     )
     job = detection_repository.create_job(
         db,
@@ -421,6 +487,7 @@ def list_history(
         latest_result = detection_repository.get_latest_result_for_submission(db, submission_id=submission.id)
         items.append(
             _build_submission_snapshot(
+                db,
                 submission,
                 latest_job=latest_job,
                 latest_result=latest_result,
@@ -445,6 +512,7 @@ def get_submission_detail(
     latest_job = detection_repository.get_latest_job_for_submission(db, submission_id=submission.id)
     latest_result = detection_repository.get_latest_result_for_submission(db, submission_id=submission.id)
     return _build_submission_snapshot(
+        db,
         submission,
         latest_job=latest_job,
         latest_result=latest_result,
@@ -484,6 +552,24 @@ def rerun_submission(
     )
     if submission is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
+    upload_rows = upload_service.sync_submission_uploads(
+        db,
+        submission_id=submission.id,
+        user_id=submission.user_id,
+        storage_batch_id=submission.storage_batch_id,
+        text_paths=list(submission.text_paths or []),
+        audio_paths=list(submission.audio_paths or []),
+        image_paths=list(submission.image_paths or []),
+        video_paths=list(submission.video_paths or []),
+    )
+    relation_service.attach_submission_context(
+        db,
+        user_id=submission.user_id,
+        relation_id=submission.relation_profile_id,
+        submission_id=submission.id,
+        text_content=submission.text_content,
+        upload_rows=upload_rows,
+    )
     job = detection_repository.create_job(
         db,
         submission_id=submission.id,
@@ -586,6 +672,15 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
         if not _strip(submission.text_content):
             result_row = _build_attachment_only_result(submission, job)
             detection_repository.save_result(db, result_row)
+            try:
+                user_profile_memory.refresh_user_profile_from_detection(
+                    db,
+                    user_id=submission.user_id,
+                    submission=submission,
+                    result=result_row,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("User profile refresh failed: submission=%s", submission.id)
             job.rule_score = 0
             job.retrieval_query = None
             job.llm_model = settings.detection_llm_model
@@ -635,6 +730,15 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
             result_detail=result_payload["result_detail"],
         )
         detection_repository.save_result(db, result_row)
+        try:
+            user_profile_memory.refresh_user_profile_from_detection(
+                db,
+                user_id=submission.user_id,
+                submission=submission,
+                result=result_row,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("User profile refresh failed: submission=%s", submission.id)
 
         result_detail = result_payload.get("result_detail") if isinstance(result_payload, dict) else {}
         if not isinstance(result_detail, dict):

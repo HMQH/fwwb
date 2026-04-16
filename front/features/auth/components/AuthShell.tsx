@@ -21,7 +21,6 @@ const antiFraudLogo = require("../../../assets/images/anti-fraud-logo.png");
 type AuthShellProps = {
   title: string;
   description?: string;
-  /** 为 false 时隐藏顶部 logo、应用名与说明文案，适合分步注册等需腾出空间的页面 */
   showBranding?: boolean;
   children: ReactNode;
   footer?: ReactNode;
@@ -67,10 +66,7 @@ export function AuthShell({
       <AuthBackdrop />
 
       <SafeAreaView style={styles.flex} edges={["top", "bottom"]}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.flex}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
@@ -84,9 +80,7 @@ export function AuthShell({
             ]}
             showsVerticalScrollIndicator={false}
           >
-            <Animated.View
-              style={[styles.shell, showBranding ? revealStyle : undefined, !showBranding && styles.shellCompact]}
-            >
+            <Animated.View style={[styles.shell, showBranding ? revealStyle : undefined, !showBranding && styles.shellCompact]}>
               <View style={styles.topBar}>
                 <View style={styles.actionSlot}>{headerAction}</View>
               </View>
@@ -96,13 +90,9 @@ export function AuthShell({
                   <View style={styles.logoRing}>
                     <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
                   </View>
-                  <Text style={styles.brandName}>反诈守护</Text>
+                  <Text style={styles.brandName}>{"反诈守护"}</Text>
                   <View style={styles.pageTag}>
-                    <MaterialCommunityIcons
-                      name="shield-check-outline"
-                      size={14}
-                      color={palette.accentStrong}
-                    />
+                    <MaterialCommunityIcons name="shield-check-outline" size={14} color={palette.accentStrong} />
                     <Text style={styles.pageTagText}>{title}</Text>
                   </View>
                   {description ? <Text style={styles.description}>{description}</Text> : null}
@@ -111,7 +101,6 @@ export function AuthShell({
 
               <View style={styles.panel}>
                 <View style={styles.formStack}>{children}</View>
-
                 {footer ? <View style={styles.footer}>{footer}</View> : null}
               </View>
             </Animated.View>
@@ -123,13 +112,8 @@ export function AuthShell({
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: palette.background,
-  },
-  flex: {
-    flex: 1,
-  },
+  root: { flex: 1, backgroundColor: palette.background },
+  flex: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
     justifyContent: "flex-start",
@@ -137,29 +121,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 40,
   },
-  shell: {
-    width: "100%",
-    maxWidth: 420,
-    alignSelf: "center",
-    gap: 18,
-  },
-  shellCompact: {
-    gap: 10,
-  },
-  topBar: {
-    minHeight: 40,
-    justifyContent: "center",
-  },
-  actionSlot: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-  },
-  logoBlock: {
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 8,
-  },
+  shell: { width: "100%", maxWidth: 420, alignSelf: "center", gap: 18 },
+  shellCompact: { gap: 10 },
+  topBar: { minHeight: 40, justifyContent: "center" },
+  actionSlot: { width: 40, height: 40, justifyContent: "center" },
+  logoBlock: { alignItems: "center", gap: 10, paddingHorizontal: 8 },
   logoRing: {
     width: 112,
     height: 112,
@@ -171,17 +137,8 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     ...panelShadow,
   },
-  logo: {
-    width: 84,
-    height: 84,
-  },
-  brandName: {
-    color: palette.ink,
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: "800",
-    fontFamily: fontFamily.display,
-  },
+  logo: { width: 84, height: 84 },
+  brandName: { color: palette.ink, fontSize: 28, lineHeight: 34, fontWeight: "800", fontFamily: fontFamily.display },
   pageTag: {
     flexDirection: "row",
     alignItems: "center",
@@ -191,21 +148,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     backgroundColor: palette.accentSoft,
   },
-  pageTagText: {
-    color: palette.accentStrong,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  description: {
-    maxWidth: 260,
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 20,
-    textAlign: "center",
-    fontFamily: fontFamily.body,
-  },
+  pageTagText: { color: palette.accentStrong, fontSize: 13, lineHeight: 18, fontWeight: "700", fontFamily: fontFamily.body },
+  description: { maxWidth: 260, color: palette.inkSoft, fontSize: 13, lineHeight: 20, textAlign: "center", fontFamily: fontFamily.body },
   panel: {
     borderRadius: radius.xl,
     backgroundColor: palette.surface,
@@ -216,10 +160,6 @@ const styles = StyleSheet.create({
     gap: 16,
     ...panelShadow,
   },
-  formStack: {
-    gap: 14,
-  },
-  footer: {
-    marginTop: 4,
-  },
+  formStack: { gap: 14 },
+  footer: { marginTop: 4 },
 });

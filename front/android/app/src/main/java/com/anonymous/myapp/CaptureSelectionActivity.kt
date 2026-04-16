@@ -2,7 +2,10 @@ package com.anonymous.myapp
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,13 +18,14 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import java.io.File
 import kotlin.concurrent.thread
 
 class CaptureSelectionActivity : AppCompatActivity() {
   private lateinit var overlayView: SelectionOverlayView
-  private lateinit var chromeContainer: LinearLayout
-  private lateinit var selectionHint: TextView
+  private lateinit var chromeContainer: FrameLayout
+  private lateinit var closeButton: TextView
 
   private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -34,16 +38,7 @@ class CaptureSelectionActivity : AppCompatActivity() {
       setBackgroundColor(Color.TRANSPARENT)
     }
 
-    overlayView = SelectionOverlayView(this).apply {
-      onSelectionChanged = { rect ->
-        selectionHint.text =
-          if (rect == null) {
-            "拖动框选截图区域"
-          } else {
-            "已选择 ${rect.width()} x ${rect.height()}"
-          }
-      }
-    }
+    overlayView = SelectionOverlayView(this)
     root.addView(
       overlayView,
       FrameLayout.LayoutParams(
@@ -52,50 +47,31 @@ class CaptureSelectionActivity : AppCompatActivity() {
       )
     )
 
-    chromeContainer = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.TOP
-      setPadding(dp(16), dp(46), dp(16), dp(24))
-    }
+    chromeContainer = FrameLayout(this)
+    closeButton = buildCloseButton()
 
-    val topCard = buildCard().apply {
-      addView(
-        TextView(this@CaptureSelectionActivity).apply {
-          text = "悬浮截图"
-          setTextColor(Color.WHITE)
-          textSize = 20f
-        }
-      )
-      selectionHint = TextView(this@CaptureSelectionActivity).apply {
-        text = "拖动框选截图区域"
-        setTextColor(Color.parseColor("#D9E9FF"))
-        textSize = 13f
-      }
-      addView(selectionHint)
-    }
-
-    val bottomCard = buildCard().apply {
-      val actions = LinearLayout(this@CaptureSelectionActivity).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
-      }
-
-      actions.addView(actionButton("取消", false) { finish() })
-      actions.addView(View(this@CaptureSelectionActivity), LinearLayout.LayoutParams(dp(10), 1))
-      actions.addView(actionButton("下一步", true) { handleProceed() })
-      addView(actions)
-    }
-
-    chromeContainer.addView(topCard)
     chromeContainer.addView(
-      View(this),
-      LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        0,
-        1f
-      )
+      closeButton,
+      FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.WRAP_CONTENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT,
+        Gravity.TOP or Gravity.END
+      ).apply {
+        topMargin = dp(48)
+        marginEnd = dp(18)
+      }
     )
-    chromeContainer.addView(bottomCard)
+
+    chromeContainer.addView(
+      buildBottomBar(),
+      FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT,
+        Gravity.BOTTOM
+      ).apply {
+        bottomMargin = dp(32)
+      }
+    )
 
     root.addView(
       chromeContainer,
@@ -111,7 +87,7 @@ class CaptureSelectionActivity : AppCompatActivity() {
   private fun handleProceed() {
     val selection = overlayView.currentSelection()
     if (selection == null) {
-      Toast.makeText(this, "请先框选截图区域", Toast.LENGTH_SHORT).show()
+      Toast.makeText(this, "请先调整截图框", Toast.LENGTH_SHORT).show()
       return
     }
 
@@ -153,16 +129,24 @@ class CaptureSelectionActivity : AppCompatActivity() {
           return@runOnUiThread
         }
 
-        openPreview(captureFile)
+        openActionScreen(captureFile)
       }
     }
   }
 
-  private fun openPreview(captureFile: File) {
-    val intent = Intent(this, CapturePreviewActivity::class.java).apply {
-      data = Uri.fromFile(captureFile)
+  private fun openActionScreen(captureFile: File) {
+    val uri = Uri.fromFile(captureFile)
+    FloatingCaptureState.pendingCaptureUri = uri.toString()
+    FloatingCaptureState.pendingCaptureName = captureFile.name
+
+    val intent = Intent(
+      Intent.ACTION_VIEW,
+      Uri.parse("myapp://floating-capture/action?captureId=${System.currentTimeMillis()}")
+    ).apply {
+      setPackage(packageName)
       addFlags(
         Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP or
           Intent.FLAG_ACTIVITY_SINGLE_TOP
       )
     }
@@ -170,40 +154,97 @@ class CaptureSelectionActivity : AppCompatActivity() {
     finish()
   }
 
-  private fun buildCard(): LinearLayout =
-    LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      setPadding(dp(16), dp(16), dp(16), dp(16))
-      background = android.graphics.drawable.GradientDrawable().apply {
-        cornerRadius = dp(24).toFloat()
-        setColor(Color.parseColor("#D91A2536"))
-        setStroke(dp(1), Color.parseColor("#4DFFFFFF"))
+  private fun buildCloseButton(): TextView =
+    TextView(this).apply {
+      text = "关闭悬浮窗"
+      setTextColor(Color.WHITE)
+      textSize = 13f
+      setPadding(dp(14), dp(10), dp(14), dp(10))
+      background = GradientDrawable().apply {
+        cornerRadius = dp(14).toFloat()
+        setColor(Color.parseColor("#CC111111"))
+        setStroke(dp(1), Color.parseColor("#33FFFFFF"))
+      }
+      setOnClickListener {
+        stopFloatingBubble()
+        finish()
       }
     }
 
-  private fun actionButton(
-    label: String,
-    primary: Boolean,
-    onClick: () -> Unit
-  ): TextView =
+  private fun buildBottomBar(): LinearLayout =
+    LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(32), 0, dp(32), 0)
+
+      addView(
+        actionLabel("返回") { finish() },
+        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      )
+      addView(confirmButton())
+      addView(
+        actionLabel("旋转") { overlayView.toggleSelectionOrientation() },
+        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      )
+    }
+
+  private fun actionLabel(label: String, onClick: () -> Unit): TextView =
     TextView(this).apply {
       text = label
-      setTextColor(if (primary) Color.WHITE else Color.parseColor("#E4EEFF"))
       gravity = Gravity.CENTER
-      setPadding(dp(14), dp(12), dp(14), dp(12))
-      textSize = 15f
-      background = android.graphics.drawable.GradientDrawable().apply {
-        cornerRadius = dp(18).toFloat()
-        if (primary) {
-          setColor(Color.parseColor("#2F70E6"))
-        } else {
-          setColor(Color.parseColor("#223A516F"))
-          setStroke(dp(1), Color.parseColor("#5E8AB9E3"))
-        }
-      }
+      setTextColor(Color.WHITE)
+      textSize = 18f
+      setTypeface(typeface, Typeface.BOLD)
       setOnClickListener { onClick() }
-      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
     }
+
+  private fun confirmButton(): FrameLayout =
+    FrameLayout(this).apply {
+      val outerSize = dp(78)
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#1B111111"))
+        setStroke(dp(2), Color.parseColor("#E6FFFFFF"))
+      }
+      addView(
+        FrameLayout(this@CaptureSelectionActivity).apply {
+          background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor("#5B5BFF"))
+          }
+          addView(
+            TextView(this@CaptureSelectionActivity).apply {
+              text = "✓"
+              gravity = Gravity.CENTER
+              setTextColor(Color.WHITE)
+              textSize = 26f
+              setTypeface(typeface, Typeface.BOLD)
+            },
+            FrameLayout.LayoutParams(
+              FrameLayout.LayoutParams.MATCH_PARENT,
+              FrameLayout.LayoutParams.MATCH_PARENT
+            )
+          )
+        },
+        FrameLayout.LayoutParams(dp(62), dp(62), Gravity.CENTER)
+      )
+      setOnClickListener { handleProceed() }
+      layoutParams = LinearLayout.LayoutParams(outerSize, outerSize).apply {
+        marginStart = dp(18)
+        marginEnd = dp(18)
+      }
+    }
+
+  private fun stopFloatingBubble() {
+    val intent = Intent(this, FloatingBubbleService::class.java).apply {
+      action = FloatingBubbleService.ACTION_STOP
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      ContextCompat.startForegroundService(this, intent)
+    } else {
+      startService(intent)
+    }
+  }
 
   private fun dp(value: Int): Int =
     TypedValue.applyDimension(

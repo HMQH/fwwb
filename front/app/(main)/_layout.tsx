@@ -10,7 +10,7 @@ export default function MainTabsLayout() {
   const { status, user } = useAuth();
 
   if (status === "loading") {
-    return <LoadingScreen label="正在恢复账户状态…" />;
+    return <LoadingScreen label="正在恢复账号状态…" />;
   }
 
   if (status !== "authenticated" || !user) {
@@ -66,12 +66,24 @@ export default function MainTabsLayout() {
         name="records"
         options={{
           title: "记录",
-          tabBarIcon: ({ color }) => (
-            <MaterialCommunityIcons name="history" size={22} color={color} />
-          ),
+          tabBarIcon: ({ color }) => <MaterialCommunityIcons name="history" size={22} color={color} />,
         }}
       />
+      <Tabs.Screen name="assistant/index" options={{ href: null, title: "反诈助手" }} />
+      <Tabs.Screen name="profile-memory/index" options={{ href: null, title: "用户画像" }} />
       <Tabs.Screen name="records/[id]" options={{ href: null, title: "检测详情" }} />
+      <Tabs.Screen name="uploads/index" options={{ href: null, title: "上传管理" }} />
+      <Tabs.Screen name="uploads/archive" options={{ href: null, title: "上传归档" }} />
+      <Tabs.Screen
+        name="floating-capture/action"
+        options={{
+          href: null,
+          title: "悬浮截图",
+          tabBarStyle: { display: "none" },
+        }}
+      />
+      <Tabs.Screen name="relations/index" options={{ href: null, title: "关系记忆" }} />
+      <Tabs.Screen name="relations/[id]" options={{ href: null, title: "关系详情" }} />
       <Tabs.Screen
         name="profile"
         options={{
@@ -88,6 +100,7 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="submit" options={{ href: null, title: "提交检测" }} />
       <Tabs.Screen name="detect-text" options={{ href: null, title: "文本检测" }} />
       <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测" }} />
+      <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别" }} />
       <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测" }} />
       <Tabs.Screen name="detect-mixed" options={{ href: null, title: "混合检测" }} />
     </Tabs>

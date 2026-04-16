@@ -15,6 +15,9 @@ export type UserPublic = {
   birth_date: string;
   avatar_url: string | null;
   guardian_relation: GuardianRelation | null;
+  profile_summary: string | null;
+  safety_score: number;
+  memory_urgency_score: number;
 };
 
 export type TokenResponse = {
@@ -52,19 +55,19 @@ export const roleMeta: Record<
   }
 > = {
   child: {
-    label: "未成年守护",
-    tone: "重点关注游戏交易、追星引流与陌生链接",
-    detail: "系统会优先提醒虚拟交易、账号共享、诱导付费和不明二维码场景。",
+    label: "未成年人守护",
+    tone: "重点盯紧游戏交易、追星引流和陌生链接",
+    detail: "优先提醒共享账号、诱导付费和陌生二维码。",
   },
   youth: {
     label: "日常防护",
-    tone: "覆盖理财、兼职、征信与冒充客服类风险",
-    detail: "系统会优先关注验证码索取、转账诱导、远程协助和异常投资话术。",
+    tone: "覆盖兼职、投资、征信和冒充客服",
+    detail: "优先提醒验证码索取、转账诱导和远程协助。",
   },
   elder: {
     label: "长者守护",
-    tone: "加重冒充亲友、保健推销与转账劝阻提醒",
-    detail: "系统会优先突出大额转账、陌生来电、熟人求助和保健投资类风险。",
+    tone: "重点关注冒充亲友、保健推销和高额转账",
+    detail: "优先提醒熟人求助、陌生来电和保健投资。",
   },
 };
 
@@ -77,22 +80,22 @@ export const guardianMeta: Record<
 > = {
   self: {
     label: "本人管理",
-    detail: "适合自行查看提醒与风险摘要",
+    detail: "自己查看提醒",
   },
   parent: {
     label: "父母监护",
-    detail: "适合未成年或家庭共同守护场景",
+    detail: "适合家长代看",
   },
   spouse: {
     label: "配偶监护",
-    detail: "适合家庭互相提醒与陪伴核验",
+    detail: "适合伴侣互相提醒",
   },
   child: {
     label: "子女监护",
-    detail: "适合长者账户的家人守护",
+    detail: "适合家人守护长者",
   },
   relative: {
     label: "亲属监护",
-    detail: "适合其他家人或近亲协助守护",
+    detail: "适合近亲协助",
   },
 };

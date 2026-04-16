@@ -13,6 +13,9 @@ class DetectionSubmissionResponse(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    relation_profile_id: uuid.UUID | None = None
+    relation_profile_name: str | None = None
+    relation_profile_type: str | None = None
     storage_batch_id: str
     has_text: bool
     has_audio: bool

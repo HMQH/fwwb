@@ -11,6 +11,7 @@
     },
     "android": {
       "softwareKeyboardLayoutMode": "resize",
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/anti-fraud-logo.png"
@@ -45,7 +46,8 @@
         {
           "photosPermission": "用于从相册选择截图或图片，以便提交反诈检测。"
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true
