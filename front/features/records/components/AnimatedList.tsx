@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { type ReactNode, useCallback, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { type ReactNode, useCallback, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeInDown, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 
 import { getResultHeadline, getRiskMeta } from "@/features/detections";
@@ -43,6 +43,10 @@ type AnimatedListProps = {
   items: RecordHistoryItem[];
   headerContent?: ReactNode;
   onItemSelect?: (item: RecordHistoryItem, index: number) => void;
+  onEndReached?: () => void;
+  loadingMore?: boolean;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   showGradients?: boolean;
   displayScrollbar?: boolean;
   initialSelectedIndex?: number;
@@ -87,6 +91,11 @@ function AnimatedRecordRow({ item, index, selected, reduceMotion, onSelect }: An
               <View style={[styles.typePill, { backgroundColor: meta.soft }]}>
                 <Text style={[styles.typePillText, { color: meta.tone }]}>{statusLabel(item)}</Text>
               </View>
+              {item.guardian_event_summary ? (
+                <View style={styles.guardianPill}>
+                  <Text style={styles.guardianPillText}>已联动</Text>
+                </View>
+              ) : null}
               {item.latest_result?.need_manual_review ? (
                 <View style={styles.neutralPill}>
                   <Text style={styles.neutralPillText}>建议人工复核</Text>
@@ -108,12 +117,17 @@ export default function AnimatedList({
   items,
   headerContent,
   onItemSelect,
+  onEndReached,
+  loadingMore = false,
+  onRefresh,
+  refreshing = false,
   showGradients = true,
   displayScrollbar = true,
   initialSelectedIndex = -1,
 }: AnimatedListProps) {
   const reduceMotion = useReduceMotionEnabled();
   const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex);
+  const allowLoadMoreRef = useRef(false);
 
   const scrollY = useSharedValue(0);
   const containerHeight = useSharedValue(0);
@@ -163,10 +177,33 @@ export default function AnimatedList({
           />
         )}
         ListHeaderComponent={headerContent ? <View style={styles.headerSlot}>{headerContent}</View> : null}
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={styles.footerLoading}>
+              <ActivityIndicator size="small" color={palette.accentStrong} />
+            </View>
+          ) : <View style={styles.footerSpacer} />
+        }
         ItemSeparatorComponent={() => <View style={styles.itemGap} />}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={displayScrollbar}
         scrollEventThrottle={16}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+        onEndReached={() => {
+          if (!allowLoadMoreRef.current) {
+            return;
+          }
+          onEndReached?.();
+        }}
+        onEndReachedThreshold={0.32}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+        onScrollBeginDrag={() => {
+          allowLoadMoreRef.current = true;
+        }}
         onScroll={onScroll}
         onLayout={(event) => {
           containerHeight.value = event.nativeEvent.layout.height;
@@ -215,6 +252,15 @@ const styles = StyleSheet.create({
   },
   itemGap: {
     height: 12,
+  },
+  footerLoading: {
+    paddingTop: 8,
+    paddingBottom: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  footerSpacer: {
+    height: 18,
   },
   itemCard: {
     borderRadius: radius.lg,
@@ -294,6 +340,20 @@ const styles = StyleSheet.create({
   },
   neutralPillText: {
     color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  guardianPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#EAF8F1",
+  },
+  guardianPillText: {
+    color: "#1A8B5B",
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "700",

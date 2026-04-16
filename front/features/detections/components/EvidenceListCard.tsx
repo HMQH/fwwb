@@ -1,7 +1,9 @@
+import { Image } from "expo-image";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import { getEvidenceReasonText, resolveEvidenceLinkUrl, resolveEvidencePreviewUrl } from "../evidencePreview";
 import type { DetectionEvidence } from "../types";
 
 function openMaybe(url?: string | null) {
@@ -36,36 +38,53 @@ export function EvidenceListCard({
 
       {items.length ? (
         <View style={styles.list}>
-          {items.map((item) => (
-            <View key={`${item.source_id}-${item.chunk_index}-${item.sample_label}`} style={styles.row}>
-              <View style={styles.rowTop}>
-                <View style={[styles.badge, { backgroundColor: theme.soft }]}>
-                  <Text style={[styles.badgeText, { color: theme.ink }]}>
-                    {item.sample_label === "black" ? "风险参照" : "安全参照"}
-                  </Text>
+          {items.map((item) => {
+            const previewUrl = resolveEvidencePreviewUrl(item);
+            const linkUrl = resolveEvidenceLinkUrl(item);
+            const reasonText = getEvidenceReasonText(item);
+
+            return (
+              <View key={`${item.source_id}-${item.chunk_index}-${item.sample_label}`} style={styles.row}>
+                <View style={styles.rowTop}>
+                  <View style={[styles.badge, { backgroundColor: theme.soft }]}>
+                    <Text style={[styles.badgeText, { color: theme.ink }]}>
+                      {item.sample_label === "black" ? "风险参照" : "安全参照"}
+                    </Text>
+                  </View>
+                  <Text style={styles.scoreText}>{Math.round(item.similarity_score * 100)} 分</Text>
                 </View>
-                <Text style={styles.scoreText}>{Math.round(item.similarity_score * 100)} 分</Text>
+
+                {previewUrl ? (
+                  <Pressable style={styles.previewPressable} onPress={() => openMaybe(linkUrl ?? previewUrl)}>
+                    <Image
+                      source={{ uri: previewUrl }}
+                      style={styles.previewImage}
+                      contentFit="cover"
+                      transition={120}
+                    />
+                  </Pressable>
+                ) : null}
+
+                <Text style={styles.chunkText} numberOfLines={previewUrl ? 3 : 4}>
+                  {item.chunk_text}
+                </Text>
+                {reasonText ? <Text style={styles.reasonText}>{reasonText}</Text> : null}
+
+                <View style={styles.metaRow}>
+                  {item.fraud_type ? <Text style={styles.metaText}>{item.fraud_type}</Text> : null}
+                  {item.data_source ? <Text style={styles.metaText}>{item.data_source}</Text> : null}
+                </View>
+
+                {linkUrl ? (
+                  <Pressable style={({ pressed }) => [styles.linkChip, pressed && styles.linkChipPressed]} onPress={() => openMaybe(linkUrl)}>
+                    <Text style={styles.linkChipText} numberOfLines={1}>
+                      {previewUrl ? "查看原图" : "原链"}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
-
-              <Text style={styles.chunkText} numberOfLines={4}>
-                {item.chunk_text}
-              </Text>
-              {item.reason ? <Text style={styles.reasonText}>{item.reason}</Text> : null}
-
-              <View style={styles.metaRow}>
-                {item.fraud_type ? <Text style={styles.metaText}>{item.fraud_type}</Text> : null}
-                {item.data_source ? <Text style={styles.metaText}>{item.data_source}</Text> : null}
-              </View>
-
-              {item.url ? (
-                <Pressable style={({ pressed }) => [styles.linkChip, pressed && styles.linkChipPressed]} onPress={() => openMaybe(item.url)}>
-                  <Text style={styles.linkChipText} numberOfLines={1}>
-                    原链
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ))}
+            );
+          })}
         </View>
       ) : (
         <View style={styles.emptyState}>
@@ -141,6 +160,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     fontFamily: fontFamily.body,
+  },
+  previewPressable: {
+    width: "100%",
+  },
+  previewImage: {
+    width: "100%",
+    aspectRatio: 1.08,
+    borderRadius: radius.md,
+    backgroundColor: palette.backgroundDeep,
   },
   reasonText: {
     color: palette.inkSoft,

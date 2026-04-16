@@ -1,11 +1,14 @@
 """检测任务编排与执行服务。"""
 from __future__ import annotations
 
+from collections import defaultdict
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,9 +16,12 @@ from sqlalchemy.orm import Session
 from app.domain.detection import analyzer, repository as detection_repository
 from app.domain.detection.entity import DetectionJob, DetectionResult, DetectionSubmission
 from app.domain.detection.kinds import UploadKind
+from app.domain.guardians import service as guardian_service
+from app.domain.image_fraud import service as image_fraud_service
 from app.domain.relations import repository as relation_repository
 from app.domain.relations import service as relation_service
 from app.domain.uploads import service as upload_service
+from app.domain.user import repository as user_repository
 from app.domain.user import profile_memory as user_profile_memory
 from app.shared.core.config import settings
 from app.shared.db.session import SessionLocal
@@ -30,6 +36,8 @@ from app.shared.storage.upload_paths import (
 logger = logging.getLogger(__name__)
 
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
+_HISTORY_SCOPES = {"day", "month", "year"}
+_LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 _PIPELINE_STEPS = [
     ("preprocess", "清洗"),
     ("embedding", "编码"),
@@ -44,8 +52,115 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _local_now() -> datetime:
+    return datetime.now(_LOCAL_TIMEZONE)
+
+
 def _strip(s: str | None) -> str:
     return (s or "").strip()
+
+
+def normalize_history_scope(scope: str | None) -> str:
+    normalized = _strip(scope).lower()
+    return normalized if normalized in _HISTORY_SCOPES else "month"
+
+
+def _month_start(value: datetime) -> datetime:
+    return value.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _year_start(value: datetime) -> datetime:
+    return value.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _history_filter_window(scope: str) -> tuple[datetime, datetime]:
+    now_local = _local_now()
+    if scope == "day":
+        start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif scope == "year":
+        start_local = _year_start(now_local)
+    else:
+        start_local = _month_start(now_local)
+    return start_local.astimezone(timezone.utc), now_local.astimezone(timezone.utc)
+
+
+def _analytics_window(scope: str) -> tuple[datetime, datetime]:
+    now_local = _local_now()
+    if scope == "day":
+        start_local = _month_start(now_local)
+    elif scope == "year":
+        start_local = _year_start(now_local).replace(year=now_local.year - 4)
+    else:
+        start_local = _year_start(now_local)
+    return start_local.astimezone(timezone.utc), now_local.astimezone(timezone.utc)
+
+
+def _next_bucket_start(cursor: datetime, scope: str) -> datetime:
+    if scope == "day":
+        return cursor + timedelta(days=1)
+    if scope == "month":
+        if cursor.month == 12:
+            return cursor.replace(year=cursor.year + 1, month=1, day=1)
+        return cursor.replace(month=cursor.month + 1, day=1)
+    return cursor.replace(year=cursor.year + 1, month=1, day=1)
+
+
+def _bucket_key(value: datetime, scope: str) -> str:
+    if scope == "day":
+        return value.strftime("%Y-%m-%d")
+    if scope == "month":
+        return value.strftime("%Y-%m")
+    return value.strftime("%Y")
+
+
+def _bucket_label(value: datetime, scope: str) -> str:
+    if scope == "day":
+        return value.strftime("%m-%d")
+    if scope == "month":
+        return f"{value.month}月"
+    return value.strftime("%Y")
+
+
+def _build_trend_points(
+    *,
+    rows: list[tuple[datetime, str | None]],
+    scope: str,
+) -> list[dict[str, Any]]:
+    start_at, end_at = _analytics_window(scope)
+    start_local = start_at.astimezone(_LOCAL_TIMEZONE)
+    end_local = end_at.astimezone(_LOCAL_TIMEZONE)
+
+    counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"high": 0, "medium": 0, "low": 0, "total": 0}
+    )
+
+    for created_at, risk_level in rows:
+        if created_at is None:
+            continue
+        created_local = created_at.astimezone(_LOCAL_TIMEZONE)
+        key = _bucket_key(created_local, scope)
+        counts[key]["total"] += 1
+        if risk_level in {"high", "medium", "low"}:
+            counts[key][risk_level] += 1
+
+    points: list[dict[str, Any]] = []
+    cursor = start_local
+    while cursor <= end_local:
+        key = _bucket_key(cursor, scope)
+        bucket_counts = counts[key]
+        points.append(
+            {
+                "bucket_key": key,
+                "label": _bucket_label(cursor, scope),
+                "high": bucket_counts["high"],
+                "medium": bucket_counts["medium"],
+                "low": bucket_counts["low"],
+                "total": bucket_counts["total"],
+            }
+        )
+        cursor = _next_bucket_start(cursor, scope)
+
+    return points
 
 
 def _decode_text_blob(data: bytes, filename: str) -> str | None:
@@ -391,6 +506,7 @@ def _build_submission_snapshot(
     db: Session,
     submission: DetectionSubmission,
     *,
+    viewer_user_id: uuid.UUID,
     latest_job: DetectionJob | None = None,
     latest_result: DetectionResult | None = None,
 ) -> dict[str, Any]:
@@ -409,12 +525,416 @@ def _build_submission_snapshot(
             attachment_parts.append(f"视频 {len(submission.video_paths)}")
         preview = " / ".join(attachment_parts) if attachment_parts else None
 
+    viewer = user_repository.get_by_id(db, viewer_user_id)
     return {
         "submission": build_submission_payload(db, submission),
         "latest_job": _build_job_snapshot(latest_job, latest_result) if latest_job is not None else None,
         "latest_result": _build_result_snapshot(latest_result),
+        "guardian_event_summary": guardian_service.get_submission_event_summary_for_viewer(
+            db,
+            user_id=viewer_user_id,
+            phone=viewer.phone if viewer is not None else "",
+            submission_id=submission.id,
+        ),
         "content_preview": preview,
     }
+
+
+def _job_profile_for_submission(submission: DetectionSubmission) -> tuple[str, str, str | None]:
+    if _strip(submission.text_content):
+        return "text_rag", "text", settings.detection_llm_model
+    if submission.image_paths:
+        return "image_fraud", "image", "resnet18-imagebank"
+    return "attachment_only", "attachment_only", None
+
+
+def _should_process_inline(job: DetectionJob) -> bool:
+    return job.job_type in {"image_fraud", "attachment_only"}
+
+
+def _resolve_submission_upload_path(relative_path: str) -> Path:
+    upload_root = resolved_upload_root(settings.upload_root)
+    return (upload_root / relative_path).resolve()
+
+
+def _build_reference_image_url(raw_path: str) -> str | None:
+    repo_root = Path(__file__).resolve().parents[4]
+
+    reference_root = Path(settings.image_fraud_reference_dir).expanduser()
+    if not reference_root.is_absolute():
+        reference_root = (repo_root / reference_root).resolve()
+    else:
+        reference_root = reference_root.resolve()
+
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = (repo_root / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    try:
+        relative_path = candidate.relative_to(reference_root).as_posix()
+    except ValueError:
+        relative_path = candidate.name.strip()
+
+    if not relative_path:
+        return None
+
+    return f"/reference-images/{quote(relative_path, safe='/')}"
+
+
+def _score_to_percent(value: float) -> int:
+    return max(0, min(100, round(float(value) * 100)))
+
+
+def _build_image_reasoning_graph(
+    best_check: image_fraud_service.ImageFraudCheckResult,
+    *,
+    image_count: int,
+    suspicious_count: int,
+) -> dict[str, Any]:
+    match_nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    if best_check.risk_level != "low":
+        for index, match in enumerate(best_check.matches[:2]):
+            node_id = f"match:{index}"
+            match_nodes.append(
+                {
+                    "id": node_id,
+                    "label": f"相似样本 {match.rank}",
+                    "kind": "risk_basis",
+                    "tone": "danger",
+                    "lane": 1,
+                    "order": index,
+                    "strength": max(0.46, min(0.92, match.similarity)),
+                    "meta": {
+                        "sample": match.label,
+                        "similarity": _score_to_percent(match.similarity),
+                    },
+                }
+            )
+            edges.append(
+                {
+                    "id": f"edge:input:{node_id}",
+                    "source": "input",
+                    "target": node_id,
+                    "tone": "danger",
+                    "kind": "reasoning",
+                    "weight": max(0.44, min(0.9, match.similarity)),
+                }
+            )
+            edges.append(
+                {
+                    "id": f"edge:{node_id}:decision",
+                    "source": node_id,
+                    "target": "decision",
+                    "tone": "danger",
+                    "kind": "decision_support",
+                    "weight": max(0.42, min(0.88, match.similarity)),
+                }
+            )
+
+    if best_check.risk_level == "low":
+        match_nodes.append(
+            {
+                "id": "guard",
+                "label": "低于阈值",
+                "kind": "counter_basis",
+                "tone": "safe",
+                "lane": 2,
+                "order": 0,
+                "strength": 0.62,
+                "meta": {
+                    "review_threshold": _score_to_percent(best_check.review_threshold),
+                },
+            }
+        )
+        edges.extend(
+            [
+                {
+                    "id": "edge:input:guard",
+                    "source": "input",
+                    "target": "guard",
+                    "tone": "safe",
+                    "kind": "counter_basis",
+                    "weight": 0.58,
+                },
+                {
+                    "id": "edge:guard:decision",
+                    "source": "guard",
+                    "target": "decision",
+                    "tone": "safe",
+                    "kind": "decision_balance",
+                    "weight": 0.56,
+                },
+            ]
+        )
+
+    decision_label = "高风险" if best_check.risk_level == "high" else "需复核" if best_check.risk_level == "medium" else "低风险"
+    highlighted_path = ["input"]
+    if best_check.risk_level == "low" and any(node["id"] == "guard" for node in match_nodes):
+        highlighted_path.extend(["guard", "decision"])
+    elif match_nodes:
+        highlighted_path.extend([match_nodes[0]["id"], "decision"])
+    else:
+        highlighted_path.append("decision")
+
+    nodes = [
+        {
+            "id": "input",
+            "label": "截图输入",
+            "kind": "input",
+            "tone": "primary",
+            "lane": 0,
+            "order": 0,
+            "strength": 0.72,
+            "meta": {
+                "image_count": image_count,
+                "suspicious_count": suspicious_count,
+            },
+        },
+        *match_nodes,
+        {
+            "id": "decision",
+            "label": decision_label,
+            "kind": "risk",
+            "tone": "danger" if best_check.risk_level != "low" else "safe",
+            "lane": 3,
+            "order": 0,
+            "strength": max(0.4, min(0.96, best_check.score)),
+            "meta": {
+                "score": _score_to_percent(best_check.score),
+                "max_similarity": _score_to_percent(best_check.max_similarity),
+            },
+        },
+    ]
+    label_lookup = {node["id"]: node["label"] for node in nodes}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "highlighted_path": highlighted_path,
+        "highlighted_labels": [label_lookup[item] for item in highlighted_path if item in label_lookup],
+        "summary_metrics": {
+            "risk_basis_count": len(best_check.matches[:2]) if best_check.risk_level != "low" else 0,
+            "counter_basis_count": 1 if best_check.risk_level == "low" else 0,
+            "signal_count": suspicious_count,
+            "image_count": image_count,
+            "final_score": _score_to_percent(best_check.score),
+        },
+    }
+
+
+def _build_image_evidence_items(
+    best_check: image_fraud_service.ImageFraudCheckResult,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if best_check.risk_level == "low":
+        return (
+            [],
+            [
+                {
+                    "source_id": 0,
+                    "chunk_index": 0,
+                    "sample_label": "white",
+                    "fraud_type": "未命中诈骗截图库",
+                    "data_source": "图片相似库",
+                    "url": None,
+                    "chunk_text": f"最高综合分 {_score_to_percent(best_check.score)}，低于疑似阈值 {_score_to_percent(best_check.review_threshold)}。",
+                    "similarity_score": best_check.score,
+                    "match_source": "image_similarity",
+                    "reason": "当前图片与诈骗样本整体差异较大。",
+                }
+            ],
+        )
+
+    retrieved = [
+        {
+            "source_id": index,
+            "chunk_index": index,
+            "sample_label": "black",
+            "fraud_type": match.label,
+            "data_source": "图片相似库",
+            "url": _build_reference_image_url(match.path),
+            "chunk_text": f"{match.label} · 相似度 {_score_to_percent(match.similarity)}",
+            "similarity_score": match.similarity,
+            "match_source": "image_similarity",
+            "reason": match.path,
+        }
+        for index, match in enumerate(best_check.matches[:3], start=1)
+    ]
+    return retrieved, []
+
+
+def _build_image_only_result(submission: DetectionSubmission, job: DetectionJob) -> DetectionResult:
+    image_checks: list[image_fraud_service.ImageFraudCheckResult] = []
+    failed_paths: list[str] = []
+
+    for relative_path in list(submission.image_paths or []):
+        full_path = _resolve_submission_upload_path(relative_path)
+        try:
+            image_checks.append(
+                image_fraud_service.check_image_fraud(
+                    image_bytes=full_path.read_bytes(),
+                    filename=Path(relative_path).name,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            failed_paths.append(relative_path)
+            logger.exception("图片诈骗检测失败，已跳过: %s", relative_path)
+
+    if not image_checks:
+        if failed_paths:
+            raise RuntimeError("图片样本读取失败，无法完成图片诈骗检测")
+        return _build_attachment_only_result(submission, job)
+
+    image_checks.sort(key=lambda item: item.score, reverse=True)
+    best_check = image_checks[0]
+    suspicious_count = sum(1 for item in image_checks if item.score >= item.review_threshold)
+    retrieved_evidence, counter_evidence = _build_image_evidence_items(best_check)
+    match_labels = [item.label for item in best_check.matches[:2]]
+
+    if best_check.risk_level == "high":
+        summary = "诈骗截图相似度高"
+        final_reason = (
+            f"{best_check.filename} 与诈骗样本高度接近，综合分 {_score_to_percent(best_check.score)}，"
+            f"最高近邻相似度 {_score_to_percent(best_check.max_similarity)}。"
+        )
+        advice = ["暂停转账", "改走官方核验", "保留截图证据"]
+    elif best_check.risk_level == "medium":
+        summary = "疑似诈骗截图"
+        final_reason = (
+            f"{best_check.filename} 命中诈骗截图库边界区间，综合分 {_score_to_percent(best_check.score)}，"
+            f"建议结合 OCR 文本或人工复核继续判断。"
+        )
+        advice = ["补充 OCR 文本", "人工复核聊天内容", "不要立即操作资金"]
+    else:
+        summary = "未命中诈骗截图库"
+        final_reason = (
+            f"{best_check.filename} 的最高综合分为 {_score_to_percent(best_check.score)}，"
+            f"低于疑似阈值 {_score_to_percent(best_check.review_threshold)}。"
+        )
+        advice = ["若仍怀疑，请补充更多截图", "优先核验对方身份", "不要泄露验证码"]
+
+    risk_evidence = [
+        f"{match.label} 相似度 {_score_to_percent(match.similarity)}"
+        for match in best_check.matches[:3]
+    ] if best_check.risk_level != "low" else []
+    counter_basis = (
+        [f"综合分 {_score_to_percent(best_check.score)} 低于阈值 {_score_to_percent(best_check.review_threshold)}"]
+        if best_check.risk_level == "low"
+        else []
+    )
+    reasoning_graph = _build_image_reasoning_graph(
+        best_check,
+        image_count=len(image_checks),
+        suspicious_count=suspicious_count,
+    )
+    detail = {
+        "message": "已执行诈骗图片相似度检测。",
+        "used_modules": ["preprocess", "embedding", "vector_retrieval", "graph_reasoning", "finalize"],
+        "module_trace": [
+            {"key": "preprocess", "label": "预处理", "status": "completed"},
+            {"key": "embedding", "label": "截图编码", "status": "completed"},
+            {"key": "vector_retrieval", "label": "相似检索", "status": "completed"},
+            {"key": "graph_reasoning", "label": "风险判断", "status": "completed"},
+            {"key": "llm_reasoning", "label": "模型判别", "status": "pending", "enabled": False},
+            {"key": "finalize", "label": "完成", "status": "completed"},
+        ],
+        "reasoning_graph": reasoning_graph,
+        "reasoning_path": reasoning_graph["highlighted_labels"],
+        "final_score": _score_to_percent(best_check.score),
+        "risk_evidence": risk_evidence,
+        "counter_evidence": counter_basis,
+        "image_results": [item.as_dict() for item in image_checks[:6]],
+        "failed_paths": failed_paths,
+        "reference_count": best_check.reference_count,
+        "thresholds": {
+            "review": best_check.review_threshold,
+            "positive": best_check.positive_threshold,
+        },
+        "base_score": best_check.base_score,
+        "feature_penalty": best_check.feature_penalty,
+        "visual_stats": best_check.visual_stats,
+    }
+
+    return DetectionResult(
+        submission_id=submission.id,
+        job_id=job.id,
+        risk_level=best_check.risk_level,
+        fraud_type="诈骗截图" if best_check.risk_level != "low" else "未命中截图库",
+        confidence=best_check.confidence,
+        is_fraud=best_check.is_fraud,
+        summary=summary,
+        final_reason=final_reason,
+        need_manual_review=best_check.need_manual_review,
+        stage_tags=["图片相似检索", "诈骗截图比对"],
+        hit_rules=["诈骗截图库命中"] if best_check.risk_level != "low" else [],
+        rule_hits=[
+            {
+                "name": "诈骗截图相似度",
+                "category": "image_similarity",
+                "risk_points": _score_to_percent(best_check.score),
+                "explanation": "上传图片与诈骗样本库存在视觉相似性。",
+                "matched_texts": match_labels,
+                "stage_tag": "图片相似检索",
+                "fraud_type_hint": "诈骗截图" if best_check.risk_level != "low" else None,
+            }
+        ] if best_check.risk_level != "low" else [],
+        extracted_entities={
+            "image_count": len(image_checks),
+            "suspicious_count": suspicious_count,
+            "best_image": best_check.filename,
+            "best_score": best_check.score,
+            "best_similarity": best_check.max_similarity,
+        },
+        input_highlights=[
+            {
+                "text": best_check.filename,
+                "reason": f"综合分 {_score_to_percent(best_check.score)}",
+            }
+        ],
+        retrieved_evidence=retrieved_evidence,
+        counter_evidence=counter_evidence,
+        advice=advice,
+        llm_model=best_check.model_name,
+        result_detail=detail,
+    )
+
+
+def _persist_result_side_effects(
+    db: Session,
+    *,
+    submission: DetectionSubmission,
+    result_row: DetectionResult,
+) -> None:
+    detection_repository.save_result(db, result_row)
+    try:
+        user_profile_memory.refresh_user_profile_from_detection(
+            db,
+            user_id=submission.user_id,
+            submission=submission,
+            result=result_row,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("User profile refresh failed: submission=%s", submission.id)
+    try:
+        relation_service.attach_detection_result(
+            db,
+            user_id=submission.user_id,
+            relation_id=submission.relation_profile_id,
+            submission_id=submission.id,
+            result=result_row,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Relation profile refresh failed: submission=%s", submission.id)
+    try:
+        guardian_service.maybe_create_events_for_detection_result(
+            db,
+            submission=submission,
+            result=result_row,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Guardian event sync failed: submission=%s", submission.id)
 
 
 def submit_detection(
@@ -463,14 +983,17 @@ def submit_detection(
         text_content=submission.text_content,
         upload_rows=upload_rows,
     )
+    job_type, input_modality, llm_model = _job_profile_for_submission(submission)
     job = detection_repository.create_job(
         db,
         submission_id=submission.id,
-        job_type="text_rag",
-        input_modality="text" if submission.text_content else "attachment_only",
-        llm_model=settings.detection_llm_model,
+        job_type=job_type,
+        input_modality=input_modality,
+        llm_model=llm_model,
     )
     job = _initialize_job_progress(db, job)
+    if _should_process_inline(job):
+        job = process_job(db, job.id)
     return submission, job
 
 
@@ -479,8 +1002,19 @@ def list_history(
     *,
     user_id: uuid.UUID,
     limit: int,
+    offset: int = 0,
+    scope: str = "month",
 ) -> list[dict[str, Any]]:
-    submissions = detection_repository.list_submissions_for_user(db, user_id=user_id, limit=limit)
+    normalized_scope = normalize_history_scope(scope)
+    start_at, end_at = _history_filter_window(normalized_scope)
+    submissions = detection_repository.list_submissions_for_user(
+        db,
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+        start_at=start_at,
+        end_at=end_at,
+    )
     items: list[dict[str, Any]] = []
     for submission in submissions:
         latest_job = detection_repository.get_latest_job_for_submission(db, submission_id=submission.id)
@@ -489,11 +1023,58 @@ def list_history(
             _build_submission_snapshot(
                 db,
                 submission,
+                viewer_user_id=user_id,
                 latest_job=latest_job,
                 latest_result=latest_result,
             )
         )
     return items
+
+
+def get_history_statistics(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    scope: str = "month",
+) -> dict[str, Any]:
+    normalized_scope = normalize_history_scope(scope)
+    filter_start_at, filter_end_at = _history_filter_window(normalized_scope)
+
+    total_records = detection_repository.count_submissions_for_user(db, user_id=user_id)
+    filtered_total = detection_repository.count_submissions_for_user(
+        db,
+        user_id=user_id,
+        start_at=filter_start_at,
+        end_at=filter_end_at,
+    )
+
+    filtered_rows = detection_repository.list_submission_risk_rows_for_user(
+        db,
+        user_id=user_id,
+        start_at=filter_start_at,
+        end_at=filter_end_at,
+    )
+    high_count = sum(1 for _, risk_level in filtered_rows if risk_level == "high")
+    medium_count = sum(1 for _, risk_level in filtered_rows if risk_level == "medium")
+    low_count = sum(1 for _, risk_level in filtered_rows if risk_level == "low")
+
+    analytics_start_at, analytics_end_at = _analytics_window(normalized_scope)
+    analytics_rows = detection_repository.list_submission_risk_rows_for_user(
+        db,
+        user_id=user_id,
+        start_at=analytics_start_at,
+        end_at=analytics_end_at,
+    )
+
+    return {
+        "scope": normalized_scope,
+        "total_records": total_records,
+        "filtered_total": filtered_total,
+        "high_count": high_count,
+        "medium_count": medium_count,
+        "low_count": low_count,
+        "points": _build_trend_points(rows=analytics_rows, scope=normalized_scope),
+    }
 
 
 def get_submission_detail(
@@ -514,6 +1095,7 @@ def get_submission_detail(
     return _build_submission_snapshot(
         db,
         submission,
+        viewer_user_id=user_id,
         latest_job=latest_job,
         latest_result=latest_result,
     )
@@ -570,14 +1152,18 @@ def rerun_submission(
         text_content=submission.text_content,
         upload_rows=upload_rows,
     )
+    job_type, input_modality, llm_model = _job_profile_for_submission(submission)
     job = detection_repository.create_job(
         db,
         submission_id=submission.id,
-        job_type="text_rag",
-        input_modality="text" if submission.text_content else "attachment_only",
-        llm_model=settings.detection_llm_model,
+        job_type=job_type,
+        input_modality=input_modality,
+        llm_model=llm_model,
     )
-    return _initialize_job_progress(db, job)
+    job = _initialize_job_progress(db, job)
+    if _should_process_inline(job):
+        job = process_job(db, job.id)
+    return job
 
 
 def _attachment_only_graph(submission: DetectionSubmission) -> dict[str, Any]:
@@ -670,20 +1256,62 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
 
     try:
         if not _strip(submission.text_content):
-            result_row = _build_attachment_only_result(submission, job)
-            detection_repository.save_result(db, result_row)
-            try:
-                user_profile_memory.refresh_user_profile_from_detection(
+            if submission.image_paths:
+                job = _set_job_progress(
                     db,
-                    user_id=submission.user_id,
-                    submission=submission,
-                    result=result_row,
+                    job,
+                    status="running",
+                    step="embedding",
+                    percent=32,
+                    extra={
+                        "input_modality": "image",
+                        "image_count": len(submission.image_paths or []),
+                    },
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception("User profile refresh failed: submission=%s", submission.id)
+                result_row = _build_image_only_result(submission, job)
+                _persist_result_side_effects(db, submission=submission, result_row=result_row)
+                result_detail = result_row.result_detail if isinstance(result_row.result_detail, dict) else {}
+
+                top_match = None
+                matches = result_detail.get("image_results") if isinstance(result_detail, dict) else []
+                if isinstance(matches, list) and matches:
+                    first = matches[0]
+                    if isinstance(first, dict):
+                        top_match = first.get("matches")
+
+                job.rule_score = int(round(float(result_detail.get("final_score") or 0)))
+                if isinstance(top_match, list):
+                    labels = [
+                        str(item.get("label"))
+                        for item in top_match[:2]
+                        if isinstance(item, dict) and str(item.get("label") or "").strip()
+                    ]
+                    job.retrieval_query = " / ".join(labels) if labels else None
+                else:
+                    job.retrieval_query = None
+                job.llm_model = result_row.llm_model or "resnet18-imagebank"
+                job.finished_at = _utcnow()
+                job = _set_job_progress(
+                    db,
+                    job,
+                    status="completed",
+                    step="finalize",
+                    percent=100,
+                    extra={
+                        "used_modules": result_detail.get("used_modules", []),
+                        "reasoning_path": result_detail.get("reasoning_path", []),
+                        "module_trace": result_detail.get("module_trace", []),
+                        "final_score": result_detail.get("final_score"),
+                        "reasoning_graph": result_detail.get("reasoning_graph"),
+                    },
+                )
+                return job
+
+            result_row = _build_attachment_only_result(submission, job)
+            _persist_result_side_effects(db, submission=submission, result_row=result_row)
             job.rule_score = 0
             job.retrieval_query = None
-            job.llm_model = settings.detection_llm_model
+            job.llm_model = None
             job.finished_at = _utcnow()
             job = _set_job_progress(
                 db,
@@ -729,16 +1357,7 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
             llm_model=analysis.llm_model,
             result_detail=result_payload["result_detail"],
         )
-        detection_repository.save_result(db, result_row)
-        try:
-            user_profile_memory.refresh_user_profile_from_detection(
-                db,
-                user_id=submission.user_id,
-                submission=submission,
-                result=result_row,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("User profile refresh failed: submission=%s", submission.id)
+        _persist_result_side_effects(db, submission=submission, result_row=result_row)
 
         result_detail = result_payload.get("result_detail") if isinstance(result_payload, dict) else {}
         if not isinstance(result_detail, dict):
@@ -796,3 +1415,31 @@ def process_next_pending_job() -> DetectionJob | None:
         return process_job(db, job.id)
     finally:
         db.close()
+
+
+def detect_web_phishing(*, url: str, html: str | None = None, return_features: bool = False) -> dict[str, Any]:
+    normalized_url = _strip(url)
+    if not normalized_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="url 不能为空")
+    try:
+        from app.domain.detection.web_phishing_predictor import predict_web_phishing as _predict_web_phishing
+
+        return _predict_web_phishing(normalized_url, html, return_features=return_features)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"网站钓鱼检测模型文件缺失：{exc}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"网站钓鱼检测输入无效：{exc}",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Web phishing detection failed")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"网站钓鱼检测失败：{exc}",
+        ) from exc

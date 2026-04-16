@@ -1,5 +1,50 @@
 export type DetectionMode = "text" | "visual" | "audio" | "mixed";
 
+export type AudioVerifyResponse = {
+  label: "genuine" | "fake" | string;
+  genuine_prob: number;
+  fake_prob: number;
+  score: number;
+  duration_sec: number;
+  model_version: string;
+  feature_version: string;
+};
+
+export type AudioVerifyJobSubmitResponse = {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  filename: string | null;
+};
+
+export type AudioVerifyJobResponse = AudioVerifyJobSubmitResponse & {
+  updated_at: string;
+  error_message: string | null;
+  result: AudioVerifyResponse | null;
+};
+
+export type AudioVerifyBatchItemResponse = {
+  item_id: string;
+  filename: string | null;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  error_message: string | null;
+  result: AudioVerifyResponse | null;
+};
+
+export type AudioVerifyBatchJobSubmitResponse = {
+  batch_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  total_count: number;
+  items: AudioVerifyBatchItemResponse[];
+};
+
+export type AudioVerifyBatchJobResponse = AudioVerifyBatchJobSubmitResponse & {
+  updated_at: string;
+  completed_count: number;
+  failed_count: number;
+};
+
 export type KnownDetectionPipelineStep =
   | "queued"
   | "preprocess"
@@ -191,6 +236,18 @@ export type DetectionResult = {
   updated_at: string;
 };
 
+export type DetectionGuardianEventSummary = {
+  event_count: number;
+  latest_event_id: string;
+  latest_risk_level: string;
+  latest_notify_status: "pending" | "sent" | "read" | "failed" | string;
+  latest_guardian_name: string | null;
+  latest_guardian_phone: string | null;
+  latest_guardian_relation: "self" | "parent" | "spouse" | "child" | "relative" | null;
+  latest_created_at: string;
+  latest_acknowledged_at: string | null;
+};
+
 export type DetectionJob = {
   id: string;
   submission_id: string;
@@ -220,7 +277,28 @@ export type DetectionHistoryItem = {
   submission: DetectionSubmission;
   latest_job: DetectionJob | null;
   latest_result: DetectionResult | null;
+  guardian_event_summary: DetectionGuardianEventSummary | null;
   content_preview: string | null;
 };
 
 export type DetectionSubmissionDetail = DetectionHistoryItem;
+
+export type WebPhishingRiskLevel = "safe" | "suspicious" | "medium" | "high" | string;
+
+export type WebPhishingPredictRequest = {
+  url: string;
+  html?: string | null;
+  return_features?: boolean;
+};
+
+export type WebPhishingPredictResponse = {
+  url: string;
+  mode: "url_only" | "url_html" | string;
+  model_name: string;
+  pred_label: number;
+  is_phishing: boolean;
+  phish_prob: number;
+  confidence: number;
+  risk_level: WebPhishingRiskLevel;
+  features: Record<string, number> | null;
+};

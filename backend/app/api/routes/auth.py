@@ -13,6 +13,8 @@ from app.shared.core.config import settings
 from app.shared.db.session import get_db
 from app.shared.schemas.auth import (
     LoginRequest,
+    PushTokenResponse,
+    RegisterPushTokenRequest,
     RegisterRequest,
     TokenResponse,
     UpdateGuardianRequest,
@@ -103,6 +105,15 @@ def update_guardian(
     current: User = Depends(get_current_user),
 ) -> UserPublic:
     return user_service.update_guardian(db, current_user=current, body=body)
+
+
+@router.post("/me/push-token", response_model=PushTokenResponse)
+def register_push_token(
+    body: RegisterPushTokenRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> PushTokenResponse:
+    return user_service.register_push_token(db, current_user=current, body=body)
 
 
 @router.post("/me/avatar", response_model=UserPublic)

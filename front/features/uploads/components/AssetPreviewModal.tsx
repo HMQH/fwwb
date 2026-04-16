@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -58,6 +60,7 @@ function NativeVideoPreview({ uri }: { uri: string }) {
 export default function AssetPreviewModal({ asset, onClose, onOpenRecord }: Props) {
   const [textLoading, setTextLoading] = useState(false);
   const [textContent, setTextContent] = useState("");
+  const [openingAudio, setOpeningAudio] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -97,6 +100,21 @@ export default function AssetPreviewModal({ asset, onClose, onOpenRecord }: Prop
   }, [asset]);
 
   const videoAvailable = useMemo(() => Boolean(expoVideoModule), []);
+
+  const openAudio = async () => {
+    if (!asset?.file_url || asset.upload_type !== "audio") {
+      return;
+    }
+
+    setOpeningAudio(true);
+    try {
+      await WebBrowser.openBrowserAsync(asset.file_url);
+    } catch (error) {
+      Alert.alert("打开失败", error instanceof Error ? error.message : "暂时无法打开录音");
+    } finally {
+      setOpeningAudio(false);
+    }
+  };
 
   return (
     <Modal transparent visible={Boolean(asset)} animationType="fade" onRequestClose={onClose}>
@@ -147,15 +165,32 @@ export default function AssetPreviewModal({ asset, onClose, onOpenRecord }: Prop
               </View>
             )}
 
-            {asset.source_submission_id && onOpenRecord ? (
-              <Pressable
-                style={({ pressed }) => [styles.openRecordButton, pressed && styles.buttonPressed]}
-                onPress={() => onOpenRecord(asset.source_submission_id!)}
-              >
-                <MaterialCommunityIcons name="history" size={16} color={palette.accentStrong} />
-                <Text style={styles.openRecordText}>检测记录</Text>
-              </Pressable>
-            ) : null}
+            <View style={styles.actionRow}>
+              {asset.upload_type === "audio" && asset.file_url ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    openingAudio && styles.actionButtonDisabled,
+                    pressed && !openingAudio && styles.buttonPressed,
+                  ]}
+                  onPress={() => void openAudio()}
+                  disabled={openingAudio}
+                >
+                  <MaterialCommunityIcons name="play-circle-outline" size={16} color={palette.accentStrong} />
+                  <Text style={styles.actionText}>打开录音</Text>
+                </Pressable>
+              ) : null}
+
+              {asset.source_submission_id && onOpenRecord ? (
+                <Pressable
+                  style={({ pressed }) => [styles.actionButton, pressed && styles.buttonPressed]}
+                  onPress={() => onOpenRecord(asset.source_submission_id!)}
+                >
+                  <MaterialCommunityIcons name="history" size={16} color={palette.accentStrong} />
+                  <Text style={styles.actionText}>检测记录</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </Animated.View>
         ) : null}
       </View>
@@ -234,8 +269,12 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontFamily: fontFamily.body,
   },
-  openRecordButton: {
-    alignSelf: "flex-start",
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  actionButton: {
     minHeight: 40,
     borderRadius: radius.pill,
     backgroundColor: palette.accentSoft,
@@ -245,7 +284,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  openRecordText: {
+  actionButtonDisabled: {
+    opacity: 0.56,
+  },
+  actionText: {
     color: palette.accentStrong,
     fontSize: 12,
     lineHeight: 16,

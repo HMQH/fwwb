@@ -15,13 +15,14 @@ import Animated, {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
+import { useCallIntervention } from "@/features/call-intervention";
 import type { DetectionMode } from "@/features/detections";
 import { floatingCaptureService, type FloatingCaptureStatus } from "@/features/floating-capture";
 import { fontFamily, palette, panelShadow } from "@/shared/theme";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
 const detectionEntries: {
-  mode: DetectionMode;
+  mode: DetectionMode | "web";
   title: string;
   route: string;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
@@ -49,6 +50,12 @@ const detectionEntries: {
     title: "混合检测",
     route: "/detect-mixed",
     icon: "layers-triple-outline",
+  },
+  {
+    mode: "web",
+    title: "钓鱼网站检测",
+    route: "/detect-web",
+    icon: "web-check",
   },
 ];
 
@@ -209,6 +216,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const reduceMotion = useReduceMotionEnabled();
   const { user, refreshCurrentUser } = useAuth();
+  const { incomingRisk, recording, nativeAvailable, nativeDetectionStatus } = useCallIntervention();
   const [captureStatus, setCaptureStatus] = useState<FloatingCaptureStatus>({
     platformSupported: false,
     overlayPermission: false,
@@ -258,6 +266,16 @@ export default function HomeScreen() {
     return null;
   }
 
+  const interventionStatus = recording.isRecording
+    ? "录音中"
+    : incomingRisk?.riskLevel === "high"
+      ? "高危"
+      : nativeAvailable &&
+          nativeDetectionStatus.callScreeningEnabled &&
+          nativeDetectionStatus.phoneStatePermissionGranted
+        ? "监测中"
+        : "待开启";
+
   const handleFloatingAssistant = async () => {
     if (!floatingCaptureService.isSupported()) {
       Alert.alert("当前版本不支持", "请使用安卓 development build 运行悬浮截图助手。");
@@ -303,7 +321,26 @@ export default function HomeScreen() {
             <ScoreBubble score={score} />
           </Animated.View>
 
-          
+          <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(420).delay(60)}>
+            <Pressable
+              style={({ pressed }) => [styles.interventionCard, pressed && styles.entryCardPressed]}
+              onPress={() => router.push("/call-intervention" as never)}
+            >
+              <View style={styles.interventionIconWrap}>
+                <MaterialCommunityIcons name="phone-alert-outline" size={22} color="#E14D4D" />
+              </View>
+              <View style={styles.interventionCopy}>
+                <View style={styles.interventionHeaderRow}>
+                  <Text style={styles.interventionTitle}>来电预警</Text>
+                  <View style={styles.interventionStatusPill}>
+                    <Text style={styles.interventionStatusText}>{interventionStatus}</Text>
+                  </View>
+                </View>
+                <Text style={styles.interventionText}>预警 / 录音 / 回看</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={palette.lineStrong} />
+            </Pressable>
+          </Animated.View>
 
           <View style={styles.entryGrid}>
             {detectionEntries.map((item, index) => (
@@ -431,6 +468,62 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 28,
     gap: 12,
+  },
+  interventionCard: {
+    borderRadius: 24,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: "#FFD6D6",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    ...panelShadow,
+  },
+  interventionIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: "#FFECEC",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  interventionCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  interventionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  interventionTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  interventionText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  interventionStatusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#F3F7FF",
+  },
+  interventionStatusText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
   },
   backgroundOrbTop: {
     position: "absolute",

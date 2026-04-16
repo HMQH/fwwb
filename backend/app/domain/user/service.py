@@ -1,19 +1,22 @@
 """用户域：注册、登录等业务。"""
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.user import repository as user_repository
-from app.domain.user.entity import User
+from app.domain.user.entity import User, UserPushToken
 from app.shared.core.security import create_access_token, hash_password, verify_password
 from app.shared.core.config import settings
 from app.shared.schemas.auth import (
     LoginRequest,
+    PushTokenResponse,
+    RegisterPushTokenRequest,
     RegisterRequest,
     TokenResponse,
     UpdateGuardianRequest,
@@ -24,6 +27,12 @@ from app.shared.storage.upload_paths import (
     safe_suffix,
     save_avatar_bytes,
 )
+
+_EXPO_PUSH_TOKEN_RE = re.compile(r"^(Expo|Exponent)PushToken\[[^\]]+\]$")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def role_from_birth_date(birth: date, today: date | None = None) -> str:
@@ -144,3 +153,43 @@ def update_avatar(
     current_user.avatar_url = avatar_url
     user_repository.save(db, current_user)
     return _user_public(current_user)
+
+
+def register_push_token(
+    db: Session,
+    *,
+    current_user: User,
+    body: RegisterPushTokenRequest,
+) -> PushTokenResponse:
+    token_value = body.expo_push_token.strip()
+    if not _EXPO_PUSH_TOKEN_RE.match(token_value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="推送令牌无效",
+        )
+
+    device_name = (body.device_name or "").strip() or None
+    row = user_repository.get_push_token_by_value(db, token_value)
+    if row is None:
+        row = UserPushToken(
+            user_id=current_user.id,
+            expo_push_token=token_value,
+            platform=body.platform,
+            device_name=device_name,
+            is_active=True,
+            last_seen_at=_utcnow(),
+        )
+    else:
+        row.user_id = current_user.id
+        row.platform = body.platform
+        row.device_name = device_name
+        row.is_active = True
+        row.last_seen_at = _utcnow()
+
+    saved = user_repository.save_push_token(db, row)
+    return PushTokenResponse(
+        expo_push_token=saved.expo_push_token,
+        platform=saved.platform,  # type: ignore[arg-type]
+        device_name=saved.device_name,
+        is_active=saved.is_active,
+    )

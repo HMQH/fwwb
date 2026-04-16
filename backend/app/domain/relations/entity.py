@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint, func, text as sql_text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint, func, text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
@@ -40,6 +40,18 @@ class UserRelationProfile(Base):
         nullable=False,
         server_default=sql_text("'[]'::jsonb"),
     )
+    ai_profile_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_profile_payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=sql_text("'{}'::jsonb"),
+    )
+    ai_profile_dirty: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=sql_text("true"),
+    )
+    ai_profile_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     avatar_color: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

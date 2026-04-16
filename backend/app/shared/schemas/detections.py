@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.shared.schemas.guardians import GuardianEventSummaryResponse
+
 
 class DetectionSubmissionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -107,8 +109,56 @@ class DetectionHistoryItemResponse(BaseModel):
     submission: DetectionSubmissionResponse
     latest_job: DetectionJobResponse | None = None
     latest_result: DetectionResultResponse | None = None
+    guardian_event_summary: GuardianEventSummaryResponse | None = None
     content_preview: str | None = None
+
+
+class DetectionHistoryTrendPointResponse(BaseModel):
+    bucket_key: str
+    label: str
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    total: int = 0
+
+
+class DetectionHistoryStatisticsResponse(BaseModel):
+    scope: str
+    total_records: int = 0
+    filtered_total: int = 0
+    high_count: int = 0
+    medium_count: int = 0
+    low_count: int = 0
+    points: list[DetectionHistoryTrendPointResponse] = Field(default_factory=list)
 
 
 class DetectionSubmissionDetailResponse(DetectionHistoryItemResponse):
     pass
+
+
+class WebPhishingDetectRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "url": "https://example.com/login",
+                "html": None,
+                "return_features": False,
+            }
+        }
+    )
+
+    url: str = Field(..., description="待检测网页 URL")
+    html: str | None = Field(default=None, description="网页 HTML，可选；不传时走 URL-only 模型")
+    return_features: bool = Field(default=False, description="是否返回模型特征值")
+
+
+class WebPhishingDetectResponse(BaseModel):
+    url: str
+    mode: str
+    model_name: str
+    pred_label: int
+    is_phishing: bool
+    phish_prob: float
+    confidence: float
+    risk_level: str
+    features: dict[str, float] | None = None

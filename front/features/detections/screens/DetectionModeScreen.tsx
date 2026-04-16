@@ -2,10 +2,10 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
@@ -20,7 +20,14 @@ import { DetectionPipelineCard } from "../components/DetectionPipelineCard";
 import { DetectionResultCard } from "../components/DetectionResultCard";
 import { EvidenceListCard } from "../components/EvidenceListCard";
 import { ReasoningGraphCard } from "../components/ReasoningGraphCard";
-import type { DetectionJob, DetectionMode, DetectionSubmissionDetail, PickedFile } from "../types";
+import type {
+  AudioVerifyBatchJobResponse,
+  DetectionJob,
+  DetectionMode,
+  DetectionSubmissionDetail,
+  DetectionSubmitAcceptedResponse,
+  PickedFile,
+} from "../types";
 
 type AppendixSlot = "text" | "audio" | "image" | "video";
 type AppendixItem = PickedFile & { key: string };
@@ -37,39 +44,40 @@ const modeConfig: Record<
   text: {
     title: "文本检测",
     icon: "message-text-outline",
-    tags: ["文本", "RAG", "图谱"],
+    tags: ["文本", "RAG", "推理"],
     allow: { text: true, textFiles: true, image: false, video: false, audio: false },
   },
   visual: {
-    title: "图像 / 视频",
+    title: "图片 / 视频检测",
     icon: "image-search-outline",
-    tags: ["截图", "视频", "归档"],
+    tags: ["截图", "图片库", "视频"],
     allow: { text: true, textFiles: false, image: true, video: true, audio: false },
   },
   audio: {
-    title: "音频检测",
+    title: "AI语音合成识别",
     icon: "microphone-outline",
-    tags: ["音频", "摘要", "文本"],
-    allow: { text: true, textFiles: false, image: false, video: false, audio: true },
+    tags: ["音频", "AI语音", "鉴伪"],
+    allow: { text: false, textFiles: false, image: false, video: false, audio: true },
   },
   mixed: {
     title: "混合检测",
     icon: "layers-triple-outline",
-    tags: ["混合", "RAG", "归档"],
+    tags: ["混合", "文本", "附件"],
     allow: { text: true, textFiles: true, image: true, video: true, audio: true },
   },
 };
 
 const nextKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const extOf = (name: string) => {
-  const index = name.lastIndexOf(".");
-  return index < 0 ? "" : name.slice(index).toLowerCase();
-};
 
 const TEXT_EXT = new Set([".txt", ".md", ".json", ".csv", ".log", ".html", ".htm", ".pdf", ".doc", ".docx"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".opus", ".amr"]);
 const IMAGE_EXT = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp"]);
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".3gp"]);
+
+function extOf(name: string) {
+  const index = name.lastIndexOf(".");
+  return index < 0 ? "" : name.slice(index).toLowerCase();
+}
 
 function isAllowedForSlot(name: string, mime: string, slot: AppendixSlot) {
   const suffix = extOf(name);
@@ -95,6 +103,55 @@ function isAllowedForSlot(name: string, mime: string, slot: AppendixSlot) {
 
 function isImageFile(file: PickedFile) {
   return file.type.toLowerCase().startsWith("image/") || IMAGE_EXT.has(extOf(file.name));
+}
+
+function formatPercent(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatSeconds(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+  return value >= 10 ? `${value.toFixed(1)}s` : `${value.toFixed(2)}s`;
+}
+
+function formatAudioJobStatus(status: string) {
+  switch (status) {
+    case "pending":
+      return "排队中";
+    case "running":
+      return "识别中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return status;
+  }
+}
+
+function decodeDisplayFilename(name: string | null | undefined) {
+  if (!name) {
+    return "未命名音频";
+  }
+
+  let decoded = name;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) {
+        break;
+      }
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
 }
 
 function CountPill({ label, value }: { label: string; value: number | string }) {
@@ -151,7 +208,7 @@ function SectionHeader({
 }: {
   title: string;
   count?: number;
-  actions?: React.ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <View style={styles.sectionHeaderRow}>
@@ -168,10 +225,75 @@ function SectionHeader({
   );
 }
 
+function AudioBatchPanel({ batchJob }: { batchJob: AudioVerifyBatchJobResponse }) {
+  return (
+    <View style={styles.sectionCard}>
+      <SectionHeader title="识别结果" count={batchJob.total_count} />
+      <View style={styles.audioSummaryRow}>
+        <CountPill label="总数" value={batchJob.total_count} />
+        <CountPill label="完成" value={batchJob.completed_count} />
+        <CountPill label="失败" value={batchJob.failed_count} />
+      </View>
+      {batchJob.items.map((item) => {
+        const result = item.result;
+        const isGenuine = result?.label === "genuine";
+        return (
+          <View key={item.item_id} style={styles.audioTaskCard}>
+            <View style={styles.audioTaskHeader}>
+              <View style={styles.audioTaskHeaderCopy}>
+                <Text style={styles.audioTaskTitle} numberOfLines={2}>
+                  {decodeDisplayFilename(item.filename)}
+                </Text>
+                <Text style={styles.audioTaskStatus}>{formatAudioJobStatus(item.status)}</Text>
+              </View>
+              {item.status === "pending" || item.status === "running" ? (
+                <ActivityIndicator size="small" color={palette.accentStrong} />
+              ) : null}
+            </View>
+
+            {item.status === "failed" ? (
+              <Text style={styles.audioErrorText}>{item.error_message ?? "识别失败"}</Text>
+            ) : null}
+
+            {result ? (
+              <>
+                <View style={[styles.audioVerdictBadge, isGenuine ? styles.audioVerdictSafe : styles.audioVerdictRisk]}>
+                  <Text style={styles.audioVerdictText}>{isGenuine ? "真人语音" : "AI合成"}</Text>
+                </View>
+                <View style={styles.audioMetricGrid}>
+                  <View style={styles.audioMetricCard}>
+                    <Text style={styles.audioMetricLabel}>真人概率</Text>
+                    <Text style={styles.audioMetricValue}>{formatPercent(result.genuine_prob)}</Text>
+                  </View>
+                  <View style={styles.audioMetricCard}>
+                    <Text style={styles.audioMetricLabel}>合成概率</Text>
+                    <Text style={styles.audioMetricValue}>{formatPercent(result.fake_prob)}</Text>
+                  </View>
+                </View>
+                <View style={styles.audioMetricGrid}>
+                  <View style={styles.audioMetricCard}>
+                    <Text style={styles.audioMetricLabel}>时长</Text>
+                    <Text style={styles.audioMetricValue}>{formatSeconds(result.duration_sec)}</Text>
+                  </View>
+                  <View style={styles.audioMetricCard}>
+                    <Text style={styles.audioMetricLabel}>Score</Text>
+                    <Text style={styles.audioMetricValue}>{result.score.toFixed(4)}</Text>
+                  </View>
+                </View>
+              </>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
   const { token, refreshCurrentUser } = useAuth();
   const config = modeConfig[mode];
+  const isAudioMode = mode === "audio";
 
   const [textContent, setTextContent] = useState("");
   const [textFiles, setTextFiles] = useState<AppendixItem[]>([]);
@@ -182,8 +304,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [relationsLoading, setRelationsLoading] = useState(false);
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [matchingImageBank, setMatchingImageBank] = useState(false);
   const [activeJob, setActiveJob] = useState<DetectionJob | null>(null);
   const [detail, setDetail] = useState<DetectionSubmissionDetail | null>(null);
+  const [audioVerifyBatchJob, setAudioVerifyBatchJob] = useState<AudioVerifyBatchJobResponse | null>(null);
 
   const activeSubmissionId = activeJob?.submission_id ?? detail?.submission.id ?? null;
   const currentResult = activeJob?.result ?? detail?.latest_result ?? null;
@@ -196,6 +320,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     ) => {
       const valid: AppendixItem[] = [];
       const invalid: string[] = [];
+
       for (const asset of assets) {
         const name = asset.name ?? "file";
         const mimeType = asset.mimeType ?? "application/octet-stream";
@@ -205,10 +330,14 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         }
         valid.push({ uri: asset.uri, name, type: mimeType, key: nextKey() });
       }
+
       if (invalid.length) {
-        Alert.alert("部分文件未添加", invalid.join("\n"));
+        Alert.alert("文件类型不匹配", invalid.join("\n"));
       }
       if (valid.length) {
+        if (slot === "audio") {
+          setAudioVerifyBatchJob(null);
+        }
         setter((prev) => [...prev, ...valid]);
       }
     },
@@ -218,9 +347,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const pickDocumentsForSlot = useCallback(
     async (slot: Extract<AppendixSlot, "text" | "audio" | "video">, setter: Dispatch<SetStateAction<AppendixItem[]>>) => {
       if (Platform.OS === "web") {
-        Alert.alert("当前平台受限", "请在手机端选择文件");
+        Alert.alert("当前平台受限", "请在移动端选择文件");
         return;
       }
+
       const typeOption = slot === "audio" ? "audio/*" : slot === "video" ? "video/*" : "*/*";
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -236,7 +366,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
   const pickImages = useCallback(async () => {
     if (Platform.OS === "web") {
-      Alert.alert("当前平台受限", "请在手机端选择文件");
+      Alert.alert("当前平台受限", "请在移动端选择图片");
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -265,7 +395,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
   const pickVideos = useCallback(async () => {
     if (Platform.OS === "web") {
-      Alert.alert("当前平台受限", "请在手机端选择文件");
+      Alert.alert("当前平台受限", "请在移动端选择视频");
       return;
     }
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -294,10 +424,17 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const hasPayload = useMemo(() => {
     return Boolean(textContent.trim()) || textFiles.length > 0 || audioFiles.length > 0 || imageFiles.length > 0 || videoFiles.length > 0;
   }, [audioFiles.length, imageFiles.length, textContent, textFiles.length, videoFiles.length]);
+
   const selectedRelation = useMemo(
     () => relations.find((item) => item.id === selectedRelationId) ?? null,
-    [relations, selectedRelationId]
+    [relations, selectedRelationId],
   );
+
+  const audioVerifyBusy = audioVerifyBatchJob?.status === "pending" || audioVerifyBatchJob?.status === "running";
+  const materialCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
+  const canImageLibraryMatch = !isAudioMode && config.allow.image && imageFiles.length > 0;
+  const isBusy = submitting || matchingImageBank || audioVerifyBusy;
+  const canSubmit = isAudioMode ? audioFiles.length > 0 && !isBusy : hasPayload && !isBusy;
 
   const resetForm = useCallback(() => {
     setTextContent("");
@@ -306,6 +443,18 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setImageFiles([]);
     setVideoFiles([]);
   }, []);
+
+  const applySubmitResponse = useCallback((response: DetectionSubmitAcceptedResponse) => {
+    setActiveJob(response.job);
+    setDetail({
+      submission: response.submission,
+      latest_job: response.job,
+      latest_result: response.job.result,
+      guardian_event_summary: null,
+      content_preview: response.submission.text_content?.slice(0, 88) ?? null,
+    });
+    resetForm();
+  }, [resetForm]);
 
   const openDetail = useCallback(() => {
     if (!activeSubmissionId) {
@@ -322,7 +471,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       const detailResponse = await detectionsApi.getSubmission(token, activeSubmissionId);
       setDetail(detailResponse);
     } catch {
-      // silent
+      // ignore
     }
   }, [activeSubmissionId, token]);
 
@@ -337,7 +486,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         if (prev.some((item) => item.uri === stagedCapture.file.uri)) {
           return prev;
         }
-
         return [...prev, { ...stagedCapture.file, key: nextKey() }];
       });
       return;
@@ -352,11 +500,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       if (prev.some((item) => item.uri === captured.uri)) {
         return prev;
       }
-
       return [...prev, { ...captured, key: nextKey() }];
     });
 
-    Alert.alert("截图已带回", "悬浮截图已加入图片素材，你可以继续补充内容后再开始检测。");
+    Alert.alert("截图已加入", "可直接开始检测");
   }, [config.allow.image]);
 
   const loadRelations = useCallback(async () => {
@@ -372,7 +519,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       setRelations(items);
       setSelectedRelationId((prev) => (prev && items.some((item) => item.id === prev) ? prev : null));
     } catch {
-      // ignore relation loading failure, detection can still continue
+      // ignore
     } finally {
       setRelationsLoading(false);
     }
@@ -381,15 +528,77 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   useFocusEffect(
     useCallback(() => {
       void consumeFloatingCapture();
-      void loadRelations();
-    }, [consumeFloatingCapture, loadRelations])
+      if (!isAudioMode) {
+        void loadRelations();
+      }
+    }, [consumeFloatingCapture, isAudioMode, loadRelations]),
   );
+
+  const handleImageLibraryMatch = useCallback(async () => {
+    if (!token) {
+      Alert.alert("未登录", "请先登录");
+      return;
+    }
+    if (!imageFiles.length) {
+      Alert.alert("缺少图片", "请先添加图片");
+      return;
+    }
+
+    const formData = buildDetectionSubmitFormData({
+      relation_profile_id: selectedRelationId,
+      image_files: imageFiles,
+    });
+
+    setMatchingImageBank(true);
+    try {
+      const response = await detectionsApi.submit(token, formData);
+      applySubmitResponse(response);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "图片库比对失败";
+      Alert.alert("图片库比对失败", message);
+    } finally {
+      setMatchingImageBank(false);
+    }
+  }, [applySubmitResponse, imageFiles, selectedRelationId, token]);
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
       Alert.alert("未登录", "请先登录");
       return;
     }
+
+    if (isAudioMode) {
+      if (!audioFiles.length) {
+        Alert.alert("缺少音频", "请先添加音频");
+        return;
+      }
+
+      setSubmitting(true);
+      setAudioVerifyBatchJob(null);
+      setActiveJob(null);
+      setDetail(null);
+
+      try {
+        const submitResponse = await detectionsApi.submitAudioVerifyBatch(token, audioFiles);
+        setAudioVerifyBatchJob({
+          batch_id: submitResponse.batch_id,
+          status: submitResponse.status,
+          created_at: submitResponse.created_at,
+          updated_at: submitResponse.created_at,
+          total_count: submitResponse.total_count,
+          completed_count: 0,
+          failed_count: 0,
+          items: submitResponse.items,
+        });
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : "AI语音识别失败";
+        Alert.alert("识别失败", message);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     if (!hasPayload) {
       Alert.alert("缺少内容", "请先添加检测材料");
       return;
@@ -407,21 +616,14 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setSubmitting(true);
     try {
       const response = await detectionsApi.submit(token, formData);
-      setActiveJob(response.job);
-      setDetail({
-        submission: response.submission,
-        latest_job: response.job,
-        latest_result: response.job.result,
-        content_preview: response.submission.text_content?.slice(0, 88) ?? null,
-      });
-      resetForm();
+      applySubmitResponse(response);
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : "提交失败，请稍后重试";
+      const message = error instanceof ApiError ? error.message : "提交失败";
       Alert.alert("提交失败", message);
     } finally {
       setSubmitting(false);
     }
-  }, [audioFiles, hasPayload, imageFiles, resetForm, textContent, textFiles, token, videoFiles]);
+  }, [applySubmitResponse, audioFiles, hasPayload, imageFiles, isAudioMode, selectedRelationId, textContent, textFiles, token, videoFiles]);
 
   const handleRerun = useCallback(async () => {
     if (!token || !activeSubmissionId) {
@@ -432,13 +634,20 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       setActiveJob(job);
       setDetail((prev) => (prev ? { ...prev, latest_job: job, latest_result: job.result } : prev));
     } catch (error) {
-      const message = error instanceof ApiError ? error.message : "无法重跑，请稍后重试";
-      Alert.alert("无法重跑", message);
+      const message = error instanceof ApiError ? error.message : "重跑失败";
+      Alert.alert("重跑失败", message);
     }
   }, [activeSubmissionId, token]);
 
   useEffect(() => {
     if (!token || !activeJob) {
+      return;
+    }
+    if (activeJob.job_type !== "text_rag") {
+      if (activeJob.status === "completed") {
+        void refreshDetail();
+        void refreshCurrentUser();
+      }
       return;
     }
     if (activeJob.status !== "pending" && activeJob.status !== "running") {
@@ -474,7 +683,25 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     return () => clearTimeout(timer);
   }, [activeJob, refreshCurrentUser, refreshDetail, token]);
 
-  const materialCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
+  useEffect(() => {
+    if (!token || !audioVerifyBatchJob) {
+      return;
+    }
+    if (audioVerifyBatchJob.status !== "pending" && audioVerifyBatchJob.status !== "running") {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const nextBatchJob = await detectionsApi.getAudioVerifyBatchJob(token, audioVerifyBatchJob.batch_id);
+        setAudioVerifyBatchJob(nextBatchJob);
+      } catch {
+        // ignore
+      }
+    }, 2200);
+
+    return () => clearTimeout(timer);
+  }, [audioVerifyBatchJob, token]);
 
   return (
     <View style={styles.root}>
@@ -495,7 +722,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                       <Text style={styles.heroTagText}>{tag}</Text>
                     </View>
                   ))}
-                  {selectedRelation ? (
+                  {!isAudioMode && selectedRelation ? (
                     <View style={[styles.heroTag, styles.heroRelationTag]}>
                       <Text style={styles.heroRelationTagText}>{selectedRelation.name}</Text>
                     </View>
@@ -510,71 +737,69 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             </View>
           </View>
 
-          <View style={styles.sectionCard}>
-            <SectionHeader
-              title="关联对象"
-              count={relations.length}
-              actions={
-                <Pressable
-                  style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
-                  onPress={() => router.push({ pathname: "/relations" })}
-                >
-                  <MaterialCommunityIcons name="account-plus-outline" size={16} color={palette.accentStrong} />
-                  <Text style={styles.addButtonText}>管理</Text>
-                </Pressable>
-              }
-            />
-            {relations.length ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.relationChipRow}
-              >
-                <Pressable
-                  onPress={() => setSelectedRelationId(null)}
-                  style={({ pressed }) => [
-                    styles.relationChip,
-                    !selectedRelationId && styles.relationChipActive,
-                    pressed && styles.buttonPressed,
-                  ]}
-                >
-                  <Text style={[styles.relationChipText, !selectedRelationId && styles.relationChipTextActive]}>
-                    不关联
-                  </Text>
-                </Pressable>
-                {relations.map((relation) => {
-                  const active = selectedRelationId === relation.id;
-                  const meta = relationTypeMeta[relation.relation_type];
-                  return (
-                    <Pressable
-                      key={relation.id}
-                      onPress={() => setSelectedRelationId(relation.id)}
-                      style={({ pressed }) => [
-                        styles.relationChip,
-                        active && styles.relationChipActive,
-                        pressed && styles.buttonPressed,
-                      ]}
-                    >
-                      <Text style={[styles.relationChipText, active && styles.relationChipTextActive]}>
-                        {relation.name}
-                      </Text>
-                      <Text style={[styles.relationChipMeta, active && styles.relationChipMetaActive]}>
-                        {meta?.label ?? "对象"}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            ) : (
-              <View style={styles.emptyTile}>
-                {relationsLoading ? (
-                  <ActivityIndicator size="small" color={palette.accentStrong} />
-                ) : (
-                  <Text style={styles.emptyTileText}>暂无关系对象</Text>
-                )}
-              </View>
-            )}
-          </View>
+          {!isAudioMode ? (
+            <View style={styles.sectionCard}>
+              <SectionHeader
+                title="关联对象"
+                count={relations.length}
+                actions={
+                  <Pressable
+                    style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
+                    onPress={() => router.push({ pathname: "/relations" })}
+                  >
+                    <MaterialCommunityIcons name="account-plus-outline" size={16} color={palette.accentStrong} />
+                    <Text style={styles.addButtonText}>管理</Text>
+                  </Pressable>
+                }
+              />
+              {relations.length ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relationChipRow}>
+                  <Pressable
+                    onPress={() => setSelectedRelationId(null)}
+                    style={({ pressed }) => [
+                      styles.relationChip,
+                      !selectedRelationId && styles.relationChipActive,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={[styles.relationChipText, !selectedRelationId && styles.relationChipTextActive]}>
+                      不关联
+                    </Text>
+                  </Pressable>
+                  {relations.map((relation) => {
+                    const active = selectedRelationId === relation.id;
+                    const meta = relationTypeMeta[relation.relation_type];
+                    return (
+                      <Pressable
+                        key={relation.id}
+                        onPress={() => setSelectedRelationId(relation.id)}
+                        style={({ pressed }) => [
+                          styles.relationChip,
+                          active && styles.relationChipActive,
+                          pressed && styles.buttonPressed,
+                        ]}
+                      >
+                        <Text style={[styles.relationChipText, active && styles.relationChipTextActive]}>
+                          {relation.name}
+                        </Text>
+                        <Text style={[styles.relationChipMeta, active && styles.relationChipMetaActive]}>
+                          {meta?.label ?? "对象"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : (
+                <View style={styles.emptyTile}>
+                  {relationsLoading ? (
+                    <ActivityIndicator size="small" color={palette.accentStrong} />
+                  ) : (
+                    <Text style={styles.emptyTileText}>暂无关联对象</Text>
+                  )}
+                </View>
+              )}
+            </View>
+          ) : null}
 
           {config.allow.text ? (
             <View style={styles.sectionCard}>
@@ -659,7 +884,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           {config.allow.audio ? (
             <View style={styles.sectionCard}>
               <SectionHeader
-                title="音频"
+                title={isAudioMode ? "待识别音频" : "音频"}
                 count={audioFiles.length}
                 actions={
                   <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("audio", setAudioFiles)}>
@@ -668,7 +893,13 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                   </Pressable>
                 }
               />
-              <PreviewGrid items={audioFiles} onRemove={(key) => setAudioFiles((prev) => prev.filter((item) => item.key !== key))} />
+              <PreviewGrid
+                items={audioFiles}
+                onRemove={(key) => {
+                  setAudioFiles((prev) => prev.filter((item) => item.key !== key));
+                  setAudioVerifyBatchJob(null);
+                }}
+              />
             </View>
           ) : null}
 
@@ -676,26 +907,66 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             <View style={styles.commandStatsRow}>
               <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
               <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
-              <CountPill label="材料" value={materialCount} />
+              <CountPill label="状态" value={isAudioMode && audioVerifyBatchJob ? formatAudioJobStatus(audioVerifyBatchJob.status) : "待提交"} />
             </View>
-            <Pressable
-              style={({ pressed }) => [styles.submitButton, pressed && !submitting && styles.buttonPressed, (!hasPayload || submitting) && styles.submitDisabled]}
-              onPress={() => void handleSubmit()}
-              disabled={!hasPayload || submitting}
-            >
-              <Text style={styles.submitButtonText}>{submitting ? "提交中" : "开始检测"}</Text>
-              <MaterialCommunityIcons name="arrow-right" size={16} color={palette.inkInverse} />
-            </Pressable>
+            <View style={styles.commandActionColumn}>
+              {config.allow.image ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    pressed && !isBusy && canImageLibraryMatch && styles.buttonPressed,
+                    (!canImageLibraryMatch || isBusy) && styles.submitDisabled,
+                  ]}
+                  onPress={() => void handleImageLibraryMatch()}
+                  disabled={!canImageLibraryMatch || isBusy}
+                >
+                  <MaterialCommunityIcons name="image-search-outline" size={18} color={palette.inkInverse} />
+                  <Text style={styles.submitButtonText}>{matchingImageBank ? "比对中" : "图片库比对"}</Text>
+                </Pressable>
+              ) : null}
+
+              <Pressable
+                style={({ pressed }) => [
+                  config.allow.image ? styles.secondaryButton : styles.submitButton,
+                  pressed && canSubmit && styles.buttonPressed,
+                  !canSubmit && styles.submitDisabled,
+                ]}
+                onPress={() => void handleSubmit()}
+                disabled={!canSubmit}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={config.allow.image ? palette.accentStrong : palette.inkInverse} />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons
+                      name={config.allow.image ? "layers-triple-outline" : isAudioMode ? "waveform" : "arrow-right"}
+                      size={18}
+                      color={config.allow.image ? palette.accentStrong : palette.inkInverse}
+                    />
+                    <Text style={[styles.submitButtonText, config.allow.image && styles.secondaryButtonText]}>
+                      {isAudioMode ? "开始识别" : config.allow.image ? "综合检测" : "开始检测"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           </View>
 
-          {(activeJob || currentResult) ? <DetectionPipelineCard job={activeJob} result={currentResult} /> : null}
+          {isAudioMode && audioVerifyBatchJob ? <AudioBatchPanel batchJob={audioVerifyBatchJob} /> : null}
 
-          {currentResult ? (
+          {!isAudioMode && (activeJob || currentResult) ? <DetectionPipelineCard job={activeJob} result={currentResult} /> : null}
+
+          {!isAudioMode && currentResult ? (
             <>
-              <DetectionResultCard result={currentResult} job={activeJob} onOpenDetail={activeSubmissionId ? openDetail : undefined} onRerun={activeSubmissionId ? handleRerun : undefined} />
+              <DetectionResultCard
+                result={currentResult}
+                job={activeJob}
+                onOpenDetail={activeSubmissionId ? openDetail : undefined}
+                onRerun={activeSubmissionId ? handleRerun : undefined}
+              />
               <ReasoningGraphCard result={currentResult} />
-              {currentResult.retrieved_evidence.length ? <EvidenceListCard title="风险参照" items={currentResult.retrieved_evidence} tone="black" /> : null}
-              {currentResult.counter_evidence.length ? <EvidenceListCard title="安全参照" items={currentResult.counter_evidence} tone="white" /> : null}
+              {currentResult.retrieved_evidence.length ? <EvidenceListCard title="风险参考" items={currentResult.retrieved_evidence} tone="black" /> : null}
+              {currentResult.counter_evidence.length ? <EvidenceListCard title="安全参考" items={currentResult.counter_evidence} tone="white" /> : null}
               {currentResult.advice.length ? (
                 <View style={styles.sectionCard}>
                   <Text style={styles.sectionTitle}>建议</Text>
@@ -984,10 +1255,23 @@ const styles = StyleSheet.create({
     ...panelShadow,
   },
   commandStatsRow: { flexDirection: "row", gap: 10 },
+  commandActionColumn: { gap: 10 },
   submitButton: {
     minHeight: 48,
     borderRadius: radius.pill,
     backgroundColor: palette.accentStrong,
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  secondaryButton: {
+    minHeight: 48,
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
@@ -1001,7 +1285,98 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
+  secondaryButtonText: {
+    color: palette.accentStrong,
+  },
   submitDisabled: { opacity: 0.55 },
+  audioSummaryRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  audioTaskCard: {
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  audioTaskHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  audioTaskHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  audioTaskTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  audioTaskStatus: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  audioErrorText: {
+    color: "#C34F4F",
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  audioVerdictBadge: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  audioVerdictSafe: {
+    backgroundColor: "#DFF7E8",
+  },
+  audioVerdictRisk: {
+    backgroundColor: "#FFE3E3",
+  },
+  audioVerdictText: {
+    color: palette.ink,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  audioMetricGrid: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  audioMetricCard: {
+    flex: 1,
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  audioMetricLabel: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
+  },
+  audioMetricValue: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
   adviceList: { gap: 10 },
   adviceRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   adviceDot: {

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _PHONE_RE = re.compile(r"^1\d{10}$")
 GuardianRelation = Literal["self", "parent", "spouse", "child", "relative"]
 UserRole = Literal["child", "youth", "elder"]
+PushPlatform = Literal["android", "ios", "web", "unknown"]
 
 
 class RegisterRequest(BaseModel):
@@ -67,6 +68,19 @@ class UserPublic(BaseModel):
 
 class UpdateGuardianRequest(BaseModel):
     guardian_relation: GuardianRelation
+
+
+class RegisterPushTokenRequest(BaseModel):
+    expo_push_token: str = Field(..., min_length=16, max_length=256)
+    platform: PushPlatform = "unknown"
+    device_name: str | None = Field(default=None, max_length=128)
+
+
+class PushTokenResponse(BaseModel):
+    expo_push_token: str
+    platform: PushPlatform
+    device_name: str | None = None
+    is_active: bool
 
 
 class TokenResponse(BaseModel):

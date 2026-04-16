@@ -2,13 +2,20 @@ import { request } from "@/shared/api";
 
 import type {
   AIFaceCheckResponse,
+  AudioVerifyBatchJobResponse,
+  AudioVerifyBatchJobSubmitResponse,
+  AudioVerifyJobResponse,
+  AudioVerifyJobSubmitResponse,
+  AudioVerifyResponse,
   DetectionJob,
   DetectionSubmissionDetail,
   DetectionSubmitAcceptedResponse,
   PickedFile,
+  WebPhishingPredictRequest,
+  WebPhishingPredictResponse,
 } from "./types";
 
-const SUBMIT_TIMEOUT_MS = 120_000;
+const SUBMIT_TIMEOUT_MS = 300_000;
 
 function appendRnFiles(form: FormData, fieldName: string, files: PickedFile[]) {
   for (const f of files) {
@@ -17,6 +24,47 @@ function appendRnFiles(form: FormData, fieldName: string, files: PickedFile[]) {
       { uri: f.uri, name: f.name, type: f.type } as unknown as Blob
     );
   }
+}
+
+function buildAudioVerifyFormData(file: PickedFile): FormData {
+  const form = new FormData();
+  form.append(
+    "audio_file",
+    { uri: file.uri, name: file.name, type: file.type || "audio/wav" } as unknown as Blob
+  );
+  return form;
+}
+
+function buildAudioVerifyBatchFormData(files: PickedFile[]): FormData {
+  const form = new FormData();
+  for (const file of files) {
+    form.append(
+      "audio_files",
+      { uri: file.uri, name: file.name, type: file.type || "audio/wav" } as unknown as Blob
+    );
+  }
+  return form;
+}
+
+function buildWebPhishingUploadFormData(input: {
+  url: string;
+  htmlFile?: PickedFile | null;
+  return_features?: boolean;
+}): FormData {
+  const form = new FormData();
+  form.append("url", input.url.trim());
+  form.append("return_features", String(Boolean(input.return_features)));
+  if (input.htmlFile) {
+    form.append(
+      "html_file",
+      {
+        uri: input.htmlFile.uri,
+        name: input.htmlFile.name,
+        type: input.htmlFile.type || "text/html",
+      } as unknown as Blob
+    );
+  }
+  return form;
 }
 
 export function buildDetectionSubmitFormData(input: {
@@ -52,6 +100,49 @@ export const detectionsApi = {
     );
   },
 
+  verifyAudio(token: string, file: PickedFile) {
+    return request<AudioVerifyResponse>(
+      "/api/detections/audio/verify",
+      { method: "POST", body: buildAudioVerifyFormData(file) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  submitAudioVerify(token: string, file: PickedFile) {
+    return request<AudioVerifyJobSubmitResponse>(
+      "/api/detections/audio/verify/submit",
+      { method: "POST", body: buildAudioVerifyFormData(file) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  submitAudioVerifyBatch(token: string, files: PickedFile[]) {
+    return request<AudioVerifyBatchJobSubmitResponse>(
+      "/api/detections/audio/verify/batch/submit",
+      { method: "POST", body: buildAudioVerifyBatchFormData(files) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  getAudioVerifyJob(token: string, jobId: string) {
+    return request<AudioVerifyJobResponse>(
+      `/api/detections/audio/verify/jobs/${jobId}`,
+      {},
+      token
+    );
+  },
+
+  getAudioVerifyBatchJob(token: string, batchId: string) {
+    return request<AudioVerifyBatchJobResponse>(
+      `/api/detections/audio/verify/batch/jobs/${batchId}`,
+      {},
+      token
+    );
+  },
+
   getJob(token: string, jobId: string) {
     return request<DetectionJob>(`/api/detections/jobs/${jobId}`, {}, token);
   },
@@ -69,6 +160,28 @@ export const detectionsApi = {
       `/api/detections/submissions/${submissionId}/run`,
       { method: "POST" },
       token
+    );
+  },
+
+  predictWebPhishing(token: string, payload: WebPhishingPredictRequest) {
+    return request<WebPhishingPredictResponse>(
+      "/api/detections/web/phishing/predict",
+      { method: "POST", body: JSON.stringify(payload) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  predictWebPhishingUpload(token: string, input: {
+    url: string;
+    htmlFile?: PickedFile | null;
+    return_features?: boolean;
+  }) {
+    return request<WebPhishingPredictResponse>(
+      "/api/detections/web/phishing/predict-upload",
+      { method: "POST", body: buildWebPhishingUploadFormData(input) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 

@@ -21,17 +21,24 @@ import Animated, { FadeInUp } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth, type LocalImageAsset } from "@/features/auth";
-import { flattenRelationUploads, formatAssetTime, type GalleryAsset } from "@/features/uploads/asset-utils";
+import { flattenRelationUploads, type GalleryAsset } from "@/features/uploads/asset-utils";
 import AssetPreviewModal from "@/features/uploads/components/AssetPreviewModal";
 import UploadAssetTile from "@/features/uploads/components/UploadAssetTile";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { relationsApi } from "./api";
-import type { MemoryScope, RelationDetail, RelationMemory } from "./types";
+import type { MemoryScope, RelationAiProfilePayload, RelationDetail, RelationMemory } from "./types";
 import { memoryScopeMeta, relationTypeMeta } from "./types";
 
 type DetailTab = "materials" | "short_term" | "long_term";
+type AiProfileSectionTone = "default" | "danger" | "success";
+type AiProfileSection = {
+  key: string;
+  title: string;
+  items: string[];
+  tone?: AiProfileSectionTone;
+};
 
 const TAB_OPTIONS: Array<{ key: DetailTab; label: string }> = [
   { key: "materials", label: "素材" },
@@ -55,6 +62,90 @@ function formatDateTime(value?: string | null) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate()
   ).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function normalizeStringList(values: unknown, limit = 4) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const items: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    items.push(text);
+    if (items.length >= limit) {
+      break;
+    }
+  }
+
+  return items;
+}
+
+function pickFirstText(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function isRelationAiProfileMemory(memory: RelationMemory) {
+  return memory.memory_kind === "summary" && memory.extra_payload["source"] === "relation_ai_profile";
+}
+
+function getAiStatusMeta(dirty: boolean, status: RelationAiProfilePayload["status"], hasSummary: boolean) {
+  if (dirty && !hasSummary) {
+    return {
+      label: "待补资料",
+      backgroundColor: palette.accentSoft,
+      color: palette.accentStrong,
+    };
+  }
+
+  if (dirty) {
+    return {
+      label: "待刷新",
+      backgroundColor: palette.surfaceSoft,
+      color: palette.inkSoft,
+    };
+  }
+
+  if (status === "fallback") {
+    return {
+      label: "规则回退",
+      backgroundColor: palette.surfaceSoft,
+      color: palette.inkSoft,
+    };
+  }
+
+  if (status === "up_to_date") {
+    return {
+      label: "已同步",
+      backgroundColor: palette.accentSoft,
+      color: palette.accentStrong,
+    };
+  }
+
+  if (status === "llm" || hasSummary) {
+    return {
+      label: "已生成",
+      backgroundColor: palette.accentSoft,
+      color: palette.accentStrong,
+    };
+  }
+
+  return {
+    label: "待生成",
+    backgroundColor: palette.surfaceSoft,
+    color: palette.inkSoft,
+  };
 }
 
 export default function RelationDetailScreen() {
@@ -114,6 +205,78 @@ export default function RelationDetailScreen() {
     }
     return flattenRelationUploads(detail.linked_uploads);
   }, [detail]);
+
+  const shortTermMemories = detail?.short_term_memories ?? [];
+  const longTermMemories = useMemo(() => {
+    if (!detail) {
+      return [];
+    }
+    return detail.long_term_memories.filter((item) => !isRelationAiProfileMemory(item));
+  }, [detail]);
+
+  const aiProfilePayload = useMemo<RelationAiProfilePayload>(() => detail?.profile.ai_profile_payload ?? {}, [detail]);
+  const aiProfileSummary = useMemo(() => detail?.profile.ai_profile_summary?.trim() ?? "", [detail]);
+  const aiProfileDirty = Boolean(detail?.profile.ai_profile_dirty);
+  const aiProfileTags = useMemo(() => normalizeStringList(aiProfilePayload.query_tags, 6), [aiProfilePayload.query_tags]);
+  const aiProfileSections = useMemo<AiProfileSection[]>(() => {
+    const sections: AiProfileSection[] = [
+      {
+        key: "stable_traits",
+        title: "稳定特征",
+        items: normalizeStringList(aiProfilePayload.stable_traits, 4),
+      },
+      {
+        key: "communication_style",
+        title: "沟通方式",
+        items: normalizeStringList(aiProfilePayload.communication_style, 3),
+      },
+      {
+        key: "risk_signals",
+        title: "风险信号",
+        items: normalizeStringList(aiProfilePayload.risk_signals, 4),
+        tone: "danger",
+      },
+      {
+        key: "trusted_signals",
+        title: "可信信号",
+        items: normalizeStringList(aiProfilePayload.trusted_signals, 4),
+        tone: "success",
+      },
+      {
+        key: "caution_points",
+        title: "核验点",
+        items: normalizeStringList(aiProfilePayload.caution_points, 4),
+      },
+    ];
+
+    return sections.filter((section) => section.items.length > 0);
+  }, [aiProfilePayload]);
+  const aiProfileUpdatedAt = useMemo(
+    () =>
+      pickFirstText(
+        detail?.profile.ai_profile_updated_at,
+        typeof aiProfilePayload.last_refreshed_at === "string" ? aiProfilePayload.last_refreshed_at : null,
+        typeof aiProfilePayload.last_checked_at === "string" ? aiProfilePayload.last_checked_at : null,
+        typeof aiProfilePayload.last_attempt_at === "string" ? aiProfilePayload.last_attempt_at : null
+      ),
+    [aiProfilePayload, detail]
+  );
+  const aiProfileConfidence = useMemo(() => {
+    if (typeof aiProfilePayload.confidence !== "number" || Number.isNaN(aiProfilePayload.confidence)) {
+      return null;
+    }
+    const bounded = Math.max(0, Math.min(1, aiProfilePayload.confidence));
+    return `${Math.round(bounded * 100)}%`;
+  }, [aiProfilePayload.confidence]);
+  const aiUpdateReason = useMemo(() => {
+    return typeof aiProfilePayload.update_reason === "string" && aiProfilePayload.update_reason.trim()
+      ? aiProfilePayload.update_reason.trim()
+      : null;
+  }, [aiProfilePayload.update_reason]);
+  const aiStatusMeta = useMemo(
+    () => getAiStatusMeta(aiProfileDirty, aiProfilePayload.status, Boolean(aiProfileSummary)),
+    [aiProfileDirty, aiProfilePayload.status, aiProfileSummary]
+  );
 
   const stageHeight = Math.max(340, Math.min(500, height * 0.58));
   const materialContentWidth = width - CONTENT_HORIZONTAL * 2 - 2;
@@ -271,7 +434,7 @@ export default function RelationDetailScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Animated.View entering={FadeInUp.duration(180)} style={styles.topBar}>
-            <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} onPress={() => router.push("/relations")}>
+            <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
               <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
             </Pressable>
 
@@ -352,14 +515,96 @@ export default function RelationDetailScreen() {
                     <Text style={styles.metricLabel}>素材</Text>
                   </View>
                   <View style={styles.metricCard}>
-                    <Text style={styles.metricValue}>{detail.profile.short_term_count}</Text>
+                    <Text style={styles.metricValue}>{shortTermMemories.length}</Text>
                     <Text style={styles.metricLabel}>短期</Text>
                   </View>
                   <View style={styles.metricCard}>
-                    <Text style={styles.metricValue}>{detail.profile.long_term_count}</Text>
+                    <Text style={styles.metricValue}>{longTermMemories.length}</Text>
                     <Text style={styles.metricLabel}>长期</Text>
                   </View>
                 </View>
+              </Animated.View>
+
+              <Animated.View entering={FadeInUp.duration(180).delay(30)} style={styles.aiProfileCard}>
+                <View style={styles.aiProfileHeader}>
+                  <View style={styles.aiProfileHeading}>
+                    <Text style={styles.aiProfileTitle}>AI 对象画像</Text>
+                    <Text style={styles.aiProfileCaption}>提炼稳定信息，供后续判断参考</Text>
+                  </View>
+                  <View style={[styles.aiStatusChip, { backgroundColor: aiStatusMeta.backgroundColor }]}>
+                    <Text style={[styles.aiStatusText, { color: aiStatusMeta.color }]}>{aiStatusMeta.label}</Text>
+                  </View>
+                </View>
+
+                {aiProfileSummary ? (
+                  <Text style={styles.aiSummaryText}>{aiProfileSummary}</Text>
+                ) : (
+                  <Text style={styles.aiEmptyText}>
+                    {aiProfileDirty ? "资料还不够，补充聊天、附件或检测记录后会自动生成对象画像。" : "暂未生成对象画像。"}
+                  </Text>
+                )}
+
+                {aiProfileTags.length ? (
+                  <View style={styles.aiTagRow}>
+                    {aiProfileTags.map((tag) => (
+                      <View key={`ai-tag:${tag}`} style={styles.aiTagChip}>
+                        <Text style={styles.aiTagChipText}>{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                {aiProfileUpdatedAt || aiProfileConfidence ? (
+                  <View style={styles.aiMetaRow}>
+                    {aiProfileUpdatedAt ? (
+                      <View style={styles.aiMetaPill}>
+                        <MaterialCommunityIcons name="clock-outline" size={14} color={palette.inkSoft} />
+                        <Text style={styles.aiMetaText}>{`更新 ${formatDateTime(aiProfileUpdatedAt)}`}</Text>
+                      </View>
+                    ) : null}
+
+                    {aiProfileConfidence ? (
+                      <View style={styles.aiMetaPill}>
+                        <MaterialCommunityIcons name="chart-arc" size={14} color={palette.inkSoft} />
+                        <Text style={styles.aiMetaText}>{`置信 ${aiProfileConfidence}`}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {aiProfileSections.length ? (
+                  <View style={styles.aiSectionList}>
+                    {aiProfileSections.map((section) => (
+                      <View key={section.key} style={styles.aiSection}>
+                        <Text
+                          style={[
+                            styles.aiSectionTitle,
+                            section.tone === "danger" && styles.aiSectionTitleDanger,
+                            section.tone === "success" && styles.aiSectionTitleSuccess,
+                          ]}
+                        >
+                          {section.title}
+                        </Text>
+                        <View style={styles.aiBulletList}>
+                          {section.items.map((item) => (
+                            <View
+                              key={`${section.key}:${item}`}
+                              style={[
+                                styles.aiBullet,
+                                section.tone === "danger" && styles.aiBulletDanger,
+                                section.tone === "success" && styles.aiBulletSuccess,
+                              ]}
+                            >
+                              <Text style={styles.aiBulletText}>{item}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                {aiUpdateReason && !aiProfileDirty ? <Text style={styles.aiReasonText}>{`本次更新：${aiUpdateReason}`}</Text> : null}
               </Animated.View>
 
               <Animated.View entering={FadeInUp.duration(180).delay(40)} style={styles.tabRow}>
@@ -389,9 +634,9 @@ export default function RelationDetailScreen() {
                     </View>
                   )
                 ) : activeTab === "short_term" ? (
-                  renderMemoryList(detail.short_term_memories, "short_term")
+                  renderMemoryList(shortTermMemories, "short_term")
                 ) : (
-                  renderMemoryList(detail.long_term_memories, "long_term")
+                  renderMemoryList(longTermMemories, "long_term")
                 )}
               </View>
             </>
@@ -534,6 +779,63 @@ const styles = StyleSheet.create({
   metricCard: { flex: 1, borderRadius: radius.md, backgroundColor: palette.surfaceSoft, paddingHorizontal: 12, paddingVertical: 12, gap: 4 },
   metricValue: { color: palette.ink, fontSize: 18, lineHeight: 24, fontWeight: "900", fontFamily: fontFamily.display },
   metricLabel: { color: palette.inkSoft, fontSize: 11, lineHeight: 14, fontFamily: fontFamily.body },
+  aiProfileCard: {
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+    ...panelShadow,
+  },
+  aiProfileHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  aiProfileHeading: { flex: 1, gap: 4 },
+  aiProfileTitle: { color: palette.ink, fontSize: 16, lineHeight: 22, fontWeight: "900", fontFamily: fontFamily.display },
+  aiProfileCaption: { color: palette.inkSoft, fontSize: 12, lineHeight: 16, fontFamily: fontFamily.body },
+  aiStatusChip: { borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 6 },
+  aiStatusText: { fontSize: 11, lineHeight: 14, fontWeight: "800", fontFamily: fontFamily.body },
+  aiSummaryText: { color: palette.ink, fontSize: 14, lineHeight: 22, fontFamily: fontFamily.body },
+  aiEmptyText: { color: palette.inkSoft, fontSize: 13, lineHeight: 20, fontFamily: fontFamily.body },
+  aiTagRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  aiTagChip: {
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  aiTagChipText: { color: palette.accentStrong, fontSize: 11, lineHeight: 14, fontWeight: "700", fontFamily: fontFamily.body },
+  aiMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  aiMetaPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  aiMetaText: { color: palette.inkSoft, fontSize: 11, lineHeight: 14, fontFamily: fontFamily.body },
+  aiSectionList: { gap: 12 },
+  aiSection: { gap: 8 },
+  aiSectionTitle: { color: palette.ink, fontSize: 12, lineHeight: 16, fontWeight: "800", fontFamily: fontFamily.body },
+  aiSectionTitleDanger: { color: palette.accentStrong },
+  aiSectionTitleSuccess: { color: palette.accentStrong },
+  aiBulletList: { gap: 8 },
+  aiBullet: {
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  aiBulletDanger: { backgroundColor: palette.dangerSoft },
+  aiBulletSuccess: { backgroundColor: palette.accentSoft },
+  aiBulletText: { color: palette.ink, fontSize: 12, lineHeight: 18, fontFamily: fontFamily.body },
+  aiReasonText: { color: palette.inkSoft, fontSize: 11, lineHeight: 16, fontFamily: fontFamily.body },
   tabRow: { flexDirection: "row", gap: 8 },
   tabChip: {
     flex: 1,

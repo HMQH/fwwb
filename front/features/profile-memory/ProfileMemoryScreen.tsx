@@ -188,7 +188,10 @@ export default function ProfileMemoryScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.topBar}>
-            <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
+            <Pressable
+              style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]}
+              onPress={() => router.replace("/profile")}
+            >
               <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
             </Pressable>
 

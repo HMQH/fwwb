@@ -179,7 +179,10 @@ export default function UploadManagerScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <Animated.View entering={FadeInUp.duration(180)} style={styles.headerWrap}>
           <View style={styles.topBar}>
-            <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} onPress={() => router.push("/profile")}>
+            <Pressable
+              style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]}
+              onPress={() => router.replace("/profile")}
+            >
               <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
             </Pressable>
 

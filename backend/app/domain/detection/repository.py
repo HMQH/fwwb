@@ -3,10 +3,18 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.domain.detection.entity import DetectionJob, DetectionResult, DetectionSubmission
+
+
+def _apply_submission_time_range(stmt, *, start_at=None, end_at=None):
+    if start_at is not None:
+        stmt = stmt.where(DetectionSubmission.created_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(DetectionSubmission.created_at < end_at)
+    return stmt
 
 
 def save_submission(db: Session, row: DetectionSubmission) -> DetectionSubmission:
@@ -40,14 +48,73 @@ def list_submissions_for_user(
     *,
     user_id: uuid.UUID,
     limit: int,
+    offset: int = 0,
+    start_at=None,
+    end_at=None,
 ) -> list[DetectionSubmission]:
-    stmt = (
+    stmt = _apply_submission_time_range(
         select(DetectionSubmission)
         .where(DetectionSubmission.user_id == user_id)
         .order_by(DetectionSubmission.created_at.desc())
-        .limit(limit)
+        .offset(offset)
+        .limit(limit),
+        start_at=start_at,
+        end_at=end_at,
     )
     return list(db.execute(stmt).scalars().all())
+
+
+def count_submissions_for_user(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    start_at=None,
+    end_at=None,
+) -> int:
+    stmt = _apply_submission_time_range(
+        select(func.count(DetectionSubmission.id)).where(DetectionSubmission.user_id == user_id),
+        start_at=start_at,
+        end_at=end_at,
+    )
+    return int(db.execute(stmt).scalar() or 0)
+
+
+def list_submission_risk_rows_for_user(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    start_at=None,
+    end_at=None,
+) -> list[tuple]:
+    latest_result_sq = (
+        select(
+            DetectionResult.submission_id.label("submission_id"),
+            func.max(DetectionResult.created_at).label("latest_created_at"),
+        )
+        .group_by(DetectionResult.submission_id)
+        .subquery()
+    )
+
+    stmt = _apply_submission_time_range(
+        select(DetectionSubmission.created_at, DetectionResult.risk_level)
+        .select_from(DetectionSubmission)
+        .outerjoin(
+            latest_result_sq,
+            latest_result_sq.c.submission_id == DetectionSubmission.id,
+        )
+        .outerjoin(
+            DetectionResult,
+            and_(
+                DetectionResult.submission_id == DetectionSubmission.id,
+                DetectionResult.created_at == latest_result_sq.c.latest_created_at,
+            ),
+        )
+        .where(DetectionSubmission.user_id == user_id)
+        .order_by(DetectionSubmission.created_at.asc()),
+        start_at=start_at,
+        end_at=end_at,
+    )
+    return list(db.execute(stmt).all())
 
 
 def create_job(

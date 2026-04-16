@@ -181,7 +181,10 @@ export default function RelationsBoardScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Animated.View entering={FadeInDown.duration(260)} style={styles.topBar}>
-            <Pressable style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} onPress={() => router.push("/profile")}>
+            <Pressable
+              style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]}
+              onPress={() => router.replace("/profile")}
+            >
               <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
             </Pressable>
             <View style={styles.titleBlock}>

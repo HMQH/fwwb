@@ -17,7 +17,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   AuthBackdrop,
   authApi,
-  guardianMeta,
   roleMeta,
   useAuth,
   type LocalImageAsset,
@@ -27,13 +26,11 @@ import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 const fallbackAvatar = require("../../assets/images/anti-fraud-logo.png");
 
-const guardianOptions = ["self", "parent", "spouse", "child", "relative"] as const;
-
 const quickEntries = [
   { icon: "account-details-outline", title: "用户画像", route: "/profile-memory" as const },
   { icon: "folder-multiple-image", title: "上传管理", route: "/uploads" as const },
-  { icon: "timeline-text-outline", title: "检测记录", route: "/records" as const },
   { icon: "account-network-outline", title: "关系记忆", route: "/relations" as const },
+  { icon: "account-group-outline", title: "监护人", route: "/guardians" as const },
 ] as const;
 
 const serviceEntries = [
@@ -42,20 +39,11 @@ const serviceEntries = [
   { icon: "file-document-outline", title: "隐私协议" },
 ] as const;
 
-function maskPhone(phone: string) {
-  if (phone.length !== 11) {
-    return phone;
-  }
-  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
-}
-
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, token, signOut, refreshCurrentUser } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [savingGuardian, setSavingGuardian] = useState(false);
-  const [guardianError, setGuardianError] = useState<string | null>(null);
 
   const currentRole = useMemo(() => {
     if (!user) {
@@ -70,39 +58,12 @@ export default function ProfileScreen() {
     return null;
   }
 
-  const selectedGuardian = (user.guardian_relation ?? (user.role === "child" ? "parent" : "self")) as (typeof guardianOptions)[number];
-  const selectedMeta = guardianMeta[selectedGuardian];
-
-  const stats = [
-    { label: "模式", value: currentRole.label },
-    { label: "监护", value: selectedMeta.label },
-    { label: "手机", value: maskPhone(user.phone) },
-  ];
-
   const handleSignOut = async () => {
     setSigningOut(true);
     try {
       await signOut();
     } finally {
       setSigningOut(false);
-    }
-  };
-
-  const handleSelectGuardian = async (guardianRelation: (typeof guardianOptions)[number]) => {
-    if (guardianRelation === selectedGuardian || savingGuardian) {
-      return;
-    }
-
-    setSavingGuardian(true);
-    setGuardianError(null);
-
-    try {
-      await authApi.updateGuardian({ guardian_relation: guardianRelation }, token);
-      await refreshCurrentUser();
-    } catch (error) {
-      setGuardianError(error instanceof Error ? error.message : "保存失败");
-    } finally {
-      setSavingGuardian(false);
     }
   };
 
@@ -184,17 +145,7 @@ export default function ProfileScreen() {
                 <View style={styles.rolePill}>
                   <Text style={styles.rolePillText}>{currentRole.label}</Text>
                 </View>
-                <Text style={styles.profileLine}>{selectedMeta.label}</Text>
               </View>
-            </View>
-
-            <View style={styles.statsRow}>
-              {stats.map((item) => (
-                <View key={item.label} style={styles.statCard}>
-                  <Text style={styles.statValue}>{item.value}</Text>
-                  <Text style={styles.statLabel}>{item.label}</Text>
-                </View>
-              ))}
             </View>
           </View>
 
@@ -214,36 +165,6 @@ export default function ProfileScreen() {
                 </View>
               </Pressable>
             ))}
-          </View>
-
-          <View style={styles.managementCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>监护关系</Text>
-              {savingGuardian ? <Text style={styles.cardStatus}>保存中</Text> : null}
-            </View>
-
-            <View style={styles.guardianList}>
-              {guardianOptions.map((item) => {
-                const meta = guardianMeta[item];
-                const active = selectedGuardian === item;
-                return (
-                  <Pressable
-                    key={item}
-                    onPress={() => void handleSelectGuardian(item)}
-                    style={({ pressed }) => [
-                      styles.guardianOption,
-                      active && styles.guardianOptionActive,
-                      pressed && styles.guardianOptionPressed,
-                    ]}
-                  >
-                    <Text style={[styles.guardianLabel, active && styles.guardianLabelActive]}>{meta.label}</Text>
-                    <Text style={[styles.guardianDetail, active && styles.guardianDetailActive]}>{meta.detail}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {guardianError ? <Text style={styles.guardianError}>{guardianError}</Text> : null}
           </View>
 
           <View style={styles.serviceCard}>
@@ -344,37 +265,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: fontFamily.body,
   },
-  profileLine: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: fontFamily.body,
-  },
-  statsRow: { flexDirection: "row", gap: 10 },
-  statCard: {
-    flex: 1,
-    minHeight: 82,
-    borderRadius: radius.lg,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    backgroundColor: palette.surfaceSoft,
-    borderWidth: 1,
-    borderColor: palette.line,
-    justifyContent: "space-between",
-  },
-  statValue: {
-    color: palette.ink,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  statLabel: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: fontFamily.body,
-  },
   quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   quickCard: {
     width: "48%",
@@ -407,72 +297,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 19,
     fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  managementCard: {
-    borderRadius: radius.lg,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: 14,
-    ...panelShadow,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  },
-  cardTitle: {
-    color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "800",
-    fontFamily: fontFamily.display,
-  },
-  cardStatus: {
-    color: palette.accentStrong,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  guardianList: { gap: 10 },
-  guardianOption: {
-    borderRadius: radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    backgroundColor: palette.surfaceSoft,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: 4,
-  },
-  guardianOptionActive: {
-    backgroundColor: palette.accent,
-    borderColor: palette.accent,
-  },
-  guardianOptionPressed: { opacity: 0.92 },
-  guardianLabel: {
-    color: palette.ink,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  guardianLabelActive: { color: palette.inkInverse },
-  guardianDetail: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: fontFamily.body,
-  },
-  guardianDetailActive: { color: "rgba(255,255,255,0.86)" },
-  guardianError: {
-    color: palette.accentStrong,
-    fontSize: 12,
-    lineHeight: 18,
     fontFamily: fontFamily.body,
   },
   serviceCard: {

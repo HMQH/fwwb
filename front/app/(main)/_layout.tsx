@@ -3,7 +3,10 @@ import { Redirect, Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LoadingScreen, useAuth } from "@/features/auth";
+import { GuardianEventWatcher } from "@/features/guardians";
 import { fontFamily, palette, radius } from "@/shared/theme";
+
+const hiddenTabBarStyle = { display: "none" as const };
 
 export default function MainTabsLayout() {
   const insets = useSafeAreaInsets();
@@ -18,7 +21,9 @@ export default function MainTabsLayout() {
   }
 
   return (
-    <Tabs
+    <>
+      <GuardianEventWatcher />
+      <Tabs
       screenOptions={{
         headerShown: false,
         sceneStyle: {
@@ -69,11 +74,27 @@ export default function MainTabsLayout() {
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="history" size={22} color={color} />,
         }}
       />
+      <Tabs.Screen name="settings/index" options={{ href: null, title: "权限设置" }} />
+      <Tabs.Screen name="call-intervention/index" options={{ href: null, title: "来电预警" }} />
+      <Tabs.Screen name="call-intervention/[sessionId]" options={{ href: null, title: "通话回看" }} />
       <Tabs.Screen name="assistant/index" options={{ href: null, title: "反诈助手" }} />
-      <Tabs.Screen name="profile-memory/index" options={{ href: null, title: "用户画像" }} />
+      <Tabs.Screen
+        name="profile-memory/index"
+        options={{ href: null, title: "用户画像", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="records/analytics"
+        options={{ href: null, title: "数据分析", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen name="records/[id]" options={{ href: null, title: "检测详情" }} />
-      <Tabs.Screen name="uploads/index" options={{ href: null, title: "上传管理" }} />
-      <Tabs.Screen name="uploads/archive" options={{ href: null, title: "上传归档" }} />
+      <Tabs.Screen
+        name="uploads/index"
+        options={{ href: null, title: "上传管理", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="uploads/archive"
+        options={{ href: null, title: "上传归档", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen
         name="floating-capture/action"
         options={{
@@ -82,8 +103,22 @@ export default function MainTabsLayout() {
           tabBarStyle: { display: "none" },
         }}
       />
-      <Tabs.Screen name="relations/index" options={{ href: null, title: "关系记忆" }} />
-      <Tabs.Screen name="relations/[id]" options={{ href: null, title: "关系详情" }} />
+      <Tabs.Screen
+        name="relations/index"
+        options={{ href: null, title: "关系记忆", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="relations/[id]"
+        options={{ href: null, title: "关系详情", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="guardians/index"
+        options={{ href: null, title: "监护人", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="guardians/events/[id]"
+        options={{ href: null, title: "联动详情", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen
         name="profile"
         options={{
@@ -103,6 +138,8 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别" }} />
       <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测" }} />
       <Tabs.Screen name="detect-mixed" options={{ href: null, title: "混合检测" }} />
-    </Tabs>
+      <Tabs.Screen name="detect-web" options={{ href: null, title: "网站检测" }} />
+      </Tabs>
+    </>
   );
 }
