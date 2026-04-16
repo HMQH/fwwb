@@ -37,3 +37,5 @@ storage/uploads/*
 /fraud_source/
 /文档/
 /merge
+# 模型检查点（体积大，勿提交）
+backend/checkpoints/

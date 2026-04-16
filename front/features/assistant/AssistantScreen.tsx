@@ -1,5 +1,4 @@
-﻿import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -98,7 +97,6 @@ function AttachmentDraftBar({
 
 export default function AssistantScreen() {
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
   const listRef = useRef<FlatList<AssistantMessage> | null>(null);
   const [draft, setDraft] = useState("");
   const [historyVisible, setHistoryVisible] = useState(false);
@@ -137,9 +135,14 @@ export default function AssistantScreen() {
   );
 
   const relationButtonLabel = activeRelation?.name ?? "对象";
-  const bottomSafeInset = Math.max(insets.bottom, 10);
-  const composerBottomInset = keyboardVisible ? bottomSafeInset : Math.max(tabBarHeight + 8, bottomSafeInset);
-  const listBottomInset = composerHeight + 12 + (keyboardVisible ? 0 : tabBarHeight);
+  // Tab 场景已在 Tab 栏之上，勿再叠加 tabBarHeight；键盘弹出时 Tab 隐藏，需留出底部安全区。
+  const composerBottomInset = keyboardVisible ? Math.max(insets.bottom, 8) : 0;
+  const listBottomInset = composerHeight + 8;
+  const scrollToLatest = useCallback((animated: boolean) => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
 
   useEffect(() => {
     void bootstrap();
@@ -149,10 +152,15 @@ export default function AssistantScreen() {
     if (!messages.length) {
       return;
     }
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd({ animated: true });
-    });
-  }, [messages.length]);
+    scrollToLatest(true);
+  }, [messages.length, scrollToLatest]);
+
+  useEffect(() => {
+    if (!messages.length || !keyboardVisible) {
+      return;
+    }
+    scrollToLatest(false);
+  }, [composerHeight, keyboardVisible, messages.length, scrollToLatest]);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -280,7 +288,7 @@ export default function AssistantScreen() {
 
   return (
     <View style={styles.root}>
-      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <KeyboardAvoidingView
           style={styles.safeArea}
           behavior={Platform.OS === "ios" ? "padding" : "height"}

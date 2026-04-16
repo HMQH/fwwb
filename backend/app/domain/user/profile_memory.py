@@ -1140,8 +1140,6 @@ def build_user_memory_prompt_context(db: Session, *, user_id: uuid.UUID) -> str 
     lines = [
         f"称呼：{user.display_name}",
         f"年龄层：{_USER_ROLE_LABELS.get(user.role, user.role)}",
-        f"安全分：{user.safety_score}",
-        f"记忆紧急度：{user.memory_urgency_score}",
         f"长期记忆文件：{_display_path(memory_path)}",
     ]
     if user.birth_date is not None:

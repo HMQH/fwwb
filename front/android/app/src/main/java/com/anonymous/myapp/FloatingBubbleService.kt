@@ -130,6 +130,11 @@ class FloatingBubbleService : Service() {
     var touchDownX = 0f
     var touchDownY = 0f
     var moved = false
+    var longPressTriggered = false
+    val longPressRunnable = Runnable {
+      longPressTriggered = true
+      stopSelf()
+    }
 
     container.setOnTouchListener { _, event ->
       val params = layoutParams ?: return@setOnTouchListener false
@@ -140,6 +145,8 @@ class FloatingBubbleService : Service() {
           touchDownX = event.rawX
           touchDownY = event.rawY
           moved = false
+          longPressTriggered = false
+          container.postDelayed(longPressRunnable, 560L)
           true
         }
 
@@ -148,6 +155,7 @@ class FloatingBubbleService : Service() {
           val dy = (event.rawY - touchDownY).toInt()
           if (abs(dx) > 6 || abs(dy) > 6) {
             moved = true
+            container.removeCallbacks(longPressRunnable)
           }
           params.x = initialX + dx
           params.y = initialY + dy
@@ -156,9 +164,15 @@ class FloatingBubbleService : Service() {
         }
 
         MotionEvent.ACTION_UP -> {
-          if (!moved) {
+          container.removeCallbacks(longPressRunnable)
+          if (!moved && !longPressTriggered) {
             openSelectionScreen()
           }
+          true
+        }
+
+        MotionEvent.ACTION_CANCEL -> {
+          container.removeCallbacks(longPressRunnable)
           true
         }
 

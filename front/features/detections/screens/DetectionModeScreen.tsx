@@ -9,7 +9,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
-import { floatingCaptureService } from "@/features/floating-capture";
+import { consumeStagedFloatingCapture, floatingCaptureService } from "@/features/floating-capture";
 import { relationsApi } from "@/features/relations/api";
 import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
 import { ApiError } from "@/shared/api";
@@ -328,6 +328,18 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
   const consumeFloatingCapture = useCallback(async () => {
     if (!config.allow.image) {
+      return;
+    }
+
+    const stagedCapture = consumeStagedFloatingCapture("visual");
+    if (stagedCapture) {
+      setImageFiles((prev) => {
+        if (prev.some((item) => item.uri === stagedCapture.file.uri)) {
+          return prev;
+        }
+
+        return [...prev, { ...stagedCapture.file, key: nextKey() }];
+      });
       return;
     }
 

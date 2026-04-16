@@ -8,10 +8,18 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.domain.detection.kinds import UploadKind
 from app.domain.relations import repository as relation_repository
 from app.domain.relations.entity import UserRelationMemory, UserRelationUploadLink
 from app.domain.uploads import repository as upload_repository
 from app.domain.uploads.entity import UserUpload
+from app.shared.storage.file_validation import validate_filename_for_kind
+from app.shared.storage.upload_paths import (
+    allocate_batch_folder_name,
+    resolved_upload_root,
+    safe_suffix,
+    save_upload_bytes,
+)
 
 _UPLOAD_LABELS = {
     "text": "文本",
@@ -160,6 +168,25 @@ def _build_upload_item(
     }
 
 
+def _build_single_upload_item(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    upload: UserUpload,
+) -> dict[str, Any]:
+    bindings, files, assigned_counts = _build_relation_binding_payload(
+        uploads=[upload],
+        user_id=user_id,
+        db=db,
+    )
+    return _build_upload_item(
+        upload=upload,
+        relation_bindings=bindings.get(upload.id),
+        files=files.get(upload.id),
+        assigned_file_count=assigned_counts.get(upload.id, 0),
+    )
+
+
 def sync_upload_bundle(
     db: Session,
     *,
@@ -210,6 +237,67 @@ def sync_upload_bundle(
     for row in changed:
         db.refresh(row)
     return changed
+
+
+def create_single_file_upload(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    upload_root_cfg: str,
+    upload_type: UploadKind,
+    data: bytes,
+    filename: str | None,
+    max_upload_bytes: int,
+    source_submission_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    safe_name = (filename or f"{upload_type}.bin").strip() or f"{upload_type}.bin"
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件内容不能为空")
+    if len(data) > max_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"文件过大，超过 {max_upload_bytes} 字节限制",
+        )
+
+    validate_filename_for_kind(safe_name, upload_type)
+
+    upload_root = resolved_upload_root(upload_root_cfg)
+    upload_root.mkdir(parents=True, exist_ok=True)
+    batch_folder = allocate_batch_folder_name(upload_root=upload_root, user_id=user_id)
+    default_suffix = {
+        "text": ".txt",
+        "audio": ".m4a",
+        "image": ".png",
+        "video": ".mp4",
+    }[upload_type]
+    stored_path = save_upload_bytes(
+        upload_root=upload_root,
+        user_id=user_id,
+        batch_folder=batch_folder,
+        kind=upload_type,
+        data=data,
+        suffix=safe_suffix(safe_name, default_suffix),
+    )
+
+    upload_rows = sync_upload_bundle(
+        db,
+        user_id=user_id,
+        storage_batch_id=batch_folder,
+        text_paths=[stored_path] if upload_type == "text" else [],
+        audio_paths=[stored_path] if upload_type == "audio" else [],
+        image_paths=[stored_path] if upload_type == "image" else [],
+        video_paths=[stored_path] if upload_type == "video" else [],
+        source_submission_id=source_submission_id,
+    )
+    upload_row = next((item for item in upload_rows if item.upload_type == upload_type), None)
+    if upload_row is None:
+        raise RuntimeError("failed to create upload record")
+
+    return _build_single_upload_item(
+        db,
+        user_id=user_id,
+        upload=upload_row,
+    )
 
 
 def sync_submission_uploads(
@@ -330,14 +418,8 @@ def assign_upload_to_relation(
     if refreshed is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="上传记录不存在")
 
-    bindings, files, assigned_counts = _build_relation_binding_payload(
-        uploads=[refreshed],
+    return _build_single_upload_item(
+        db,
         user_id=user_id,
-        db=db,
-    )
-    return _build_upload_item(
         upload=refreshed,
-        relation_bindings=bindings.get(refreshed.id),
-        files=files.get(refreshed.id),
-        assigned_file_count=assigned_counts.get(refreshed.id, 0),
     )

@@ -34,7 +34,7 @@ from app.shared.storage.upload_paths import (
 )
 
 _DEFAULT_TITLE = "反诈助手"
-_WELCOME_TEXT = "把聊天、链接、验证码、转账要求或附件发给我，我帮你判断。"
+
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
 _RELATION_TYPE_LABELS = {
     "family": "亲友",
@@ -62,6 +62,7 @@ _KIND_DEFAULT_MIME = {
     "video": "video/mp4",
 }
 _MULTIMODAL_MAX_IMAGES_PER_MESSAGE = 3
+_TEXT_ATTACHMENT_SUFFIXES = _TEXT_DECODE_SUFFIXES | {".pdf", ".doc", ".docx"}
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,33 @@ def _build_image_content_items(
     return items
 
 
+def _build_image_content_items_from_paths(
+    file_paths: list[str],
+    *,
+    max_items: int = _MULTIMODAL_MAX_IMAGES_PER_MESSAGE,
+) -> list[dict[str, Any]]:
+    attachments = [{"upload_type": "image", "file_path": item} for item in file_paths]
+    return _build_image_content_items(attachments, max_items=max_items)
+
+
+def _guess_attachment_kind_from_path(file_path: str | None) -> str | None:
+    normalized = _clean_text(file_path)
+    if not normalized:
+        return None
+    name = Path(normalized).name
+    mime_type = mimetypes.guess_type(name)[0] or ""
+    suffix = Path(name).suffix.lower()
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type.startswith("audio/"):
+        return "audio"
+    if mime_type.startswith("video/"):
+        return "video"
+    if mime_type.startswith("text/") or suffix in _TEXT_ATTACHMENT_SUFFIXES:
+        return "text"
+    return None
+
+
 def _extract_attachment_items(extra_payload: dict[str, Any] | None) -> list[dict[str, Any]]:
     raw = (extra_payload or {}).get("attachments")
     if not isinstance(raw, list):
@@ -249,6 +277,12 @@ def _build_attachment_overview(attachments: list[dict[str, Any]]) -> str | None:
     for kind in ("text", "image", "audio", "video"):
         names = grouped.get(kind) or []
         if not names:
+            continue
+        if kind == "image":
+            lines.append(f"{_KIND_LABELS[kind]}：共 {len(names)} 张")
+            continue
+        if kind == "video":
+            lines.append(f"{_KIND_LABELS[kind]}：共 {len(names)} 个（暂不解析具体画面）")
             continue
         preview = "、".join(names[:4])
         if len(names) > 4:
@@ -337,9 +371,9 @@ def _build_relation_context(
     *,
     user_id: uuid.UUID,
     relation_profile_id: uuid.UUID | None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     if relation_profile_id is None:
-        return None, None
+        return None, None, []
 
     profile = relation_repository.get_profile_for_user(
         db,
@@ -347,7 +381,7 @@ def _build_relation_context(
         relation_id=relation_profile_id,
     )
     if profile is None:
-        return None, None
+        return None, None, []
 
     memories = relation_repository.list_memories_for_relation(
         db,
@@ -378,29 +412,60 @@ def _build_relation_context(
         for item in memories:
             scope = "长期" if item.memory_scope == "long_term" else "短期"
             title = _clean_text(item.title, fallback="记忆") or "记忆"
-            content = _clean_text(item.content)
+            if item.memory_kind == "upload":
+                if "图片" in title:
+                    content = "已关联图片记录"
+                elif "视频" in title:
+                    content = "已关联视频记录（当前暂不解析具体画面）"
+                elif "音频" in title:
+                    content = "已关联音频记录"
+                else:
+                    content = "已关联文档/文本记录"
+            else:
+                content = _clean_text(item.content)
             if not content:
                 continue
             memory_lines.append(f"[{scope}/{item.memory_kind}] {title}：{content}")
         if memory_lines:
             blocks.append("对象记忆：\n- " + "\n- ".join(memory_lines))
 
+    relation_image_items: list[dict[str, Any]] = []
     if links:
-        file_names: list[str] = []
-        seen: set[str] = set()
+        unique_paths: list[str] = []
+        seen_paths: set[str] = set()
         for link in links:
-            name = Path(link.file_path or "").name
-            if not name or name in seen:
+            file_path = _clean_text(link.file_path)
+            if not file_path or file_path in seen_paths:
                 continue
-            seen.add(name)
-            file_names.append(name)
-        if file_names:
-            preview = "、".join(file_names[:12])
-            if len(file_names) > 12:
-                preview = f"{preview} 等 {len(file_names)} 项"
-            blocks.append(f"对象关联附件：\n- {preview}")
+            seen_paths.add(file_path)
+            unique_paths.append(file_path)
 
-    return profile.name, "\n\n".join(blocks)
+        kind_counts: dict[str, int] = defaultdict(int)
+        image_paths: list[str] = []
+        for file_path in unique_paths:
+            kind = _guess_attachment_kind_from_path(file_path) or "other"
+            kind_counts[kind] += 1
+            if kind == "image":
+                image_paths.append(file_path)
+
+        relation_image_items = _build_image_content_items_from_paths(image_paths)
+        attachment_lines: list[str] = []
+        if kind_counts.get("image"):
+            provided_count = len(relation_image_items)
+            image_note = f"，已附上前 {provided_count} 张供视觉分析" if provided_count else ""
+            attachment_lines.append(f"图片：共 {kind_counts['image']} 张{image_note}")
+        if kind_counts.get("video"):
+            attachment_lines.append(f"视频：共 {kind_counts['video']} 个（当前暂不解析具体画面）")
+        if kind_counts.get("audio"):
+            attachment_lines.append(f"音频：共 {kind_counts['audio']} 个")
+        if kind_counts.get("text"):
+            attachment_lines.append(f"文档/文本：共 {kind_counts['text']} 份")
+        if kind_counts.get("other"):
+            attachment_lines.append(f"其他附件：共 {kind_counts['other']} 项")
+        if attachment_lines:
+            blocks.append("对象关联附件：\n- " + "\n- ".join(attachment_lines))
+
+    return profile.name, "\n\n".join(blocks), relation_image_items
 
 
 def _build_user_context(db: Session, *, user_id: uuid.UUID) -> str | None:
@@ -568,7 +633,9 @@ def _assistant_system_prompt() -> str:
         "重点判断身份是否匹配、语气是否异常、诉求是否突然变化、是否存在借钱转账、验证码、远程控制、下载 App、保密施压等风险。"
         "如果会话绑定了某条记录，必须结合这条记录的全部上下文，不要只看摘要。"
         "输出尽量短，但要有结论。"
-        "理由优先引用用户画像、对象记忆、历史对话、附件线索、检索证据。"
+        "用户画像、内部风险分、内部记忆仅用于内部推理，不得直接向用户复述。"
+        "证据不足时，不要默认判定诈骗。"
+        "理由优先引用当前消息、附件、明确事实；用户画像仅作辅助，不直接外显。"
         "信息不足时，可以只追问 1 个最关键的问题。"
         "不要写营销文案，不要铺垫。"
     )
@@ -852,13 +919,20 @@ def _compose_analysis_text(user_text: str | None, attachments: list[dict[str, An
         blocks.extend(text_blocks)
 
     if not text_blocks:
-        names = [
-            _clean_text(item.get("name") if isinstance(item.get("name"), str) else None)
-            for item in attachments
-        ]
-        names = [item for item in names if item]
-        if names:
-            blocks.append("附件名称：" + "、".join(names))
+        kind_counts: dict[str, int] = defaultdict(int)
+        for item in attachments:
+            upload_type = str(item.get("upload_type") or "").strip().lower()
+            if upload_type:
+                kind_counts[upload_type] += 1
+        hint_lines: list[str] = []
+        if kind_counts.get("image"):
+            hint_lines.append(f"图片共 {kind_counts['image']} 张")
+        if kind_counts.get("video"):
+            hint_lines.append(f"视频共 {kind_counts['video']} 个")
+        if kind_counts.get("audio"):
+            hint_lines.append(f"音频共 {kind_counts['audio']} 个")
+        if hint_lines:
+            blocks.append("附件概况：" + "；".join(hint_lines))
 
     return "\n\n".join(blocks).strip()
 
@@ -887,10 +961,7 @@ def _derive_session_title(
     return session.title or _DEFAULT_TITLE
 
 
-def _build_welcome_text(relation_name: str | None) -> str:
-    if relation_name:
-        return f"已切换到“{relation_name}”。把聊天、链接、验证码、转账要求或附件发给我，我会结合这个对象的资料一起判断。"
-    return _WELCOME_TEXT
+
 
 
 def _prepare_assistant_request(
@@ -903,7 +974,7 @@ def _prepare_assistant_request(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], str | None]:
     current_uploads = _extract_attachment_items(messages[-1].extra_payload if messages else {})
     user_context = _build_user_context(db, user_id=session.user_id)
-    relation_name, relation_context = _build_relation_context(
+    relation_name, relation_context, relation_image_items = _build_relation_context(
         db,
         user_id=session.user_id,
         relation_profile_id=relation_profile_id,
@@ -925,6 +996,25 @@ def _prepare_assistant_request(
     prompt_messages: list[dict[str, Any]] = [{"role": "system", "content": _assistant_system_prompt()}]
     if context_blob:
         prompt_messages.append({"role": "system", "content": context_blob})
+    if relation_image_items:
+        relation_visual_hint = (
+            f"系统补充资料：以下图片来自当前选中对象“{relation_name}”的关联图片，仅供内部分析。"
+            if relation_name
+            else "系统补充资料：以下图片来自当前选中对象的关联图片，仅供内部分析。"
+        )
+        prompt_messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": relation_visual_hint
+                        + "请直接结合画面内容判断，但不要向用户泄露内部文件名、路径、存储结构或实现细节。",
+                    },
+                    *relation_image_items,
+                ],
+            }
+        )
     for item in messages:
         if item.role not in {"user", "assistant"}:
             continue
@@ -1015,8 +1105,7 @@ def create_session(
         title=_clean_text(title or relation_name, fallback=_DEFAULT_TITLE, max_length=24) or _DEFAULT_TITLE,
     )
     session = assistant_repository.save_session(db, session)
-    greeting = _save_message(db, session=session, role="assistant", content=_build_welcome_text(relation_name))
-    return _build_detail(session, [greeting])
+    return _build_detail(session, [])
 
 
 def list_sessions(
@@ -1076,7 +1165,7 @@ def send_message(
     if not cleaned_content and not attachment_items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请输入内容或上传附件")
 
-    relation_name, _ = _build_relation_context(
+    relation_name, _, _ = _build_relation_context(
         db,
         user_id=user_id,
         relation_profile_id=relation_profile_id,
@@ -1159,7 +1248,7 @@ def stream_message(
     if not cleaned_content and not attachment_items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请输入内容或上传附件")
 
-    relation_name, _ = _build_relation_context(
+    relation_name, _, _ = _build_relation_context(
         db,
         user_id=user_id,
         relation_profile_id=relation_profile_id,

@@ -74,6 +74,14 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="records/[id]" options={{ href: null, title: "检测详情" }} />
       <Tabs.Screen name="uploads/index" options={{ href: null, title: "上传管理" }} />
       <Tabs.Screen name="uploads/archive" options={{ href: null, title: "上传归档" }} />
+      <Tabs.Screen
+        name="floating-capture/action"
+        options={{
+          href: null,
+          title: "悬浮截图",
+          tabBarStyle: { display: "none" },
+        }}
+      />
       <Tabs.Screen name="relations/index" options={{ href: null, title: "关系记忆" }} />
       <Tabs.Screen name="relations/[id]" options={{ href: null, title: "关系详情" }} />
       <Tabs.Screen

@@ -303,19 +303,7 @@ export default function HomeScreen() {
             <ScoreBubble score={score} />
           </Animated.View>
 
-          <Animated.View entering={reduceMotion ? undefined : FadeInUp.duration(420).delay(40)}>
-            <View style={styles.profileCard}>
-              <View style={styles.profileHead}>
-                <Text style={styles.profileTitle}>用户画像</Text>
-                <View style={styles.profilePill}>
-                  <Text style={styles.profilePillText}>{`紧迫 ${Math.max(0, user.memory_urgency_score ?? 0)}`}</Text>
-                </View>
-              </View>
-              <Text style={styles.profileSummary} numberOfLines={3}>
-                {user.profile_summary?.trim() || "画像待积累"}
-              </Text>
-            </View>
-          </Animated.View>
+          
 
           <View style={styles.entryGrid}>
             {detectionEntries.map((item, index) => (

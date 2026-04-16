@@ -1,11 +1,13 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useCallback, useMemo, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
+import { consumeStagedFloatingCapture } from "@/features/floating-capture";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -82,6 +84,7 @@ export function AIFaceCheckScreen() {
   const [result, setResult] = useState<AIFaceCheckResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [previewLayout, setPreviewLayout] = useState<PreviewLayout>({ width: 0, height: 0 });
+  const [autoSubmitPending, setAutoSubmitPending] = useState(false);
 
   const statusStyle = useMemo(() => getStatusColor(result), [result]);
   const statusText = useMemo(() => getStatusText(result), [result]);
@@ -126,6 +129,27 @@ export function AIFaceCheckScreen() {
     setPreviewLayout({ width, height });
   }, []);
 
+  const applyPickedImage = useCallback((image: PickedImage) => {
+    setPickedImage(image);
+    setResult(null);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const stagedCapture = consumeStagedFloatingCapture("ai-face");
+      if (!stagedCapture) {
+        return;
+      }
+
+      applyPickedImage({
+        uri: stagedCapture.file.uri,
+        name: stagedCapture.file.name,
+        type: stagedCapture.file.type,
+      });
+      setAutoSubmitPending(true);
+    }, [applyPickedImage])
+  );
+
   const pickImage = useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -144,15 +168,15 @@ export function AIFaceCheckScreen() {
     }
 
     const asset = selection.assets[0];
-    setPickedImage({
+    applyPickedImage({
       uri: asset.uri,
       name: asset.fileName ?? `ai-face-${Date.now()}.jpg`,
       type: asset.mimeType ?? "image/jpeg",
       width: asset.width,
       height: asset.height,
     });
-    setResult(null);
-  }, []);
+    setAutoSubmitPending(false);
+  }, [applyPickedImage]);
 
   const submit = useCallback(async () => {
     if (!token) {
@@ -175,6 +199,14 @@ export function AIFaceCheckScreen() {
       setSubmitting(false);
     }
   }, [pickedImage, token]);
+
+  useEffect(() => {
+    if (!autoSubmitPending || !pickedImage || !token || submitting) {
+      return;
+    }
+    setAutoSubmitPending(false);
+    void submit();
+  }, [autoSubmitPending, pickedImage, submit, submitting, token]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
