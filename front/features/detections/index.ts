@@ -7,6 +7,7 @@ export { EvidenceListCard } from "./components/EvidenceListCard";
 export { DetectionPipelineCard } from "./components/DetectionPipelineCard";
 export { ReasoningGraphCard } from "./components/ReasoningGraphCard";
 export { SimilarImageGalleryCard } from "./components/SimilarImageGalleryCard";
+export { AgentExecutionCard, isAgentDetection } from "./components/AgentExecutionCard";
 export type {
   AIFaceCheckResponse,
   AIFaceFaceResult,

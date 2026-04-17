@@ -20,27 +20,40 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import {
+  AgentExecutionCard,
   DetectionPipelineCard,
   ReasoningGraphCard,
   detectionsApi,
   formatConfidence,
   getResultHeadline,
   getRiskMeta,
+  isAgentDetection,
   getVisibleFraudType,
 } from "@/features/detections";
 import { guardiansApi } from "@/features/guardians";
 import type { DetectionEvidence, DetectionSubmissionDetail } from "@/features/detections";
 import { resolveEvidencePreviewUrl } from "@/features/detections/evidencePreview";
-import { ApiError } from "@/shared/api";
+import { ApiError, resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { recordsApi } from "./api";
 
-const DETAIL_PAGES = [
+type DetailPage = {
+  key: "overview" | "graph" | "materials";
+  label: string;
+};
+
+const DEFAULT_DETAIL_PAGES: DetailPage[] = [
   { key: "overview", label: "总览" },
   { key: "graph", label: "图谱" },
   { key: "materials", label: "材料" },
-] as const;
+];
+
+const AGENT_DETAIL_PAGES: DetailPage[] = [
+  { key: "overview", label: "总览" },
+  { key: "graph", label: "执行" },
+  { key: "materials", label: "材料" },
+];
 function formatDateTime(value?: string | null) {
   if (!value) {
     return "--";
@@ -211,6 +224,33 @@ function AttachmentChips({ items }: { items: string[] }) {
   );
 }
 
+function SubmissionImageGrid({ items }: { items: string[] }) {
+  const resolvedItems = items
+    .map((item) => ({
+      path: item,
+      url: resolveUploadFileUrl(item),
+      name: item.split("/").pop() ?? item,
+    }))
+    .filter((item): item is { path: string; url: string; name: string } => Boolean(item.url));
+
+  if (!resolvedItems.length) {
+    return null;
+  }
+
+  return (
+    <View style={styles.materialImageGrid}>
+      {resolvedItems.map((item) => (
+        <View key={item.path} style={styles.materialImageTile}>
+          <Image source={{ uri: item.url }} style={styles.materialImage} contentFit="cover" transition={120} />
+          <Text style={styles.materialImageName} numberOfLines={2}>
+            {item.name}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function EmptyState({
   title,
   description,
@@ -331,7 +371,7 @@ export default function RecordDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { token } = useAuth();
   const { width } = useWindowDimensions();
-  const pagerRef = useRef<FlatList<(typeof DETAIL_PAGES)[number]> | null>(null);
+  const pagerRef = useRef<FlatList<DetailPage> | null>(null);
 
   const [detail, setDetail] = useState<DetectionSubmissionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -343,12 +383,14 @@ export default function RecordDetailScreen() {
   const evidenceSheetScale = useRef(new Animated.Value(0.92)).current;
   const evidenceSheetOpacity = useRef(new Animated.Value(0)).current;
 
-  const loadDetail = useCallback(async () => {
+  const loadDetail = useCallback(async (options?: { silent?: boolean }) => {
     if (!token || !id) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!options?.silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const response = await recordsApi.detail(token, id);
@@ -356,7 +398,9 @@ export default function RecordDetailScreen() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "加载失败");
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, [id, token]);
 
@@ -404,6 +448,8 @@ export default function RecordDetailScreen() {
   const result = detail?.latest_result;
   const job = detail?.latest_job;
   const guardianEventSummary = detail?.guardian_event_summary;
+  const agentMode = isAgentDetection(job, result);
+  const detailPages = agentMode ? AGENT_DETAIL_PAGES : DEFAULT_DETAIL_PAGES;
 
   useEffect(() => {
     if (!token || !id) {
@@ -412,11 +458,11 @@ export default function RecordDetailScreen() {
     if (job?.status !== "pending" && job?.status !== "running") {
       return;
     }
-    const timer = setTimeout(() => {
-      void loadDetail();
+    const timer = setInterval(() => {
+      void loadDetail({ silent: true });
     }, 2200);
-    return () => clearTimeout(timer);
-  }, [id, job?.status, job?.updated_at, loadDetail, token]);
+    return () => clearInterval(timer);
+  }, [id, job?.status, loadDetail, token]);
 
   const riskMeta = getRiskMeta(result?.risk_level);
   const headline = getResultHeadline(result);
@@ -494,7 +540,9 @@ export default function RecordDetailScreen() {
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
-        {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
+        {agentMode
+          ? (!result ? <AgentExecutionCard job={job} result={result} title="Agent 执行" maxVisibleSteps={4} /> : null)
+          : (job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null)}
 
         {result ? (
           <PageSurface>
@@ -602,6 +650,7 @@ export default function RecordDetailScreen() {
       </ScrollView>
     );
   }, [
+    agentMode,
     detail,
     guardianEventSummary,
     handleNotifyGuardian,
@@ -621,6 +670,18 @@ export default function RecordDetailScreen() {
   ]);
 
   const renderGraphPage = useCallback(() => {
+    if (agentMode) {
+      return (
+        <ScrollView
+          style={styles.pageScroll}
+          contentContainerStyle={styles.pageContent}
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
+        >
+          <AgentExecutionCard job={job} result={result} title="执行详情" />
+        </ScrollView>
+      );
+    }
     if (!result) {
       return (
         <ScrollView
@@ -644,7 +705,7 @@ export default function RecordDetailScreen() {
         <ReasoningGraphCard result={result} showHeader={false} showPath={false} graphHeight={320} />
       </ScrollView>
     );
-  }, [job, result]);
+  }, [agentMode, job, result]);
 
   const renderMaterialsPage = useCallback(() => {
     if (!detail || !submission) {
@@ -692,18 +753,37 @@ export default function RecordDetailScreen() {
 
         {hasAttachments ? (
           <PageSurface soft>
-            <SectionLabel>附件</SectionLabel>
-            <AttachmentChips items={submission.text_paths} />
-            <AttachmentChips items={submission.image_paths} />
-            <AttachmentChips items={submission.audio_paths} />
-            <AttachmentChips items={submission.video_paths} />
+            {submission.image_paths.length ? (
+              <View style={styles.materialGroup}>
+                <SectionLabel>图片材料</SectionLabel>
+                <SubmissionImageGrid items={submission.image_paths} />
+              </View>
+            ) : null}
+            {submission.text_paths.length ? (
+              <View style={styles.materialGroup}>
+                <SectionLabel>文本附件</SectionLabel>
+                <AttachmentChips items={submission.text_paths} />
+              </View>
+            ) : null}
+            {submission.audio_paths.length ? (
+              <View style={styles.materialGroup}>
+                <SectionLabel>音频附件</SectionLabel>
+                <AttachmentChips items={submission.audio_paths} />
+              </View>
+            ) : null}
+            {submission.video_paths.length ? (
+              <View style={styles.materialGroup}>
+                <SectionLabel>视频附件</SectionLabel>
+                <AttachmentChips items={submission.video_paths} />
+              </View>
+            ) : null}
           </PageSurface>
         ) : null}
       </ScrollView>
     );
   }, [detail, evidenceCardWidth, lockPagerScroll, openEvidenceSheet, result, submission, unlockPagerScroll]);
 
-  const renderPage = useCallback(({ item }: { item: (typeof DETAIL_PAGES)[number] }) => {
+  const renderPage = useCallback(({ item }: { item: DetailPage }) => {
     let content: ReactNode = null;
     if (item.key === "overview") {
       content = renderOverviewPage();
@@ -733,7 +813,7 @@ export default function RecordDetailScreen() {
 
           {!loading && !error && detail && submission ? (
             <View style={styles.tabRow}>
-              {DETAIL_PAGES.map((item, index) => {
+              {detailPages.map((item, index) => {
                 const active = index === pageIndex;
                 return (
                   <Pressable
@@ -772,7 +852,7 @@ export default function RecordDetailScreen() {
           <>
             <FlatList
               ref={pagerRef}
-              data={DETAIL_PAGES}
+              data={detailPages}
               horizontal
               pagingEnabled
               scrollEnabled={pagerScrollEnabled}
@@ -1272,6 +1352,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  materialGroup: {
+    gap: 10,
+  },
+  materialImageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  materialImageTile: {
+    width: "48.4%",
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: 8,
+    gap: 8,
+  },
+  materialImage: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: radius.md,
+    backgroundColor: palette.backgroundDeep,
+  },
+  materialImageName: {
+    color: palette.ink,
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
   },
   attachmentChip: {
     maxWidth: "100%",
