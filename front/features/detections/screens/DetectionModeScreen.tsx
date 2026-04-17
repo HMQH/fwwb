@@ -16,18 +16,9 @@ import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { buildDetectionSubmitFormData, detectionsApi } from "../api";
-import { DetectionPipelineCard } from "../components/DetectionPipelineCard";
-import { DetectionResultCard } from "../components/DetectionResultCard";
-import { EvidenceListCard } from "../components/EvidenceListCard";
-import { ReasoningGraphCard } from "../components/ReasoningGraphCard";
-import { SimilarImageGalleryCard } from "../components/SimilarImageGalleryCard";
 import type {
   AudioVerifyBatchJobResponse,
-  DetectionJob,
   DetectionMode,
-  SimilarImageItem,
-  DetectionSubmissionDetail,
-  DetectionSubmitAcceptedResponse,
   PickedFile,
 } from "../types";
 
@@ -134,14 +125,6 @@ function formatAudioJobStatus(status: string) {
     default:
       return status;
   }
-}
-
-function extractSimilarImages(input: unknown): SimilarImageItem[] {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return [];
-  }
-  const value = (input as { similar_images?: unknown }).similar_images;
-  return Array.isArray(value) ? (value as SimilarImageItem[]) : [];
 }
 
 function decodeDisplayFilename(name: string | null | undefined) {
@@ -320,7 +303,7 @@ function AudioBatchPanel({ batchJob }: { batchJob: AudioVerifyBatchJobResponse }
 
 export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
-  const { token, refreshCurrentUser } = useAuth();
+  const { token } = useAuth();
   const config = modeConfig[mode];
   const isTextMode = mode === "text";
   const isAudioMode = mode === "audio";
@@ -337,12 +320,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [relationPickerVisible, setRelationPickerVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [matchingImageBank, setMatchingImageBank] = useState(false);
-  const [activeJob, setActiveJob] = useState<DetectionJob | null>(null);
-  const [detail, setDetail] = useState<DetectionSubmissionDetail | null>(null);
   const [audioVerifyBatchJob, setAudioVerifyBatchJob] = useState<AudioVerifyBatchJobResponse | null>(null);
-
-  const activeSubmissionId = activeJob?.submission_id ?? detail?.submission.id ?? null;
-  const currentResult = activeJob?.result ?? detail?.latest_result ?? null;
 
   const ingestAssets = useCallback(
     (
@@ -510,37 +488,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setVideoFiles([]);
   }, []);
 
-  const applySubmitResponse = useCallback((response: DetectionSubmitAcceptedResponse) => {
-    setActiveJob(response.job);
-    setDetail({
-      submission: response.submission,
-      latest_job: response.job,
-      latest_result: response.job.result,
-      guardian_event_summary: null,
-      content_preview: response.submission.text_content?.slice(0, 88) ?? null,
-    });
-    resetForm();
-  }, [resetForm]);
-
-  const openDetail = useCallback(() => {
-    if (!activeSubmissionId) {
-      return;
-    }
-    router.push({ pathname: "/records/[id]", params: { id: activeSubmissionId } });
-  }, [activeSubmissionId, router]);
-
-  const refreshDetail = useCallback(async () => {
-    if (!token || !activeSubmissionId) {
-      return;
-    }
-    try {
-      const detailResponse = await detectionsApi.getSubmission(token, activeSubmissionId);
-      setDetail(detailResponse);
-    } catch {
-      // ignore
-    }
-  }, [activeSubmissionId, token]);
-
   const consumeFloatingCapture = useCallback(async (options?: { showImportedAlert?: boolean; showEmptyAlert?: boolean }) => {
     if (!config.allow.image) {
       return;
@@ -576,6 +523,41 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       Alert.alert("截图已加入", "可直接开始检测");
     }
   }, [config.allow.image]);
+
+  const handleFloatingAssistantPress = useCallback(async () => {
+    if (!floatingCaptureService.isSupported()) {
+      Alert.alert("当前设备不支持", "仅安卓设备支持悬浮截图助手");
+      return;
+    }
+
+    try {
+      const status = await floatingCaptureService.getStatus();
+      if (status.hasPendingCapture) {
+        router.push("/floating-capture/action");
+        return;
+      }
+      if (!status.overlayPermission) {
+        floatingCaptureService.openOverlaySettings();
+        Alert.alert("需要悬浮权限", "请开启悬浮窗权限后重新点击");
+        return;
+      }
+
+      const nextStatus = await floatingCaptureService.startAssistant();
+      if (nextStatus.hasPendingCapture) {
+        router.push("/floating-capture/action");
+        return;
+      }
+      if (!nextStatus.overlayPermission) {
+        floatingCaptureService.openOverlaySettings();
+        Alert.alert("权限未开启", "请允许悬浮助手显示在其他应用上层");
+        return;
+      }
+      Alert.alert("悬浮助手已启动", "切到目标页面后即可截图");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "请检查悬浮权限后重试";
+      Alert.alert("启动失败", message);
+    }
+  }, [router]);
 
   const loadRelations = useCallback(async () => {
     if (!token) {
@@ -623,14 +605,19 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setMatchingImageBank(true);
     try {
       const response = await detectionsApi.submit(token, formData);
-      applySubmitResponse(response);
+      resetForm();
+      setRelationPickerVisible(false);
+      router.replace({
+        pathname: "/records/[id]",
+        params: { id: response.submission.id },
+      });
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "图片库比对失败";
       Alert.alert("图片库比对失败", message);
     } finally {
       setMatchingImageBank(false);
     }
-  }, [applySubmitResponse, imageFiles, selectedRelationId, token]);
+  }, [imageFiles, resetForm, router, selectedRelationId, token]);
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
@@ -646,8 +633,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
       setSubmitting(true);
       setAudioVerifyBatchJob(null);
-      setActiveJob(null);
-      setDetail(null);
 
       try {
         const submitResponse = await detectionsApi.submitAudioVerifyBatch(token, audioFiles);
@@ -687,81 +672,19 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setSubmitting(true);
     try {
       const response = await detectionsApi.submit(token, formData);
-      if (isTextMode) {
-        resetForm();
-        setRelationPickerVisible(false);
-        router.replace({
-          pathname: "/records/[id]",
-          params: { id: response.submission.id },
-        });
-        return;
-      }
-      applySubmitResponse(response);
+      resetForm();
+      setRelationPickerVisible(false);
+      router.replace({
+        pathname: "/records/[id]",
+        params: { id: response.submission.id },
+      });
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "提交失败";
       Alert.alert("提交失败", message);
     } finally {
       setSubmitting(false);
     }
-  }, [applySubmitResponse, audioFiles, hasPayload, imageFiles, isAudioMode, isTextMode, resetForm, router, selectedRelationId, textContent, textFiles, token, videoFiles]);
-
-  const handleRerun = useCallback(async () => {
-    if (!token || !activeSubmissionId) {
-      return;
-    }
-    try {
-      const job = await detectionsApi.rerun(token, activeSubmissionId);
-      setActiveJob(job);
-      setDetail((prev) => (prev ? { ...prev, latest_job: job, latest_result: job.result } : prev));
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : "重跑失败";
-      Alert.alert("重跑失败", message);
-    }
-  }, [activeSubmissionId, token]);
-
-  useEffect(() => {
-    if (!token || !activeJob) {
-      return;
-    }
-    if (activeJob.job_type !== "text_rag") {
-      if (activeJob.status === "completed") {
-        void refreshDetail();
-        void refreshCurrentUser();
-      }
-      return;
-    }
-    if (activeJob.status !== "pending" && activeJob.status !== "running") {
-      if (activeJob.status === "completed") {
-        void refreshDetail();
-        void refreshCurrentUser();
-      }
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        const latestJob = await detectionsApi.getJob(token, activeJob.id);
-        setActiveJob(latestJob);
-        setDetail((prev) =>
-          prev
-            ? {
-                ...prev,
-                latest_job: latestJob,
-                latest_result: latestJob.result,
-              }
-            : prev,
-        );
-        if (latestJob.status === "completed") {
-          void refreshDetail();
-          void refreshCurrentUser();
-        }
-      } catch {
-        // ignore
-      }
-    }, 2200);
-
-    return () => clearTimeout(timer);
-  }, [activeJob, refreshCurrentUser, refreshDetail, token]);
+  }, [audioFiles, hasPayload, imageFiles, isAudioMode, resetForm, router, selectedRelationId, textContent, textFiles, token, videoFiles]);
 
   useEffect(() => {
     if (!token || !audioVerifyBatchJob) {
@@ -793,7 +716,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             <View style={styles.textModeHeader}>
               <Pressable
                 style={({ pressed }) => [styles.textModeBackButton, pressed && styles.buttonPressed]}
-                onPress={() => router.replace("/")}
+                onPress={() => router.back()}
               >
                 <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
               </Pressable>
@@ -978,11 +901,19 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     <View style={styles.root}>
       <View style={styles.backgroundOrbTop} />
       <View style={styles.backgroundOrbBottom} />
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.heroCard}>
-            <View style={styles.heroRow}>
-              <View style={styles.heroIconWrap}>
+        <SafeAreaView style={styles.safeArea} edges={["top"]}>
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.modeHeader}>
+              <Pressable style={({ pressed }) => [styles.modeBackButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
+                <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
+              </Pressable>
+              <Text style={styles.modeHeaderTitle}>{config.title}</Text>
+              <View style={styles.modeHeaderSpacer} />
+            </View>
+
+            <View style={styles.heroCard}>
+              <View style={styles.heroRow}>
+                <View style={styles.heroIconWrap}>
                 <MaterialCommunityIcons name={config.icon} size={24} color={palette.accentStrong} />
               </View>
               <View style={styles.heroCopy}>
@@ -1090,7 +1021,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 </Pressable>
                 <Pressable
                   style={({ pressed }) => [styles.visualActionButton, pressed && styles.buttonPressed]}
-                  onPress={() => void consumeFloatingCapture({ showImportedAlert: true, showEmptyAlert: true })}
+                  onPress={() => void handleFloatingAssistantPress()}
                 >
                   <MaterialCommunityIcons name="cellphone-screenshot" size={20} color={palette.accentStrong} />
                   <Text style={styles.visualActionTitle}>悬浮截图</Text>
@@ -1276,36 +1207,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           </View>
 
           {isAudioMode && audioVerifyBatchJob ? <AudioBatchPanel batchJob={audioVerifyBatchJob} /> : null}
-
-          {!isAudioMode && (activeJob || currentResult) ? <DetectionPipelineCard job={activeJob} result={currentResult} /> : null}
-
-          {!isAudioMode && currentResult ? (
-            <>
-              <DetectionResultCard
-                result={currentResult}
-                job={activeJob}
-                onOpenDetail={activeSubmissionId ? openDetail : undefined}
-                onRerun={activeSubmissionId ? handleRerun : undefined}
-              />
-              <ReasoningGraphCard result={currentResult} />
-              <SimilarImageGalleryCard items={extractSimilarImages(currentResult.result_detail)} />
-              {currentResult.retrieved_evidence.length ? <EvidenceListCard title="风险参考" items={currentResult.retrieved_evidence} tone="black" /> : null}
-              {currentResult.counter_evidence.length ? <EvidenceListCard title="安全参考" items={currentResult.counter_evidence} tone="white" /> : null}
-              {currentResult.advice.length ? (
-                <View style={styles.sectionCard}>
-                  <Text style={styles.sectionTitle}>建议</Text>
-                  <View style={styles.adviceList}>
-                    {currentResult.advice.map((item) => (
-                      <View key={item} style={styles.adviceRow}>
-                        <View style={styles.adviceDot} />
-                        <Text style={styles.adviceText}>{item}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
-            </>
-          ) : null}
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -1598,6 +1499,33 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(196, 218, 255, 0.18)",
   },
   content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28, gap: 16 },
+  modeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 44,
+  },
+  modeBackButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modeHeaderTitle: {
+    color: palette.ink,
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  modeHeaderSpacer: {
+    width: 38,
+    height: 38,
+  },
   heroCard: {
     borderRadius: radius.xl,
     backgroundColor: palette.surface,
@@ -1692,9 +1620,15 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  visualActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  visualActionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 10,
+    columnGap: 10,
+  },
   visualActionButton: {
-    width: "48.5%",
+    width: "48%",
     borderRadius: radius.lg,
     backgroundColor: palette.surfaceSoft,
     borderWidth: 1,

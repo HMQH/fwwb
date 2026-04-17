@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -78,6 +79,7 @@ function getStatusColor(result: AIFaceCheckResponse | null) {
 }
 
 export function AIFaceCheckScreen() {
+  const router = useRouter();
   const { token } = useAuth();
 
   const [pickedImage, setPickedImage] = useState<PickedImage | null>(null);
@@ -211,6 +213,14 @@ export function AIFaceCheckScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <View style={styles.pageHeader}>
+          <Pressable style={({ pressed }) => [styles.pageBackButton, pressed && styles.pressed]} onPress={() => router.back()}>
+            <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
+          </Pressable>
+          <Text style={styles.pageTitle}>AI 换脸识别</Text>
+          <View style={styles.pageHeaderSpacer} />
+        </View>
+
         <View style={styles.card}>
           <View style={styles.headerRow}>
             <Text style={styles.title}>AI 换脸识别</Text>
@@ -363,6 +373,32 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 28,
     gap: 14,
+  },
+  pageHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  pageBackButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  pageTitle: {
+    color: palette.ink,
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  pageHeaderSpacer: {
+    width: 38,
+    height: 38,
   },
   card: {
     borderRadius: radius.lg,
