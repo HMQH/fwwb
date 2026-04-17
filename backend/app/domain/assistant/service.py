@@ -406,10 +406,16 @@ def _build_relation_context(
     if tags:
         summary_lines.append("标签：" + "、".join(tags))
     blocks.append("对象资料：\n- " + "\n- ".join(summary_lines))
+    ai_profile_summary = _clean_text(profile.ai_profile_summary if isinstance(profile.ai_profile_summary, str) else None)
+    if ai_profile_summary:
+        blocks.append("对象画像摘要：\n- " + ai_profile_summary)
 
     if memories:
         memory_lines: list[str] = []
         for item in memories:
+            extra_payload = item.extra_payload if isinstance(item.extra_payload, dict) else {}
+            if item.memory_kind == "summary" and extra_payload.get("source") == "relation_ai_profile":
+                continue
             scope = "长期" if item.memory_scope == "long_term" else "短期"
             title = _clean_text(item.title, fallback="记忆") or "记忆"
             if item.memory_kind == "upload":
@@ -426,6 +432,8 @@ def _build_relation_context(
             if not content:
                 continue
             memory_lines.append(f"[{scope}/{item.memory_kind}] {title}：{content}")
+            if len(memory_lines) >= settings.assistant_relation_memory_limit:
+                break
         if memory_lines:
             blocks.append("对象记忆：\n- " + "\n- ".join(memory_lines))
 
@@ -634,6 +642,7 @@ def _assistant_system_prompt() -> str:
         "如果会话绑定了某条记录，必须结合这条记录的全部上下文，不要只看摘要。"
         "输出尽量短，但要有结论。"
         "用户画像、内部风险分、内部记忆仅用于内部推理，不得直接向用户复述。"
+        "对象画像摘要、对象记忆也属于内部工作记忆，不得逐条列出，不得直接说“画像显示”“系统记得”等。"
         "证据不足时，不要默认判定诈骗。"
         "理由优先引用当前消息、附件、明确事实；用户画像仅作辅助，不直接外显。"
         "信息不足时，可以只追问 1 个最关键的问题。"

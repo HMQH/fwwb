@@ -31,6 +31,7 @@ skills-lock.json
 
 
 # 用户上传文件（运行时生成；保留 storage/uploads/.gitkeep）
+storage/user-memory/*
 storage/uploads/*
 !storage/uploads/.gitkeep
 

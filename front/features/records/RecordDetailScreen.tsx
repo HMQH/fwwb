@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import {
+  DetectionPipelineCard,
   ReasoningGraphCard,
   detectionsApi,
   formatConfidence,
@@ -26,7 +28,9 @@ import {
   getRiskMeta,
   getVisibleFraudType,
 } from "@/features/detections";
+import { guardiansApi } from "@/features/guardians";
 import type { DetectionEvidence, DetectionSubmissionDetail } from "@/features/detections";
+import { resolveEvidencePreviewUrl } from "@/features/detections/evidencePreview";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -62,6 +66,19 @@ function getJobStatusLabel(status?: string | null) {
     return "排队中";
   }
   return "待处理";
+}
+
+function getGuardianNotifyStatusLabel(status?: string | null) {
+  if (status === "read") {
+    return "已查看";
+  }
+  if (status === "sent") {
+    return "已通知";
+  }
+  if (status === "failed") {
+    return "发送失败";
+  }
+  return "待发送";
 }
 
 function getPageIndex(event: NativeSyntheticEvent<NativeScrollEvent>, width: number) {
@@ -260,37 +277,50 @@ function EvidenceCarouselSection({
         onMomentumScrollEnd={onRailTouchEnd}
         scrollEventThrottle={16}
       >
-        {items.map((item) => (
-          <Pressable
-            key={`${item.source_id}-${item.chunk_index}-${item.sample_label}`}
-            style={({ pressed }) => [
-              styles.evidenceCard,
-              { width: cardWidth },
-              pressed && styles.evidenceCardPressed,
-            ]}
-            onPress={() => onPressItem(item, title, tone)}
-          >
-            <View style={styles.evidenceCardTop}>
-              <View style={styles.evidenceTagRow}>
-                <View style={[styles.evidenceBadge, { backgroundColor: theme.soft }]}>
-                  <Text style={[styles.evidenceBadgeText, { color: theme.ink }]}>{title}</Text>
-                </View>
-                {item.fraud_type ? (
-                  <View style={styles.evidenceTypeChip}>
-                    <Text style={styles.evidenceTypeChipText} numberOfLines={1}>
-                      {item.fraud_type}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.evidenceScore}>{getSimilarityPercent(item.similarity_score)}</Text>
-            </View>
+        {items.map((item) => {
+          const previewUrl = resolveEvidencePreviewUrl(item);
 
-            <Text style={styles.evidencePreviewText} numberOfLines={5}>
-              {item.chunk_text}
-            </Text>
-          </Pressable>
-        ))}
+          return (
+            <Pressable
+              key={`${item.source_id}-${item.chunk_index}-${item.sample_label}`}
+              style={({ pressed }) => [
+                styles.evidenceCard,
+                { width: cardWidth },
+                pressed && styles.evidenceCardPressed,
+              ]}
+              onPress={() => onPressItem(item, title, tone)}
+            >
+              <View style={styles.evidenceCardTop}>
+                <View style={styles.evidenceTagRow}>
+                  <View style={[styles.evidenceBadge, { backgroundColor: theme.soft }]}>
+                    <Text style={[styles.evidenceBadgeText, { color: theme.ink }]}>{title}</Text>
+                  </View>
+                  {item.fraud_type ? (
+                    <View style={styles.evidenceTypeChip}>
+                      <Text style={styles.evidenceTypeChipText} numberOfLines={1}>
+                        {item.fraud_type}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.evidenceScore}>{getSimilarityPercent(item.similarity_score)}</Text>
+              </View>
+
+              {previewUrl ? (
+                <Image
+                  source={{ uri: previewUrl }}
+                  style={styles.evidencePreviewImage}
+                  contentFit="cover"
+                  transition={120}
+                />
+              ) : null}
+
+              <Text style={styles.evidencePreviewText} numberOfLines={previewUrl ? 4 : 5}>
+                {item.chunk_text}
+              </Text>
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </PageSurface>
   );
@@ -306,6 +336,7 @@ export default function RecordDetailScreen() {
   const [detail, setDetail] = useState<DetectionSubmissionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notifyingGuardian, setNotifyingGuardian] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
   const [evidenceSheet, setEvidenceSheet] = useState<EvidenceSheetState>(null);
@@ -347,9 +378,32 @@ export default function RecordDetailScreen() {
     }
   }, [id, loadDetail, token]);
 
+  const handleNotifyGuardian = useCallback(async () => {
+    if (!token || !id || notifyingGuardian) {
+      return;
+    }
+    setNotifyingGuardian(true);
+    try {
+      const events = await guardiansApi.createEvents({ submission_id: id }, token);
+      await loadDetail();
+      const firstEvent = events[0];
+      if (firstEvent) {
+        router.push({
+          pathname: "/guardians/events/[id]" as never,
+          params: { id: firstEvent.id } as never,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "通知监护人失败");
+    } finally {
+      setNotifyingGuardian(false);
+    }
+  }, [id, loadDetail, notifyingGuardian, router, token]);
+
   const submission = detail?.submission;
   const result = detail?.latest_result;
   const job = detail?.latest_job;
+  const guardianEventSummary = detail?.guardian_event_summary;
 
   useEffect(() => {
     if (!token || !id) {
@@ -369,6 +423,7 @@ export default function RecordDetailScreen() {
   const visibleFraudType = getVisibleFraudType(result);
   const score = getResultScore(detail);
   const evidenceCardWidth = Math.max(220, Math.min(width - 92, 296));
+  const evidenceSheetImageUrl = evidenceSheet ? resolveEvidencePreviewUrl(evidenceSheet.item) : null;
 
   const onPressPage = useCallback((index: number) => {
     setPageIndex(index);
@@ -439,6 +494,8 @@ export default function RecordDetailScreen() {
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
+        {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
+
         {result ? (
           <PageSurface>
             <View style={styles.heroRow}>
@@ -476,6 +533,45 @@ export default function RecordDetailScreen() {
               </View>
             ) : null}
 
+            {guardianEventSummary ? (
+              <View style={styles.guardianCard}>
+                <View style={styles.guardianCardTop}>
+                  <View style={styles.guardianCardCopy}>
+                    <Text style={styles.guardianCardTitle}>已联动监护人</Text>
+                    <Text style={styles.guardianCardMeta}>
+                      {guardianEventSummary.latest_guardian_name ?? "监护人"} · {getGuardianNotifyStatusLabel(guardianEventSummary.latest_notify_status)}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.guardianCardButton, pressed && styles.buttonPressed]}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/guardians/events/[id]" as never,
+                        params: { id: guardianEventSummary.latest_event_id } as never,
+                      })
+                    }
+                  >
+                    <Text style={styles.guardianCardButtonText}>查看</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : result && (result.risk_level === "high" || result.risk_level === "medium") ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.guardianNotifyButton,
+                  pressed && styles.buttonPressed,
+                  notifyingGuardian && styles.buttonDisabled,
+                ]}
+                onPress={() => void handleNotifyGuardian()}
+                disabled={notifyingGuardian}
+              >
+                <MaterialCommunityIcons name="account-group-outline" size={16} color={palette.accentStrong} />
+                <Text style={styles.guardianNotifyButtonText}>
+                  {notifyingGuardian ? "通知中..." : "通知监护人"}
+                </Text>
+              </Pressable>
+            ) : null}
+
             <View style={styles.actionRow}>
               <InlinePill
                 label={getJobStatusLabel(job?.status)}
@@ -494,11 +590,35 @@ export default function RecordDetailScreen() {
             </Pressable>
           </PageSurface>
         ) : (
-          <EmptyState title="等待结果" description="任务完成后会在这里显示结论" />
+          <EmptyState
+            title={job?.status === "pending" || job?.status === "running" ? "检测进行中" : "等待结果"}
+            description={
+              job?.status === "pending" || job?.status === "running"
+                ? "总览会持续刷新当前进度，完成后自动展示结论。"
+                : "任务完成后会在这里显示结论"
+            }
+          />
         )}
       </ScrollView>
     );
-  }, [detail, handleRerun, headline, job?.status, result, riskMeta.icon, riskMeta.soft, riskMeta.tone, score, submission, visibleFraudType]);
+  }, [
+    detail,
+    guardianEventSummary,
+    handleNotifyGuardian,
+    handleRerun,
+    headline,
+    job,
+    job?.status,
+    notifyingGuardian,
+    result,
+    riskMeta.icon,
+    riskMeta.soft,
+    riskMeta.tone,
+    router,
+    score,
+    submission,
+    visibleFraudType,
+  ]);
 
   const renderGraphPage = useCallback(() => {
     if (!result) {
@@ -509,6 +629,7 @@ export default function RecordDetailScreen() {
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
+          {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
           <EmptyState title="暂无图谱" description="结果生成后可左右切换查看" />
         </ScrollView>
       );
@@ -523,7 +644,7 @@ export default function RecordDetailScreen() {
         <ReasoningGraphCard result={result} showHeader={false} showPath={false} graphHeight={320} />
       </ScrollView>
     );
-  }, [result]);
+  }, [job, result]);
 
   const renderMaterialsPage = useCallback(() => {
     if (!detail || !submission) {
@@ -705,8 +826,23 @@ export default function RecordDetailScreen() {
                 </Pressable>
               </View>
 
-              <ScrollView style={styles.sheetBody} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={styles.sheetBody}
+                contentContainerStyle={styles.sheetBodyContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {evidenceSheetImageUrl ? (
+                  <Image
+                    source={{ uri: evidenceSheetImageUrl }}
+                    style={styles.sheetPreviewImage}
+                    contentFit="cover"
+                    transition={120}
+                  />
+                ) : null}
                 <Text style={styles.sheetBodyText}>{evidenceSheet.item.chunk_text}</Text>
+                {!evidenceSheetImageUrl && evidenceSheet.item.reason ? (
+                  <Text style={styles.sheetReasonText}>{evidenceSheet.item.reason}</Text>
+                ) : null}
               </ScrollView>
             </Animated.View>
           ) : null}
@@ -963,6 +1099,68 @@ const styles = StyleSheet.create({
   adviceBlock: {
     gap: 10,
   },
+  guardianCard: {
+    borderRadius: radius.lg,
+    backgroundColor: "#EAF8F1",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  guardianCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  guardianCardCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  guardianCardTitle: {
+    color: "#1A8B5B",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  guardianCardMeta: {
+    color: "#2F6E52",
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  guardianCardButton: {
+    borderRadius: radius.pill,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  guardianCardButtonText: {
+    color: palette.ink,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  guardianNotifyButton: {
+    minHeight: 44,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.accentStrong,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  guardianNotifyButtonText: {
+    color: palette.accentStrong,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
   actionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1063,6 +1261,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     fontFamily: fontFamily.body,
+  },
+  evidencePreviewImage: {
+    width: "100%",
+    aspectRatio: 1.05,
+    borderRadius: radius.md,
+    backgroundColor: palette.backgroundDeep,
   },
   attachmentWrap: {
     flexDirection: "row",
@@ -1226,13 +1430,31 @@ const styles = StyleSheet.create({
   sheetBody: {
     maxHeight: 360,
   },
+  sheetBodyContent: {
+    gap: 12,
+  },
+  sheetPreviewImage: {
+    width: "100%",
+    aspectRatio: 1.08,
+    borderRadius: radius.lg,
+    backgroundColor: palette.backgroundDeep,
+  },
   sheetBodyText: {
     color: palette.ink,
     fontSize: 14,
     lineHeight: 22,
     fontFamily: fontFamily.body,
   },
+  sheetReasonText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
   buttonPressed: {
     transform: [{ scale: 0.98 }],
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });

@@ -1,6 +1,28 @@
 export type RelationType = "family" | "friend" | "classmate" | "stranger" | "colleague";
 export type MemoryScope = "short_term" | "long_term";
 export type MemoryKind = "upload" | "chat" | "note" | "summary";
+export type RelationAiProfileStatus = "waiting_for_evidence" | "up_to_date" | "llm" | "fallback" | string;
+
+export type RelationAiProfilePayload = {
+  status?: RelationAiProfileStatus;
+  should_update?: boolean;
+  profile_summary?: string;
+  stable_traits?: string[];
+  communication_style?: string[];
+  risk_signals?: string[];
+  trusted_signals?: string[];
+  caution_points?: string[];
+  query_tags?: string[];
+  confidence?: number;
+  update_reason?: string;
+  last_trigger?: string;
+  last_refreshed_at?: string;
+  last_checked_at?: string;
+  last_attempt_at?: string;
+  last_error?: string;
+  llm_model?: string;
+  source_digest?: string;
+};
 
 export type RelationProfileSummary = {
   id: string;
@@ -9,6 +31,10 @@ export type RelationProfileSummary = {
   name: string;
   description: string | null;
   tags: string[];
+  ai_profile_summary: string | null;
+  ai_profile_payload: RelationAiProfilePayload;
+  ai_profile_dirty: boolean;
+  ai_profile_updated_at: string | null;
   avatar_color: string | null;
   avatar_url: string | null;
   short_term_count: number;

@@ -280,7 +280,12 @@ def analyze_with_llm(
         lexical_analysis=lexical_analysis,
         rule_catalog=rules.build_rule_catalog(),
     )
-    llm_result: ChatJsonResult = client.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
+    llm_result: ChatJsonResult = client.complete_json(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        output_schema=prompts.semantic_rule_output_json_schema(),
+        schema_name="semantic_rule_analysis",
+    )
     payload = llm_result.payload if isinstance(llm_result.payload, dict) else {}
 
     soft_signals = _normalize_soft_signals(payload.get("soft_signals"), lexical_analysis=lexical_analysis)

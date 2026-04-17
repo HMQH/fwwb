@@ -33,6 +33,10 @@ class RelationProfileSummaryResponse(BaseModel):
     name: str
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    ai_profile_summary: str | None = None
+    ai_profile_payload: dict[str, Any] = Field(default_factory=dict)
+    ai_profile_dirty: bool = True
+    ai_profile_updated_at: datetime | None = None
     avatar_color: str | None = None
     avatar_url: str | None = None
     short_term_count: int = 0

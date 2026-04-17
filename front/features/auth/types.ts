@@ -46,6 +46,21 @@ export type UpdateGuardianPayload = {
   guardian_relation: GuardianRelation;
 };
 
+export type PushPlatform = "android" | "ios" | "web" | "unknown";
+
+export type RegisterPushTokenPayload = {
+  expo_push_token: string;
+  platform: PushPlatform;
+  device_name?: string | null;
+};
+
+export type PushTokenResponse = {
+  expo_push_token: string;
+  platform: PushPlatform;
+  device_name: string | null;
+  is_active: boolean;
+};
+
 export const roleMeta: Record<
   UserRole,
   {

@@ -1,0 +1,107 @@
+[
+  {
+    "prefix": "+86170",
+    "score": 86,
+    "labels": ["虚拟运营商", "高风险号段"],
+    "source": "public_segment_seed",
+    "suggestion": "命中高风险号段画像，请不要提供验证码或转账。"
+  },
+  {
+    "prefix": "+86171",
+    "score": 86,
+    "labels": ["虚拟运营商", "高风险号段"],
+    "source": "public_segment_seed",
+    "suggestion": "命中高风险号段画像，请不要提供验证码或转账。"
+  },
+  {
+    "prefix": "+86162",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+86165",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+86167",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "170",
+    "score": 86,
+    "labels": ["虚拟运营商", "高风险号段"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "171",
+    "score": 86,
+    "labels": ["虚拟运营商", "高风险号段"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "162",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "165",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "167",
+    "score": 78,
+    "labels": ["虚拟运营商", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+8695",
+    "score": 68,
+    "labels": ["客服号段", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "95",
+    "score": 68,
+    "labels": ["客服号段", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "400",
+    "score": 60,
+    "labels": ["客服外呼异常", "需人工核验"],
+    "source": "public_segment_seed",
+    "suggestion": "如遇 400 号码主动要求转账、验证码或共享屏幕，请按高风险处理。"
+  },
+  {
+    "prefix": "+44",
+    "score": 74,
+    "labels": ["境外来电", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+60",
+    "score": 74,
+    "labels": ["境外来电", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+63",
+    "score": 74,
+    "labels": ["境外来电", "需人工核验"],
+    "source": "public_segment_seed"
+  },
+  {
+    "prefix": "+84",
+    "score": 74,
+    "labels": ["境外来电", "需人工核验"],
+    "source": "public_segment_seed"
+  }
+]

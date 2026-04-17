@@ -173,7 +173,7 @@ export function DetectionPipelineCard({
           const isDone = item.status === "completed";
           const isFailed = item.status === "failed";
           return (
-            <View key={item.key} style={styles.traceCell}>
+            <View key={item.id ?? `${item.key}-${index}`} style={styles.traceCell}>
               <View style={styles.traceTop}>
                 <View
                   style={[

@@ -2,6 +2,8 @@ import { request } from "@/shared/api";
 import type {
   LoginPayload,
   LocalImageAsset,
+  PushTokenResponse,
+  RegisterPushTokenPayload,
   RegisterPayload,
   TokenResponse,
   UpdateGuardianPayload,
@@ -56,6 +58,16 @@ export const authApi = {
       "/api/me/guardian",
       {
         method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+      token
+    );
+  },
+  registerPushToken(payload: RegisterPushTokenPayload, token: string) {
+    return request<PushTokenResponse>(
+      "/api/me/push-token",
+      {
+        method: "POST",
         body: JSON.stringify(payload),
       },
       token

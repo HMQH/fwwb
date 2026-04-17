@@ -233,17 +233,29 @@ function normalizeModuleTraceItems(items: unknown): DetectionModuleTraceItem[] {
   }
   return items
     .filter(isRecord)
-    .map((item) => {
-      const key = String(item.key ?? "");
+    .map((item, index) => {
+      const action = String(item.action ?? item.key ?? "").trim();
+      const key = String(item.key ?? action).trim();
+      const id = String(item.id ?? "").trim() || `${key || "step"}-${index + 1}`;
+      const iterationValue = item.iteration;
+      const iteration =
+        typeof iterationValue === "number" && Number.isFinite(iterationValue)
+          ? iterationValue
+          : Number.isFinite(Number(iterationValue))
+            ? Number(iterationValue)
+            : undefined;
       return {
+        ...item,
+        id,
         key,
+        action: action || key,
         label: sanitizePipelineLabel(key, item.label ?? item.key ?? ""),
         status: String(item.status ?? "pending"),
         enabled: item.enabled !== false,
+        iteration,
         metrics: isRecord(item.metrics)
           ? (item.metrics as Record<string, number | string | null>)
           : undefined,
-        ...item,
       };
     })
     .filter((item) => Boolean(item.key));
@@ -256,7 +268,10 @@ export function buildDetectionModuleTrace(
   const progressDetail = getProgressDetail(job);
   const resultDetail = getResultDetail(result);
   const detailItems = normalizeModuleTraceItems(
-    progressDetail?.module_trace ?? resultDetail?.module_trace,
+    progressDetail?.execution_trace
+      ?? resultDetail?.execution_trace
+      ?? progressDetail?.module_trace
+      ?? resultDetail?.module_trace,
   );
   if (detailItems.length) {
     return detailItems;
@@ -286,9 +301,12 @@ export function buildDetectionModuleTrace(
     }
 
     return {
+      id: `pipeline-${step}-${index + 1}`,
       key: step,
+      action: step,
       label: pipelineStepMeta[step].shortLabel,
       status,
+      iteration: index + 1,
       enabled: true,
     };
   });
@@ -324,13 +342,42 @@ function normalizeEdge(edge: Record<string, unknown>): DetectionGraphEdge {
 function normalizeGraph(graph: Record<string, unknown>): DetectionReasoningGraph | null {
   const rawNodes = Array.isArray(graph.nodes) ? graph.nodes.filter(isRecord) : [];
   const rawEdges = Array.isArray(graph.edges) ? graph.edges.filter(isRecord) : [];
-  const nodes = rawNodes.map(normalizeNode).filter((item) => Boolean(item.id));
-  const edges = rawEdges.map(normalizeEdge).filter((item) => Boolean(item.source && item.target));
+  const seenNodeIds = new Map<string, number>();
+  const nodeIdLookup = new Map<string, string>();
+  const nodes = rawNodes
+    .map(normalizeNode)
+    .filter((item) => Boolean(item.id))
+    .map((item) => {
+      const count = (seenNodeIds.get(item.id) ?? 0) + 1;
+      seenNodeIds.set(item.id, count);
+      const resolvedId = count === 1 ? item.id : `${item.id}#${count}`;
+      if (!nodeIdLookup.has(item.id)) {
+        nodeIdLookup.set(item.id, resolvedId);
+      }
+      return resolvedId === item.id ? item : { ...item, id: resolvedId };
+    });
+  const validNodeIds = new Set(nodes.map((item) => item.id));
+  const edges = rawEdges
+    .map(normalizeEdge)
+    .map((item, index) => {
+      const source = nodeIdLookup.get(item.source) ?? item.source;
+      const target = nodeIdLookup.get(item.target) ?? item.target;
+      return {
+        ...item,
+        id: String(item.id || `${source}:${target}:${index}`),
+        source,
+        target,
+      };
+    })
+    .filter((item) => Boolean(item.source && item.target))
+    .filter((item) => validNodeIds.has(item.source) && validNodeIds.has(item.target));
   if (!nodes.length) {
     return null;
   }
   const labelLookup = new Map(nodes.map((item) => [item.id, item.label]));
-  const highlightedPath = getStringArray(graph.highlighted_path);
+  const highlightedPath = getStringArray(graph.highlighted_path)
+    .map((item) => nodeIdLookup.get(item) ?? item)
+    .filter((item) => validNodeIds.has(item));
   const highlightedLabels = getStringArray(graph.highlighted_labels)
     .map((item) => sanitizeNodeLabel(item, item))
     .filter(Boolean);

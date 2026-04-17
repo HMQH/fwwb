@@ -795,7 +795,12 @@ def analyze_text_submission(
         )
         if client is None:
             client = llm.build_chat_json_client()
-        llm_result = client.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
+        llm_result = client.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            output_schema=prompts.detection_output_json_schema(),
+            schema_name="detection_analysis",
+        )
         llm_payload = llm_result.payload
         llm_model = llm_result.model_name
         llm_used = True

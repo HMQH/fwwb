@@ -1,5 +1,50 @@
 export type DetectionMode = "text" | "visual" | "audio" | "mixed";
 
+export type AudioVerifyResponse = {
+  label: "genuine" | "fake" | string;
+  genuine_prob: number;
+  fake_prob: number;
+  score: number;
+  duration_sec: number;
+  model_version: string;
+  feature_version: string;
+};
+
+export type AudioVerifyJobSubmitResponse = {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  filename: string | null;
+};
+
+export type AudioVerifyJobResponse = AudioVerifyJobSubmitResponse & {
+  updated_at: string;
+  error_message: string | null;
+  result: AudioVerifyResponse | null;
+};
+
+export type AudioVerifyBatchItemResponse = {
+  item_id: string;
+  filename: string | null;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  error_message: string | null;
+  result: AudioVerifyResponse | null;
+};
+
+export type AudioVerifyBatchJobSubmitResponse = {
+  batch_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  total_count: number;
+  items: AudioVerifyBatchItemResponse[];
+};
+
+export type AudioVerifyBatchJobResponse = AudioVerifyBatchJobSubmitResponse & {
+  updated_at: string;
+  completed_count: number;
+  failed_count: number;
+};
+
 export type KnownDetectionPipelineStep =
   | "queued"
   | "preprocess"
@@ -98,11 +143,64 @@ export type DetectionEvidence = {
   reason: string;
 };
 
+export type EvidenceItem = {
+  skill: string;
+  title: string;
+  detail: string;
+  severity: string;
+  source_path?: string | null;
+  extra?: Record<string, unknown>;
+};
+
+export type SimilarImageItem = {
+  id: string;
+  title?: string | null;
+  source_url?: string | null;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
+  domain?: string | null;
+  provider?: string | null;
+  match_type?: string | null;
+  is_validated?: boolean;
+  clip_similarity?: number | null;
+  hash_similarity?: number | null;
+  phash_distance?: number | null;
+  dhash_distance?: number | null;
+  hash_near_duplicate?: boolean;
+  clip_high_similarity?: boolean;
+};
+
+export type DetectionQrAnalysis = {
+  payload?: string | null;
+  normalized_url?: string | null;
+  host?: string | null;
+  destination_label?: string | null;
+  destination_kind?: string | null;
+  threatbook_verdict?: string | null;
+  threatbook_summary?: string | null;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  summary?: string | null;
+  final_reason?: string | null;
+};
+
+export type SkillHit = {
+  name: string;
+  status: string;
+  triggered: boolean;
+  risk_score: number;
+  summary: string;
+  labels: string[];
+};
+
 export type DetectionModuleTraceItem = {
+  id?: string;
   key: string;
+  action?: string;
   label: string;
   status: "pending" | "running" | "completed" | "failed" | string;
   enabled?: boolean;
+  iteration?: number;
   metrics?: Record<string, number | string | null>;
   [key: string]: unknown;
 };
@@ -143,13 +241,17 @@ export type DetectionResultDetail = {
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
   used_modules?: string[];
+  execution_trace?: DetectionModuleTraceItem[];
   module_trace?: DetectionModuleTraceItem[];
+  qr_analysis?: DetectionQrAnalysis | null;
   final_score?: number | null;
   llm_used?: boolean | null;
   semantic_rule_used?: boolean | null;
   semantic_rule_model?: string | null;
   risk_evidence?: string[];
   counter_evidence?: string[];
+  similar_images?: SimilarImageItem[];
+  similar_images_count?: number | null;
   [key: string]: unknown;
 };
 
@@ -157,6 +259,7 @@ export type DetectionPipelineProgressDetail = {
   status?: string;
   current_step?: string | null;
   progress_percent?: number | null;
+  execution_trace?: DetectionModuleTraceItem[];
   module_trace?: DetectionModuleTraceItem[];
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
@@ -170,12 +273,14 @@ export type DetectionResult = {
   id: string;
   submission_id: string;
   job_id: string | null;
+  status: string;
   risk_level: "low" | "medium" | "high" | string | null;
   fraud_type: string | null;
   confidence: number | null;
   is_fraud: boolean | null;
   summary: string | null;
   final_reason: string | null;
+  risk_score: number | null;
   need_manual_review: boolean;
   stage_tags: string[];
   hit_rules: string[];
@@ -185,10 +290,26 @@ export type DetectionResult = {
   retrieved_evidence: DetectionEvidence[];
   counter_evidence: DetectionEvidence[];
   advice: string[];
+  risk_labels: string[];
+  skills_triggered: SkillHit[];
+  evidence: EvidenceItem[];
+  recommendations: string[];
   llm_model: string | null;
-  result_detail: DetectionResultDetail | Record<string, unknown> | null;
+  result_detail: DetectionResultDetail | Record<string, unknown> | unknown[] | null;
   created_at: string;
   updated_at: string;
+};
+
+export type DetectionGuardianEventSummary = {
+  event_count: number;
+  latest_event_id: string;
+  latest_risk_level: string;
+  latest_notify_status: "pending" | "sent" | "read" | "failed" | string;
+  latest_guardian_name: string | null;
+  latest_guardian_phone: string | null;
+  latest_guardian_relation: "self" | "parent" | "spouse" | "child" | "relative" | null;
+  latest_created_at: string;
+  latest_acknowledged_at: string | null;
 };
 
 export type DetectionJob = {
@@ -220,7 +341,28 @@ export type DetectionHistoryItem = {
   submission: DetectionSubmission;
   latest_job: DetectionJob | null;
   latest_result: DetectionResult | null;
+  guardian_event_summary: DetectionGuardianEventSummary | null;
   content_preview: string | null;
 };
 
 export type DetectionSubmissionDetail = DetectionHistoryItem;
+
+export type WebPhishingRiskLevel = "safe" | "suspicious" | "medium" | "high" | string;
+
+export type WebPhishingPredictRequest = {
+  url: string;
+  html?: string | null;
+  return_features?: boolean;
+};
+
+export type WebPhishingPredictResponse = {
+  url: string;
+  mode: "url_only" | "url_html" | string;
+  model_name: string;
+  pred_label: number;
+  is_phishing: boolean;
+  phish_prob: number;
+  confidence: number;
+  risk_level: WebPhishingRiskLevel;
+  features: Record<string, number> | null;
+};
