@@ -11,7 +11,7 @@
 - `cd front && npm install`：安装前端依赖。
 - `cd front && npm start`：启动 Metro；可用 `npm run android`、`npm run ios` 或 `npm run web` 指定目标平台。
 - `cd front && npm run lint`：运行 Expo ESLint。
-- `cd backend && python -m venv .venv && .\.venv\Scripts\Activate.ps1 && pip install -r requirements.txt`：创建并安装后端虚拟环境（PowerShell）。
+- 后端环境使用`conda activate fraud`激活
 - `cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000`：本地启动 API。
 - `curl http://127.0.0.1:8000/health` 与 `/health/db`：快速检查后端与数据库连通性。
 - 电脑上开启 `adb reverse tcp:8081 tcp:8081`

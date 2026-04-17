@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import {
+  DetectionPipelineCard,
   ReasoningGraphCard,
   detectionsApi,
   formatConfidence,
@@ -493,6 +494,8 @@ export default function RecordDetailScreen() {
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
+        {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
+
         {result ? (
           <PageSurface>
             <View style={styles.heroRow}>
@@ -587,7 +590,14 @@ export default function RecordDetailScreen() {
             </Pressable>
           </PageSurface>
         ) : (
-          <EmptyState title="等待结果" description="任务完成后会在这里显示结论" />
+          <EmptyState
+            title={job?.status === "pending" || job?.status === "running" ? "检测进行中" : "等待结果"}
+            description={
+              job?.status === "pending" || job?.status === "running"
+                ? "总览会持续刷新当前进度，完成后自动展示结论。"
+                : "任务完成后会在这里显示结论"
+            }
+          />
         )}
       </ScrollView>
     );
@@ -597,6 +607,7 @@ export default function RecordDetailScreen() {
     handleNotifyGuardian,
     handleRerun,
     headline,
+    job,
     job?.status,
     notifyingGuardian,
     result,
@@ -618,6 +629,7 @@ export default function RecordDetailScreen() {
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
+          {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
           <EmptyState title="暂无图谱" description="结果生成后可左右切换查看" />
         </ScrollView>
       );
@@ -632,7 +644,7 @@ export default function RecordDetailScreen() {
         <ReasoningGraphCard result={result} showHeader={false} showPath={false} graphHeight={320} />
       </ScrollView>
     );
-  }, [result]);
+  }, [job, result]);
 
   const renderMaterialsPage = useCallback(() => {
     if (!detail || !submission) {

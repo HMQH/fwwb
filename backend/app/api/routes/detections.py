@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -51,7 +52,7 @@ async def _collect_uploads(form: object, key: str, *, max_bytes: int) -> list[tu
         return []
     result: list[tuple[bytes, str]] = []
     for item in getlist(key):
-        if not isinstance(item, UploadFile):
+        if not isinstance(item, (UploadFile, StarletteUploadFile)):
             continue
         name = (item.filename or "").strip()
         if not name:

@@ -18,6 +18,11 @@ def _default_user_memory_root() -> str:
     return str(repo_root / "storage" / "user-memory")
 
 
+def _default_threatbook_storage_state_path() -> str:
+    repo_root = Path(__file__).resolve().parents[4]
+    return str(repo_root / "storage" / "threatbook" / "storage_state.json")
+
+
 def _default_image_fraud_reference_dir() -> str:
     repo_root = Path(__file__).resolve().parents[4]
     return str(repo_root / "fraud_source" / "image_fraud")
@@ -90,6 +95,7 @@ class Settings(BaseSettings):
 
     dashscope_api_key: str | None = None
     dashscope_workspace: str | None = None
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     aliyun_asr_ws_url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
     aliyun_asr_model: str = "fun-asr-realtime"
     aliyun_asr_format: str = "pcm"
@@ -116,6 +122,48 @@ class Settings(BaseSettings):
     rag_embedding_api_url: str = "https://api.openai.com/v1/embeddings"
     rag_embedding_api_key: str | None = None
     rag_embedding_timeout_seconds: int = 60
+    agent_enabled: bool = True
+    agent_model: str = "qwen-plus"
+    agent_max_iterations: int = 10
+    agent_text_rag_min_chars: int = 24
+    vision_planner_max_images: int = 3
+    vlm_model: str = "qwen-vl-plus"
+    ocr_provider: str = "stub"
+    baidu_ocr_api_key: str | None = None
+    baidu_ocr_secret_key: str | None = None
+    baidu_ocr_timeout_seconds: int = 20
+    baidu_ocr_language_type: str = "CHN_ENG"
+    baidu_ocr_detect_direction: bool = True
+    baidu_ocr_vertexes_location: bool = True
+    baidu_ocr_paragraph: bool = True
+    baidu_ocr_probability: bool = True
+    baidu_ocr_recognize_granularity: str = "big"
+    baidu_ocr_char_probability: bool = False
+    baidu_ocr_eng_granularity: str = "word"
+    baidu_ocr_multidirectional_recognize: bool = True
+    reverse_image_provider: str = "baidu"
+    reverse_image_timeout_seconds: int = 20
+    reverse_image_browser_timeout_ms: int = 45000
+    reverse_image_browser_headless: bool = True
+    reverse_image_browser_keep_open: bool = False
+    reverse_image_browser_executable_path: str | None = None
+    threatbook_lookup_enabled: bool = True
+    threatbook_lookup_timeout_ms: int = 45000
+    threatbook_lookup_headless: bool = True
+    threatbook_lookup_keep_open: bool = False
+    threatbook_lookup_executable_path: str | None = None
+    threatbook_storage_state_path: str = Field(default_factory=_default_threatbook_storage_state_path)
+    image_similarity_candidate_limit: int = 6
+    image_similarity_download_timeout_seconds: int = 15
+    image_similarity_download_max_bytes: int = 8 * 1024 * 1024
+    image_similarity_phash_distance_threshold: int = 10
+    image_similarity_dhash_distance_threshold: int = 12
+    image_similarity_clip_enabled: bool = True
+    image_similarity_clip_model: str = "openai/clip-vit-large-patch14"
+    image_similarity_clip_device: str = "auto"
+    image_similarity_clip_medium_threshold: float = 0.86
+    image_similarity_clip_high_threshold: float = 0.92
+    agent_timeout_seconds: int = 60
 
     detection_worker_poll_seconds: int = 5
     detection_background_on_submit: bool = True
@@ -127,6 +175,7 @@ class Settings(BaseSettings):
     detection_llm_temperature: float = 0.15
     detection_llm_max_tokens: int = 900
     detection_llm_enable_thinking: bool = False
+    detection_llm_use_structured_outputs: bool = True
     detection_retrieval_vector_top_k: int = 6
     detection_retrieval_keyword_top_k: int = 6
     detection_retrieval_black_top_k: int = 5
@@ -189,6 +238,11 @@ class Settings(BaseSettings):
     assistant_relation_memory_limit: int = 4
     expo_push_enabled: bool = True
     expo_push_api_url: str = "https://exp.host/--/api/v2/push/send"
+    langsmith_tracing: bool = False
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "lyn-agent"
+    langsmith_endpoint: str | None = None
+    langsmith_workspace_id: str | None = None
 
 
 settings = Settings()

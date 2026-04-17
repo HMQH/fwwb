@@ -5,7 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
@@ -20,10 +20,12 @@ import { DetectionPipelineCard } from "../components/DetectionPipelineCard";
 import { DetectionResultCard } from "../components/DetectionResultCard";
 import { EvidenceListCard } from "../components/EvidenceListCard";
 import { ReasoningGraphCard } from "../components/ReasoningGraphCard";
+import { SimilarImageGalleryCard } from "../components/SimilarImageGalleryCard";
 import type {
   AudioVerifyBatchJobResponse,
   DetectionJob,
   DetectionMode,
+  SimilarImageItem,
   DetectionSubmissionDetail,
   DetectionSubmitAcceptedResponse,
   PickedFile,
@@ -134,6 +136,14 @@ function formatAudioJobStatus(status: string) {
   }
 }
 
+function extractSimilarImages(input: unknown): SimilarImageItem[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return [];
+  }
+  const value = (input as { similar_images?: unknown }).similar_images;
+  return Array.isArray(value) ? (value as SimilarImageItem[]) : [];
+}
+
 function decodeDisplayFilename(name: string | null | undefined) {
   if (!name) {
     return "未命名音频";
@@ -225,6 +235,25 @@ function SectionHeader({
   );
 }
 
+function CompactActionButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={({ pressed }) => [styles.compactActionButton, pressed && styles.buttonPressed]} onPress={onPress}>
+      <View style={styles.compactActionIconWrap}>
+        <MaterialCommunityIcons name={icon} size={16} color={palette.accentStrong} />
+      </View>
+      <Text style={styles.compactActionLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function AudioBatchPanel({ batchJob }: { batchJob: AudioVerifyBatchJobResponse }) {
   return (
     <View style={styles.sectionCard}>
@@ -293,7 +322,9 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
   const { token, refreshCurrentUser } = useAuth();
   const config = modeConfig[mode];
+  const isTextMode = mode === "text";
   const isAudioMode = mode === "audio";
+  const isVisualMode = mode === "visual";
 
   const [textContent, setTextContent] = useState("");
   const [textFiles, setTextFiles] = useState<AppendixItem[]>([]);
@@ -303,6 +334,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [relations, setRelations] = useState<RelationProfileSummary[]>([]);
   const [relationsLoading, setRelationsLoading] = useState(false);
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
+  const [relationPickerVisible, setRelationPickerVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [matchingImageBank, setMatchingImageBank] = useState(false);
   const [activeJob, setActiveJob] = useState<DetectionJob | null>(null);
@@ -393,6 +425,33 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     }
   }, [ingestAssets]);
 
+  const takePhoto = useCallback(async () => {
+    if (Platform.OS === "web") {
+      Alert.alert("当前平台受限", "请在移动端拍照上传");
+      return;
+    }
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("需要相机权限", "请先开启相机权限");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (!result.canceled && result.assets.length) {
+      ingestAssets(
+        result.assets.map((asset) => ({
+          uri: asset.uri,
+          name: asset.fileName ?? "camera-image.jpg",
+          mimeType: asset.mimeType ?? "image/jpeg",
+        })),
+        "image",
+        setImageFiles,
+      );
+    }
+  }, [ingestAssets]);
+
   const pickVideos = useCallback(async () => {
     if (Platform.OS === "web") {
       Alert.alert("当前平台受限", "请在移动端选择视频");
@@ -422,8 +481,11 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   }, [ingestAssets]);
 
   const hasPayload = useMemo(() => {
+    if (isVisualMode) {
+      return imageFiles.length > 0 || videoFiles.length > 0;
+    }
     return Boolean(textContent.trim()) || textFiles.length > 0 || audioFiles.length > 0 || imageFiles.length > 0 || videoFiles.length > 0;
-  }, [audioFiles.length, imageFiles.length, textContent, textFiles.length, videoFiles.length]);
+  }, [audioFiles.length, imageFiles.length, isVisualMode, textContent, textFiles.length, videoFiles.length]);
 
   const selectedRelation = useMemo(
     () => relations.find((item) => item.id === selectedRelationId) ?? null,
@@ -431,10 +493,14 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   );
 
   const audioVerifyBusy = audioVerifyBatchJob?.status === "pending" || audioVerifyBatchJob?.status === "running";
-  const materialCount = textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
+  const materialCount = isVisualMode
+    ? imageFiles.length + videoFiles.length
+    : textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
   const canImageLibraryMatch = !isAudioMode && config.allow.image && imageFiles.length > 0;
   const isBusy = submitting || matchingImageBank || audioVerifyBusy;
   const canSubmit = isAudioMode ? audioFiles.length > 0 && !isBusy : hasPayload && !isBusy;
+  const visualSelectionCount = imageFiles.length + videoFiles.length;
+  const submitButtonLabel = isAudioMode ? "开始识别" : isVisualMode ? "开始综合识别" : "开始检测";
 
   const resetForm = useCallback(() => {
     setTextContent("");
@@ -475,7 +541,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     }
   }, [activeSubmissionId, token]);
 
-  const consumeFloatingCapture = useCallback(async () => {
+  const consumeFloatingCapture = useCallback(async (options?: { showImportedAlert?: boolean; showEmptyAlert?: boolean }) => {
     if (!config.allow.image) {
       return;
     }
@@ -493,6 +559,9 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
     const captured = await floatingCaptureService.consumePendingCapture();
     if (!captured) {
+      if (options?.showEmptyAlert) {
+        Alert.alert("暂无悬浮截图", "请先通过悬浮截图助手获取图片");
+      }
       return;
     }
 
@@ -503,7 +572,9 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       return [...prev, { ...captured, key: nextKey() }];
     });
 
-    Alert.alert("截图已加入", "可直接开始检测");
+    if (options?.showImportedAlert ?? true) {
+      Alert.alert("截图已加入", "可直接开始检测");
+    }
   }, [config.allow.image]);
 
   const loadRelations = useCallback(async () => {
@@ -527,7 +598,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
   useFocusEffect(
     useCallback(() => {
-      void consumeFloatingCapture();
+      void consumeFloatingCapture({ showImportedAlert: false });
       if (!isAudioMode) {
         void loadRelations();
       }
@@ -616,6 +687,15 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setSubmitting(true);
     try {
       const response = await detectionsApi.submit(token, formData);
+      if (isTextMode) {
+        resetForm();
+        setRelationPickerVisible(false);
+        router.replace({
+          pathname: "/records/[id]",
+          params: { id: response.submission.id },
+        });
+        return;
+      }
       applySubmitResponse(response);
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "提交失败";
@@ -623,7 +703,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     } finally {
       setSubmitting(false);
     }
-  }, [applySubmitResponse, audioFiles, hasPayload, imageFiles, isAudioMode, selectedRelationId, textContent, textFiles, token, videoFiles]);
+  }, [applySubmitResponse, audioFiles, hasPayload, imageFiles, isAudioMode, isTextMode, resetForm, router, selectedRelationId, textContent, textFiles, token, videoFiles]);
 
   const handleRerun = useCallback(async () => {
     if (!token || !activeSubmissionId) {
@@ -702,6 +782,197 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
     return () => clearTimeout(timer);
   }, [audioVerifyBatchJob, token]);
+
+  if (isTextMode) {
+    return (
+      <View style={styles.root}>
+        <View style={styles.backgroundOrbTop} />
+        <View style={styles.backgroundOrbBottom} />
+        <SafeAreaView style={styles.safeArea} edges={["top"]}>
+          <View style={styles.textModeShell}>
+            <View style={styles.textModeHeader}>
+              <Pressable
+                style={({ pressed }) => [styles.textModeBackButton, pressed && styles.buttonPressed]}
+                onPress={() => router.replace("/")}
+              >
+                <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
+              </Pressable>
+
+              <View style={styles.textModeTitleWrap}>
+                <View style={styles.textModeTitleIcon}>
+                  <MaterialCommunityIcons name={config.icon} size={18} color={palette.accentStrong} />
+                </View>
+                <Text style={styles.textModeTitle}>{config.title}</Text>
+              </View>
+
+              <View style={styles.textModeHeaderSpacer} />
+            </View>
+
+            <View style={styles.textModeCanvas}>
+              <View style={styles.textModeEditorCard}>
+                <View style={styles.textModeEditorHeader}>
+                  <Text style={styles.textModeEditorTitle}>文本填写</Text>
+                  <View style={styles.textModeQuickActions}>
+                    <CompactActionButton
+                      icon="account-outline"
+                      label="关联对象"
+                      onPress={() => setRelationPickerVisible(true)}
+                    />
+                    <CompactActionButton
+                      icon="paperclip"
+                      label="上传附件"
+                      onPress={() => void pickDocumentsForSlot("text", setTextFiles)}
+                    />
+                  </View>
+                </View>
+
+                {(selectedRelation || textFiles.length > 0) ? (
+                  <View style={styles.textModeMetaRow}>
+                    {selectedRelation ? (
+                      <View style={styles.textModeMetaChip}>
+                        <MaterialCommunityIcons name="account-check-outline" size={14} color={palette.accentStrong} />
+                        <Text style={styles.textModeMetaText} numberOfLines={1}>
+                          {selectedRelation.name}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {textFiles.length > 0 ? (
+                      <View style={styles.textModeMetaChip}>
+                        <MaterialCommunityIcons name="file-document-outline" size={14} color={palette.accentStrong} />
+                        <Text style={styles.textModeMetaText} numberOfLines={1}>
+                          {`已附 ${textFiles.length} 个附件`}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                <TextInput
+                  style={styles.textModeTextArea}
+                  placeholder="粘贴聊天、转账话术、验证码内容"
+                  placeholderTextColor={palette.inkSoft}
+                  value={textContent}
+                  onChangeText={setTextContent}
+                  multiline
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.textModeSubmitButton,
+                  pressed && canSubmit && styles.buttonPressed,
+                  !canSubmit && styles.submitDisabled,
+                ]}
+                onPress={() => void handleSubmit()}
+                disabled={!canSubmit}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={palette.inkInverse} />
+                ) : (
+                  <Text style={styles.textModeSubmitText}>开始检测</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </SafeAreaView>
+
+        <Modal
+          transparent
+          visible={relationPickerVisible}
+          animationType="fade"
+          onRequestClose={() => setRelationPickerVisible(false)}
+        >
+          <View style={styles.relationModalRoot}>
+            <Pressable style={styles.relationModalBackdrop} onPress={() => setRelationPickerVisible(false)} />
+            <View style={styles.relationModalCard}>
+              <View style={styles.relationModalHeader}>
+                <Text style={styles.relationModalTitle}>选择关联对象</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.relationModalCloseButton, pressed && styles.buttonPressed]}
+                  onPress={() => setRelationPickerVisible(false)}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color={palette.inkSoft} />
+                </Pressable>
+              </View>
+
+              <ScrollView
+                style={styles.relationModalList}
+                contentContainerStyle={styles.relationModalListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <Pressable
+                  onPress={() => {
+                    setSelectedRelationId(null);
+                    setRelationPickerVisible(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.relationModalItem,
+                    !selectedRelationId && styles.relationModalItemActive,
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text style={[styles.relationModalItemTitle, !selectedRelationId && styles.relationModalItemTitleActive]}>
+                    不关联
+                  </Text>
+                  <Text style={[styles.relationModalItemMeta, !selectedRelationId && styles.relationModalItemMetaActive]}>
+                    仅按文本内容检测
+                  </Text>
+                </Pressable>
+
+                {relations.length ? (
+                  relations.map((relation) => {
+                    const active = selectedRelationId === relation.id;
+                    const meta = relationTypeMeta[relation.relation_type];
+                    return (
+                      <Pressable
+                        key={relation.id}
+                        onPress={() => {
+                          setSelectedRelationId(relation.id);
+                          setRelationPickerVisible(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.relationModalItem,
+                          active && styles.relationModalItemActive,
+                          pressed && styles.buttonPressed,
+                        ]}
+                      >
+                        <Text style={[styles.relationModalItemTitle, active && styles.relationModalItemTitleActive]}>
+                          {relation.name}
+                        </Text>
+                        <Text style={[styles.relationModalItemMeta, active && styles.relationModalItemMetaActive]}>
+                          {meta?.label ?? "对象"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <View style={styles.relationModalEmpty}>
+                    {relationsLoading ? (
+                      <ActivityIndicator size="small" color={palette.accentStrong} />
+                    ) : (
+                      <Text style={styles.relationModalEmptyText}>暂无关联对象</Text>
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+
+              <Pressable
+                style={({ pressed }) => [styles.relationModalManageButton, pressed && styles.buttonPressed]}
+                onPress={() => {
+                  setRelationPickerVisible(false);
+                  router.push("/relations");
+                }}
+              >
+                <MaterialCommunityIcons name="account-cog-outline" size={16} color={palette.accentStrong} />
+                <Text style={styles.relationModalManageText}>管理对象</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -801,7 +1072,46 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             </View>
           ) : null}
 
-          {config.allow.text ? (
+          {isVisualMode ? (
+            <View style={styles.uploadSpotlightCard}>
+              <View style={styles.uploadSpotlightCopy}>
+                <Text style={styles.uploadSpotlightEyebrow}>图片识别</Text>
+                <Text style={styles.uploadSpotlightTitle}>添加识别素材</Text>
+              </View>
+
+              <View style={styles.visualActionGrid}>
+                <Pressable style={({ pressed }) => [styles.visualActionButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
+                  <MaterialCommunityIcons name="image-multiple-outline" size={20} color={palette.accentStrong} />
+                  <Text style={styles.visualActionTitle}>相册导入</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.visualActionButton, pressed && styles.buttonPressed]} onPress={() => void takePhoto()}>
+                  <MaterialCommunityIcons name="camera-outline" size={20} color={palette.accentStrong} />
+                  <Text style={styles.visualActionTitle}>拍照上传</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.visualActionButton, pressed && styles.buttonPressed]}
+                  onPress={() => void consumeFloatingCapture({ showImportedAlert: true, showEmptyAlert: true })}
+                >
+                  <MaterialCommunityIcons name="cellphone-screenshot" size={20} color={palette.accentStrong} />
+                  <Text style={styles.visualActionTitle}>悬浮截图</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.visualActionButton, pressed && styles.buttonPressed]}
+                  onPress={() => router.push("/detect-ai-face")}
+                >
+                  <MaterialCommunityIcons name="face-recognition" size={20} color={palette.accentStrong} />
+                  <Text style={styles.visualActionTitle}>AI换脸</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.visualSelectionBanner}>
+                <Text style={styles.visualSelectionLabel}>当前已选</Text>
+                <Text style={styles.visualSelectionValue}>{visualSelectionCount}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {!isVisualMode && config.allow.text ? (
             <View style={styles.sectionCard}>
               <SectionHeader title="核心文本" count={textContent.trim() ? 1 : 0} />
               <TextInput
@@ -816,7 +1126,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             </View>
           ) : null}
 
-          {config.allow.textFiles ? (
+          {!isVisualMode && config.allow.textFiles ? (
             <View style={styles.sectionCard}>
               <SectionHeader
                 title="文本附件"
@@ -833,30 +1143,29 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           ) : null}
 
           {config.allow.image ? (
-            <View style={styles.sectionCard}>
-              <SectionHeader
-                title="图片"
-                count={imageFiles.length}
-                actions={
-                  <View style={styles.inlineButtonRow}>
-                    <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
-                      <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
-                      <Text style={styles.addButtonText}>相册</Text>
-                    </Pressable>
-                    {mode === "visual" ? (
-                      <Pressable
-                        style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
-                        onPress={() => router.push("/detect-ai-face")}
-                      >
-                        <MaterialCommunityIcons name="face-recognition" size={16} color={palette.accentStrong} />
-                        <Text style={styles.addButtonText}>AI换脸</Text>
+            isVisualMode ? (
+              <View style={styles.sectionCard}>
+                <SectionHeader title="图片预览" count={imageFiles.length} />
+                <Text style={styles.sectionCaption}>保留关键截图即可</Text>
+                <PreviewGrid items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
+              </View>
+            ) : (
+              <View style={styles.sectionCard}>
+                <SectionHeader
+                  title="图片"
+                  count={imageFiles.length}
+                  actions={
+                    <View style={styles.inlineButtonRow}>
+                      <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickImages()}>
+                        <MaterialCommunityIcons name="image-plus-outline" size={16} color={palette.accentStrong} />
+                        <Text style={styles.addButtonText}>相册</Text>
                       </Pressable>
-                    ) : null}
-                  </View>
-                }
-              />
-              <PreviewGrid items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
-            </View>
+                    </View>
+                  }
+                />
+                <PreviewGrid items={imageFiles} onRemove={(key) => setImageFiles((prev) => prev.filter((item) => item.key !== key))} />
+              </View>
+            )
           ) : null}
 
           {config.allow.video ? (
@@ -903,31 +1212,45 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             </View>
           ) : null}
 
-          <View style={styles.commandCard}>
-            <View style={styles.commandStatsRow}>
-              <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
-              <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
-              <CountPill label="状态" value={isAudioMode && audioVerifyBatchJob ? formatAudioJobStatus(audioVerifyBatchJob.status) : "待提交"} />
-            </View>
+          <View style={[styles.commandCard, isVisualMode && styles.visualCommandCard]}>
+            {isVisualMode ? (
+              <View style={styles.visualCommandCopy}>
+                <Text style={styles.visualCommandTitle}>
+                  {visualSelectionCount > 0 ? `已准备 ${visualSelectionCount} 项素材` : "请先添加识别素材"}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.commandStatsRow}>
+                <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
+                <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
+                <CountPill label="状态" value={isAudioMode && audioVerifyBatchJob ? formatAudioJobStatus(audioVerifyBatchJob.status) : "待提交"} />
+              </View>
+            )}
             <View style={styles.commandActionColumn}>
               {config.allow.image ? (
                 <Pressable
                   style={({ pressed }) => [
-                    styles.submitButton,
+                    isVisualMode ? styles.secondaryButton : styles.submitButton,
                     pressed && !isBusy && canImageLibraryMatch && styles.buttonPressed,
                     (!canImageLibraryMatch || isBusy) && styles.submitDisabled,
                   ]}
                   onPress={() => void handleImageLibraryMatch()}
                   disabled={!canImageLibraryMatch || isBusy}
                 >
-                  <MaterialCommunityIcons name="image-search-outline" size={18} color={palette.inkInverse} />
-                  <Text style={styles.submitButtonText}>{matchingImageBank ? "比对中" : "图片库比对"}</Text>
+                  <MaterialCommunityIcons
+                    name="image-search-outline"
+                    size={18}
+                    color={isVisualMode ? palette.accentStrong : palette.inkInverse}
+                  />
+                  <Text style={[styles.submitButtonText, isVisualMode && styles.secondaryButtonText]}>
+                    {matchingImageBank ? "比对中" : "图片库比对"}
+                  </Text>
                 </Pressable>
               ) : null}
 
               <Pressable
                 style={({ pressed }) => [
-                  config.allow.image ? styles.secondaryButton : styles.submitButton,
+                  isVisualMode ? styles.submitButton : config.allow.image ? styles.secondaryButton : styles.submitButton,
                   pressed && canSubmit && styles.buttonPressed,
                   !canSubmit && styles.submitDisabled,
                 ]}
@@ -935,16 +1258,16 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 disabled={!canSubmit}
               >
                 {submitting ? (
-                  <ActivityIndicator size="small" color={config.allow.image ? palette.accentStrong : palette.inkInverse} />
+                  <ActivityIndicator size="small" color={isVisualMode || !config.allow.image ? palette.inkInverse : palette.accentStrong} />
                 ) : (
                   <>
                     <MaterialCommunityIcons
-                      name={config.allow.image ? "layers-triple-outline" : isAudioMode ? "waveform" : "arrow-right"}
+                      name={isVisualMode ? "arrow-right" : config.allow.image ? "layers-triple-outline" : isAudioMode ? "waveform" : "arrow-right"}
                       size={18}
-                      color={config.allow.image ? palette.accentStrong : palette.inkInverse}
+                      color={isVisualMode || !config.allow.image ? palette.inkInverse : palette.accentStrong}
                     />
-                    <Text style={[styles.submitButtonText, config.allow.image && styles.secondaryButtonText]}>
-                      {isAudioMode ? "开始识别" : config.allow.image ? "综合检测" : "开始检测"}
+                    <Text style={[styles.submitButtonText, !isVisualMode && config.allow.image && styles.secondaryButtonText]}>
+                      {submitButtonLabel}
                     </Text>
                   </>
                 )}
@@ -965,6 +1288,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 onRerun={activeSubmissionId ? handleRerun : undefined}
               />
               <ReasoningGraphCard result={currentResult} />
+              <SimilarImageGalleryCard items={extractSimilarImages(currentResult.result_detail)} />
               {currentResult.retrieved_evidence.length ? <EvidenceListCard title="风险参考" items={currentResult.retrieved_evidence} tone="black" /> : null}
               {currentResult.counter_evidence.length ? <EvidenceListCard title="安全参考" items={currentResult.counter_evidence} tone="white" /> : null}
               {currentResult.advice.length ? (
@@ -991,6 +1315,270 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: palette.background },
   safeArea: { flex: 1 },
+  textModeShell: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 18,
+    gap: 12,
+  },
+  textModeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 52,
+  },
+  textModeBackButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textModeTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  textModeTitleIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: palette.accentSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textModeTitle: {
+    color: palette.ink,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  textModeHeaderSpacer: {
+    width: 38,
+    height: 38,
+  },
+  textModeCanvas: {
+    flex: 1,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: palette.lineStrong,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 14,
+    ...panelShadow,
+  },
+  textModeEditorCard: {
+    flex: 1,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    gap: 12,
+  },
+  textModeEditorHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  textModeEditorTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  textModeQuickActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  compactActionButton: {
+    minHeight: 34,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  compactActionIconWrap: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  compactActionLabel: {
+    color: palette.ink,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  textModeMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  textModeMetaChip: {
+    maxWidth: "100%",
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  textModeMetaText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+    maxWidth: 220,
+  },
+  textModeTextArea: {
+    flex: 1,
+    minHeight: 0,
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: fontFamily.body,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    textAlignVertical: "top",
+  },
+  textModeSubmitButton: {
+    minHeight: 52,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.lineStrong,
+    backgroundColor: palette.accentStrong,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  textModeSubmitText: {
+    color: palette.inkInverse,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  relationModalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  relationModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(21, 42, 72, 0.28)",
+  },
+  relationModalCard: {
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+    gap: 12,
+  },
+  relationModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  relationModalTitle: {
+    color: palette.ink,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  relationModalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: palette.surfaceSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  relationModalList: {
+    maxHeight: 320,
+  },
+  relationModalListContent: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  relationModalItem: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  relationModalItemActive: {
+    backgroundColor: palette.accentStrong,
+    borderColor: palette.accentStrong,
+  },
+  relationModalItemTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  relationModalItemTitleActive: {
+    color: palette.inkInverse,
+  },
+  relationModalItemMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  relationModalItemMetaActive: {
+    color: "rgba(255,255,255,0.8)",
+  },
+  relationModalEmpty: {
+    minHeight: 96,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  relationModalEmptyText: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  relationModalManageButton: {
+    minHeight: 44,
+    borderRadius: radius.pill,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  relationModalManageText: {
+    color: palette.accentStrong,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
   backgroundOrbTop: {
     position: "absolute",
     top: -92,
@@ -1078,6 +1666,73 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
+  uploadSpotlightCard: {
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.lineStrong,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 16,
+    ...panelShadow,
+  },
+  uploadSpotlightCopy: { gap: 8 },
+  uploadSpotlightEyebrow: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+    letterSpacing: 0.2,
+  },
+  uploadSpotlightTitle: {
+    color: palette.ink,
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  visualActionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  visualActionButton: {
+    width: "48.5%",
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 8,
+  },
+  visualActionTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  visualSelectionBanner: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  visualSelectionLabel: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  visualSelectionValue: {
+    color: palette.accentStrong,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
   sectionCard: {
     borderRadius: radius.lg,
     backgroundColor: palette.surface,
@@ -1115,6 +1770,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  sectionCaption: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
     fontFamily: fontFamily.body,
   },
   textArea: {
@@ -1253,6 +1914,15 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     gap: 14,
     ...panelShadow,
+  },
+  visualCommandCard: { gap: 12 },
+  visualCommandCopy: { gap: 6 },
+  visualCommandTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
   },
   commandStatsRow: { flexDirection: "row", gap: 10 },
   commandActionColumn: { gap: 10 },

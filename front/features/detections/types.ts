@@ -143,11 +143,64 @@ export type DetectionEvidence = {
   reason: string;
 };
 
+export type EvidenceItem = {
+  skill: string;
+  title: string;
+  detail: string;
+  severity: string;
+  source_path?: string | null;
+  extra?: Record<string, unknown>;
+};
+
+export type SimilarImageItem = {
+  id: string;
+  title?: string | null;
+  source_url?: string | null;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
+  domain?: string | null;
+  provider?: string | null;
+  match_type?: string | null;
+  is_validated?: boolean;
+  clip_similarity?: number | null;
+  hash_similarity?: number | null;
+  phash_distance?: number | null;
+  dhash_distance?: number | null;
+  hash_near_duplicate?: boolean;
+  clip_high_similarity?: boolean;
+};
+
+export type DetectionQrAnalysis = {
+  payload?: string | null;
+  normalized_url?: string | null;
+  host?: string | null;
+  destination_label?: string | null;
+  destination_kind?: string | null;
+  threatbook_verdict?: string | null;
+  threatbook_summary?: string | null;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  summary?: string | null;
+  final_reason?: string | null;
+};
+
+export type SkillHit = {
+  name: string;
+  status: string;
+  triggered: boolean;
+  risk_score: number;
+  summary: string;
+  labels: string[];
+};
+
 export type DetectionModuleTraceItem = {
+  id?: string;
   key: string;
+  action?: string;
   label: string;
   status: "pending" | "running" | "completed" | "failed" | string;
   enabled?: boolean;
+  iteration?: number;
   metrics?: Record<string, number | string | null>;
   [key: string]: unknown;
 };
@@ -188,13 +241,17 @@ export type DetectionResultDetail = {
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
   used_modules?: string[];
+  execution_trace?: DetectionModuleTraceItem[];
   module_trace?: DetectionModuleTraceItem[];
+  qr_analysis?: DetectionQrAnalysis | null;
   final_score?: number | null;
   llm_used?: boolean | null;
   semantic_rule_used?: boolean | null;
   semantic_rule_model?: string | null;
   risk_evidence?: string[];
   counter_evidence?: string[];
+  similar_images?: SimilarImageItem[];
+  similar_images_count?: number | null;
   [key: string]: unknown;
 };
 
@@ -202,6 +259,7 @@ export type DetectionPipelineProgressDetail = {
   status?: string;
   current_step?: string | null;
   progress_percent?: number | null;
+  execution_trace?: DetectionModuleTraceItem[];
   module_trace?: DetectionModuleTraceItem[];
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
@@ -215,12 +273,14 @@ export type DetectionResult = {
   id: string;
   submission_id: string;
   job_id: string | null;
+  status: string;
   risk_level: "low" | "medium" | "high" | string | null;
   fraud_type: string | null;
   confidence: number | null;
   is_fraud: boolean | null;
   summary: string | null;
   final_reason: string | null;
+  risk_score: number | null;
   need_manual_review: boolean;
   stage_tags: string[];
   hit_rules: string[];
@@ -230,8 +290,12 @@ export type DetectionResult = {
   retrieved_evidence: DetectionEvidence[];
   counter_evidence: DetectionEvidence[];
   advice: string[];
+  risk_labels: string[];
+  skills_triggered: SkillHit[];
+  evidence: EvidenceItem[];
+  recommendations: string[];
   llm_model: string | null;
-  result_detail: DetectionResultDetail | Record<string, unknown> | null;
+  result_detail: DetectionResultDetail | Record<string, unknown> | unknown[] | null;
   created_at: string;
   updated_at: string;
 };

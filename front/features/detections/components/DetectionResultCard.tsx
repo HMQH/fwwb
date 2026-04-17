@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
-import type { DetectionJob, DetectionResult } from "../types";
+import type { DetectionJob, DetectionQrAnalysis, DetectionResult } from "../types";
 import { normalizeDetectionStep, pipelineStepMeta } from "../visualization";
 
 const riskMeta = {
@@ -67,6 +67,95 @@ export function getResultHeadline(
   return summary.split(/[。！!？?\n]/)[0]?.trim() || summary;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getQrAnalysis(result?: DetectionResult | null): DetectionQrAnalysis | null {
+  const detail = result?.result_detail;
+  if (!isRecord(detail)) {
+    return null;
+  }
+  if (isRecord(detail.qr_analysis)) {
+    return detail.qr_analysis as DetectionQrAnalysis;
+  }
+  const branches = isRecord(detail.branches) ? detail.branches : null;
+  const qrResult = branches && isRecord(branches.qr_result) ? branches.qr_result : null;
+  if (!qrResult) {
+    return null;
+  }
+  const evidenceItems = Array.isArray(qrResult.evidence) ? qrResult.evidence : [];
+  const firstEvidence = evidenceItems.find(isRecord);
+  const extra = firstEvidence && isRecord(firstEvidence.extra) ? firstEvidence.extra : null;
+  const raw = isRecord(qrResult.raw) ? qrResult.raw : null;
+  const threatbookItems = raw && Array.isArray(raw.threatbook) ? raw.threatbook : [];
+  const firstThreatbook = threatbookItems.find(isRecord);
+  if (!extra && !firstThreatbook && !qrResult.summary) {
+    return null;
+  }
+  return {
+    payload: String(extra?.payload ?? ""),
+    normalized_url: String(extra?.normalized_url ?? firstThreatbook?.query_url ?? ""),
+    host: String(extra?.host ?? ""),
+    destination_label: String(extra?.destination_label ?? ""),
+    destination_kind: String(extra?.destination_kind ?? ""),
+    threatbook_verdict: String(firstThreatbook?.verdict ?? ""),
+    threatbook_summary: String(firstThreatbook?.summary ?? ""),
+    risk_score: typeof qrResult.risk_score === "number" ? qrResult.risk_score : null,
+    risk_level: typeof result?.risk_level === "string" ? result.risk_level : null,
+    summary: typeof qrResult.summary === "string" ? qrResult.summary : null,
+    final_reason: typeof firstEvidence?.detail === "string" ? firstEvidence.detail : null,
+  };
+}
+
+function getQrRiskCopy(qr?: DetectionQrAnalysis | null) {
+  const verdict = String(qr?.threatbook_verdict ?? "").toLowerCase();
+  if (verdict === "malicious") {
+    return { label: "高风险", tone: "#D96A4A", soft: "#FFF0EA" };
+  }
+  if (verdict === "suspicious") {
+    return { label: "需核验", tone: "#C48A29", soft: "#FFF7E8" };
+  }
+  if (verdict === "benign") {
+    return { label: "较安全", tone: "#2E9D7F", soft: "#E9FAF4" };
+  }
+  const score = typeof qr?.risk_score === "number" ? qr.risk_score : 0;
+  if (score >= 0.5) {
+    return { label: "高风险", tone: "#D96A4A", soft: "#FFF0EA" };
+  }
+  if (score >= 0.3) {
+    return { label: "需核验", tone: "#C48A29", soft: "#FFF7E8" };
+  }
+  return { label: "低风险", tone: "#2F70E6", soft: "#EAF2FF" };
+}
+
+function compactQrPayload(value?: string | null) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "--";
+  }
+  return text.length > 72 ? `${text.slice(0, 72)}…` : text;
+}
+
+function getQrDestinationText(qr?: DetectionQrAnalysis | null) {
+  const label = String(qr?.destination_label ?? "").trim();
+  const host = String(qr?.host ?? "").trim();
+  const url = String(qr?.normalized_url ?? "").trim();
+  if (label && host) {
+    return `${label} ${host}`;
+  }
+  if (label) {
+    return label;
+  }
+  if (host) {
+    return host;
+  }
+  if (url) {
+    return compactQrPayload(url);
+  }
+  return "未识别去向";
+}
+
 export function DetectionResultCard({
   result,
   job,
@@ -126,6 +215,8 @@ export function DetectionResultCard({
   const visibleFraudType = getVisibleFraudType(result);
   const evidenceCount = result.retrieved_evidence.length;
   const counterCount = result.counter_evidence.length;
+  const qrAnalysis = getQrAnalysis(result);
+  const qrRiskCopy = getQrRiskCopy(qrAnalysis);
 
   return (
     <View style={[styles.card, compact && styles.cardCompact]}>
@@ -174,6 +265,34 @@ export function DetectionResultCard({
       ) : null}
 
       {result.final_reason ? <Text style={styles.reasonText}>{result.final_reason}</Text> : null}
+
+      {qrAnalysis ? (
+        <View style={styles.qrBlock}>
+          <View style={styles.qrHeaderRow}>
+            <Text style={styles.qrTitle}>二维码识别</Text>
+            <View style={[styles.qrPill, { backgroundColor: qrRiskCopy.soft }]}>
+              <Text style={[styles.qrPillText, { color: qrRiskCopy.tone }]}>{qrRiskCopy.label}</Text>
+            </View>
+          </View>
+
+          <View style={styles.qrInfoGrid}>
+            <View style={styles.qrInfoCard}>
+              <Text style={styles.qrInfoLabel}>二维码内容</Text>
+              <Text style={styles.qrInfoValue}>{compactQrPayload(qrAnalysis.payload)}</Text>
+            </View>
+            <View style={styles.qrInfoCard}>
+              <Text style={styles.qrInfoLabel}>识别去向</Text>
+              <Text style={styles.qrInfoValue}>{getQrDestinationText(qrAnalysis)}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.qrSummaryText}>
+            {String(qrAnalysis.summary ?? "").trim()
+              || String(qrAnalysis.threatbook_summary ?? "").trim()
+              || "已识别二维码内容，请结合去向与业务场景核验。"}
+          </Text>
+        </View>
+      ) : null}
 
       {(onOpenDetail || onRerun) && !compact ? (
         <View style={styles.actionRow}>
@@ -331,6 +450,71 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.body,
   },
   reasonText: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: fontFamily.body,
+  },
+  qrBlock: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    padding: 14,
+    gap: 12,
+  },
+  qrHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  qrTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  qrPill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  qrPillText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  qrInfoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  qrInfoCard: {
+    flex: 1,
+    minWidth: 140,
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  qrInfoLabel: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
+  },
+  qrInfoValue: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  qrSummaryText: {
     color: palette.ink,
     fontSize: 13,
     lineHeight: 20,

@@ -6,6 +6,7 @@ export { DetectionResultCard, getRiskMeta, formatConfidence, getVisibleFraudType
 export { EvidenceListCard } from "./components/EvidenceListCard";
 export { DetectionPipelineCard } from "./components/DetectionPipelineCard";
 export { ReasoningGraphCard } from "./components/ReasoningGraphCard";
+export { SimilarImageGalleryCard } from "./components/SimilarImageGalleryCard";
 export type {
   AIFaceCheckResponse,
   AIFaceFaceResult,
@@ -20,6 +21,7 @@ export type {
   DetectionSubmission,
   DetectionRuleHit,
   DetectionEvidence,
+  DetectionQrAnalysis,
   DetectionResult,
   DetectionJob,
   DetectionSubmitAcceptedResponse,
@@ -28,7 +30,10 @@ export type {
   PickedFile,
   DetectionReasoningGraph,
   DetectionModuleTraceItem,
+  EvidenceItem,
   KnownDetectionPipelineStep,
+  SimilarImageItem,
+  SkillHit,
   WebPhishingPredictRequest,
   WebPhishingPredictResponse,
   WebPhishingRiskLevel,

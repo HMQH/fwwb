@@ -86,7 +86,10 @@ export default function MainTabsLayout() {
         name="records/analytics"
         options={{ href: null, title: "数据分析", tabBarStyle: hiddenTabBarStyle }}
       />
-      <Tabs.Screen name="records/[id]" options={{ href: null, title: "检测详情" }} />
+      <Tabs.Screen
+        name="records/[id]"
+        options={{ href: null, title: "检测详情", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen
         name="uploads/index"
         options={{ href: null, title: "上传管理", tabBarStyle: hiddenTabBarStyle }}
@@ -133,7 +136,10 @@ export default function MainTabsLayout() {
         }}
       />
       <Tabs.Screen name="submit" options={{ href: null, title: "提交检测" }} />
-      <Tabs.Screen name="detect-text" options={{ href: null, title: "文本检测" }} />
+      <Tabs.Screen
+        name="detect-text"
+        options={{ href: null, title: "文本检测", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测" }} />
       <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别" }} />
       <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测" }} />

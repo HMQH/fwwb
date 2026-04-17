@@ -19,7 +19,14 @@ class ChatJsonResult:
 
 
 class ChatJsonClient:
-    def complete_json(self, *, system_prompt: str, user_prompt: str) -> ChatJsonResult:
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        output_schema: dict[str, Any] | None = None,
+        schema_name: str | None = None,
+    ) -> ChatJsonResult:
         raise NotImplementedError
 
 
@@ -43,7 +50,14 @@ class OpenAICompatibleChatJsonClient(ChatJsonClient):
         self._max_tokens = max_tokens
         self._enable_thinking = enable_thinking
 
-    def complete_json(self, *, system_prompt: str, user_prompt: str) -> ChatJsonResult:
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        output_schema: dict[str, Any] | None = None,
+        schema_name: str | None = None,
+    ) -> ChatJsonResult:
         payload = {
             "model": self._model_name,
             "messages": [
@@ -55,6 +69,15 @@ class OpenAICompatibleChatJsonClient(ChatJsonClient):
             "stream": False,
             "enable_thinking": self._enable_thinking,
         }
+        if output_schema and settings.detection_llm_use_structured_outputs:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name or "structured_output",
+                    "strict": True,
+                    "schema": output_schema,
+                },
+            }
         request = urllib.request.Request(
             self._api_url,
             data=json.dumps(payload).encode("utf-8"),
@@ -78,6 +101,9 @@ class OpenAICompatibleChatJsonClient(ChatJsonClient):
         if not isinstance(choices, list) or not choices:
             raise RuntimeError("LLM response did not include choices")
         message = choices[0].get("message") or {}
+        refusal = str(message.get("refusal") or "").strip()
+        if refusal:
+            raise RuntimeError(f"LLM refused structured output: {refusal}")
         content = message.get("content")
         if isinstance(content, list):
             raw_content = "".join(

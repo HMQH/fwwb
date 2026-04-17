@@ -25,6 +25,7 @@ from app.domain.user import repository as user_repository
 from app.domain.user import profile_memory as user_profile_memory
 from app.shared.core.config import settings
 from app.shared.db.session import SessionLocal
+from app.shared.observability.langsmith import configure_langsmith_environment, traceable, tracing_session
 from app.shared.storage.file_validation import validate_bundle_filenames
 from app.shared.storage.upload_paths import (
     allocate_batch_folder_name,
@@ -541,6 +542,19 @@ def _build_submission_snapshot(
 
 
 def _job_profile_for_submission(submission: DetectionSubmission) -> tuple[str, str, str | None]:
+    if settings.agent_enabled and (submission.image_paths or submission.audio_paths or submission.video_paths):
+        active_modalities = [
+            name
+            for name, enabled in (
+                ("text", bool(_strip(submission.text_content))),
+                ("image", bool(submission.image_paths)),
+                ("audio", bool(submission.audio_paths)),
+                ("video", bool(submission.video_paths)),
+            )
+            if enabled
+        ]
+        input_modality = "multimodal" if len(active_modalities) > 1 else (active_modalities[0] if active_modalities else "multimodal")
+        return "agent_multimodal", input_modality, settings.agent_model
     if _strip(submission.text_content):
         return "text_rag", "text", settings.detection_llm_model
     if submission.image_paths:
@@ -550,6 +564,88 @@ def _job_profile_for_submission(submission: DetectionSubmission) -> tuple[str, s
 
 def _should_process_inline(job: DetectionJob) -> bool:
     return job.job_type in {"image_fraud", "attachment_only"}
+
+
+def _should_use_agent_pipeline(submission: DetectionSubmission) -> bool:
+    return bool(settings.agent_enabled and (submission.image_paths or submission.audio_paths or submission.video_paths))
+
+
+def _load_agent_service():
+    from app.domain.agent import service as agent_service
+
+    return agent_service
+
+
+def _normalize_object_list(value: Any, *, text_key: str = "text", reason_key: str = "reason") -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+        text = _strip(str(item))
+        if text:
+            normalized.append({text_key: text, reason_key: ""})
+    return normalized
+
+
+def _build_agent_result_detail(analysis: dict[str, Any]) -> dict[str, Any]:
+    result_detail = analysis.get("result_detail")
+    normalized_detail = dict(result_detail) if isinstance(result_detail, dict) else {}
+    normalized_detail["agent_summary"] = {
+        "risk_score": analysis.get("risk_score"),
+        "risk_labels": list(analysis.get("risk_labels") or []),
+        "skills_triggered": list(analysis.get("skills_triggered") or []),
+        "evidence": _normalize_object_list(analysis.get("evidence")),
+        "recommendations": list(analysis.get("recommendations") or []),
+        "retrieval_query": analysis.get("retrieval_query"),
+        "rule_score": analysis.get("rule_score"),
+    }
+    return normalized_detail
+
+
+def _resolve_agent_rule_score(analysis: dict[str, Any], result_detail: dict[str, Any]) -> int:
+    final_score = result_detail.get("final_score")
+    if isinstance(final_score, (int, float)):
+        return max(0, min(100, round(float(final_score))))
+    risk_score = analysis.get("risk_score")
+    if isinstance(risk_score, (int, float)):
+        numeric = float(risk_score)
+        if numeric <= 1:
+            numeric *= 100
+        return max(0, min(100, round(numeric)))
+    return 0
+
+
+def _build_agent_result_row(
+    *,
+    submission: DetectionSubmission,
+    job: DetectionJob,
+    analysis: dict[str, Any],
+) -> DetectionResult:
+    result_detail = _build_agent_result_detail(analysis)
+    return DetectionResult(
+        submission_id=submission.id,
+        job_id=job.id,
+        risk_level=_strip(str(analysis.get("risk_level") or "")) or "low",
+        fraud_type=_strip(str(analysis.get("fraud_type") or "")) or None,
+        confidence=float(analysis.get("confidence") or 0.0),
+        is_fraud=bool(analysis.get("is_fraud")),
+        summary=_strip(str(analysis.get("summary") or "")) or "检测完成",
+        final_reason=_strip(str(analysis.get("final_reason") or "")) or None,
+        need_manual_review=bool(analysis.get("need_manual_review")),
+        stage_tags=[str(item).strip() for item in list(analysis.get("stage_tags") or []) if str(item).strip()],
+        hit_rules=[str(item).strip() for item in list(analysis.get("hit_rules") or []) if str(item).strip()],
+        rule_hits=_normalize_object_list(analysis.get("rule_hits")),
+        extracted_entities=dict(analysis.get("extracted_entities") or {}),
+        input_highlights=_normalize_object_list(analysis.get("input_highlights")),
+        retrieved_evidence=_normalize_object_list(analysis.get("retrieved_evidence")),
+        counter_evidence=_normalize_object_list(analysis.get("counter_evidence")),
+        advice=[str(item).strip() for item in list(analysis.get("advice") or analysis.get("recommendations") or []) if str(item).strip()],
+        llm_model=_strip(str(analysis.get("llm_model") or "")) or None,
+        result_detail=result_detail,
+    )
 
 
 def _resolve_submission_upload_path(relative_path: str) -> Path:
@@ -1228,7 +1324,9 @@ def _build_attachment_only_result(submission: DetectionSubmission, job: Detectio
     )
 
 
+@traceable(name="detection.process_job", run_type="chain")
 def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
+    configure_langsmith_environment()
     job = detection_repository.get_job(db, job_id)
     if job is None:
         raise RuntimeError(f"Detection job not found: {job_id}")
@@ -1255,6 +1353,57 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
     )
 
     try:
+        if job.job_type == "agent_multimodal" and _should_use_agent_pipeline(submission):
+            job = _set_job_progress(
+                db,
+                job,
+                status="running",
+                step="graph_reasoning",
+                percent=58,
+                extra={
+                    "submission_id": str(submission.id),
+                    "input_modality": job.input_modality,
+                    "used_modules": ["planner"],
+                },
+            )
+            try:
+                agent_service = _load_agent_service()
+                with tracing_session():
+                    analysis = agent_service.analyze_submission(db=db, submission=submission)
+            except Exception:  # noqa: BLE001
+                logger.exception("Agent detection failed, fallback to legacy pipeline: submission=%s", submission.id)
+            else:
+                if not isinstance(analysis, dict):
+                    raise RuntimeError("Agent detection did not return a structured payload")
+                result_row = _build_agent_result_row(
+                    submission=submission,
+                    job=job,
+                    analysis=analysis,
+                )
+                _persist_result_side_effects(db, submission=submission, result_row=result_row)
+
+                result_detail = result_row.result_detail if isinstance(result_row.result_detail, dict) else {}
+                job.rule_score = _resolve_agent_rule_score(analysis, result_detail)
+                job.retrieval_query = _strip(str(analysis.get("retrieval_query") or "")) or None
+                job.llm_model = result_row.llm_model or settings.agent_model or settings.detection_llm_model
+                job.finished_at = _utcnow()
+                job = _set_job_progress(
+                    db,
+                    job,
+                    status="completed",
+                    step="finalize",
+                    percent=100,
+                    extra={
+                        "used_modules": result_detail.get("used_modules", []),
+                        "reasoning_path": result_detail.get("reasoning_path", []),
+                        "execution_trace": result_detail.get("execution_trace", []),
+                        "module_trace": result_detail.get("module_trace", []),
+                        "final_score": result_detail.get("final_score"),
+                        "reasoning_graph": result_detail.get("reasoning_graph"),
+                    },
+                )
+                return job
+
         if not _strip(submission.text_content):
             if submission.image_paths:
                 job = _set_job_progress(
