@@ -9,10 +9,8 @@ from sqlalchemy.orm import Session
 from app.domain.uploads.entity import UserUpload
 
 
-
 def _user_upload_stmt() -> Select[tuple[UserUpload]]:
     return select(UserUpload)
-
 
 
 def get_for_user(
@@ -28,7 +26,6 @@ def get_for_user(
         .limit(1)
     )
     return db.execute(stmt).scalars().first()
-
 
 
 def get_by_batch_type(
@@ -48,7 +45,6 @@ def get_by_batch_type(
     return db.execute(stmt).scalars().first()
 
 
-
 def list_for_user(
     db: Session,
     *,
@@ -63,6 +59,20 @@ def list_for_user(
     )
     return list(db.execute(stmt).scalars().all())
 
+
+def list_for_user_by_type(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    upload_type: str,
+) -> list[UserUpload]:
+    stmt = (
+        _user_upload_stmt()
+        .where(UserUpload.user_id == user_id)
+        .where(UserUpload.upload_type == upload_type)
+        .order_by(UserUpload.created_at.desc(), UserUpload.updated_at.desc())
+    )
+    return list(db.execute(stmt).scalars().all())
 
 
 def list_by_ids_for_user(

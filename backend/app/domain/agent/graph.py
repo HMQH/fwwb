@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Callable
+from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 
@@ -20,7 +20,38 @@ from app.domain.agent.skills.text_rag_skill import run_text_rag_skill
 from app.domain.agent.state import AgentState
 
 
-def _mark_completed(state: AgentState, action_name: str) -> AgentState:
+def _emit_progress(
+    state: AgentState,
+    *,
+    phase: str,
+    current_action: str,
+    trace: list[dict[str, Any]],
+    completed_actions: list[str] | None = None,
+    action_instance_counter: int | None = None,
+) -> None:
+    callback = state.get("progress_callback")
+    if not callable(callback):
+        return
+    callback(
+        {
+            "phase": phase,
+            "current_action": current_action,
+            "execution_trace": trace,
+            "selected_skills": list(state.get("selected_skills") or []),
+            "pending_actions": list(state.get("pending_actions") or []),
+            "completed_actions": list(completed_actions if completed_actions is not None else (state.get("completed_actions") or [])),
+            "followup_actions": list(state.get("followup_actions") or []),
+            "execution_plan": list(state.get("execution_plan") or []),
+            "iteration_count": int(state.get("iteration_count") or 0),
+            "max_iterations": int(state.get("max_iterations") or 0),
+            "requires_followup": bool(state.get("requires_followup")),
+            "stop_reason": state.get("stop_reason"),
+            "action_instance_counter": action_instance_counter if action_instance_counter is not None else int(state.get("action_instance_counter") or 0),
+        }
+    )
+
+
+def _mark_completed(state: AgentState, action_name: str, *, status: str = "completed") -> AgentState:
     completed = list(state.get("completed_actions") or [])
     if action_name not in completed:
         completed.append(action_name)
@@ -31,6 +62,7 @@ def _mark_completed(state: AgentState, action_name: str) -> AgentState:
             sequence=sequence,
             action_name=action_name,
             iteration=int(state.get("iteration_count") or sequence),
+            status=status,
         )
     )
     return {
@@ -43,8 +75,37 @@ def _mark_completed(state: AgentState, action_name: str) -> AgentState:
 
 def _wrap_action(action_name: str, func: Callable[[AgentState], dict[str, object]]) -> Callable[[AgentState], AgentState]:
     def _runner(state: AgentState) -> AgentState:
+        sequence = int(state.get("action_instance_counter") or 0) + 1
+        running_trace = list(state.get("execution_trace") or [])
+        running_trace.append(
+            build_execution_trace_item(
+                sequence=sequence,
+                action_name=action_name,
+                iteration=int(state.get("iteration_count") or sequence),
+                status="running",
+            )
+        )
+        _emit_progress(
+            state,
+            phase="action_started",
+            current_action=action_name,
+            trace=running_trace,
+        )
         payload = dict(func(state) or {})
-        payload.update(_mark_completed(state, action_name))
+        trace_action_name = str(payload.pop("_trace_action_name", action_name) or action_name).strip() or action_name
+        trace_status = str(payload.pop("_trace_status", "completed") or "completed").strip() or "completed"
+        completed_state = _mark_completed(state, trace_action_name, status=trace_status)
+        payload.update(completed_state)
+        merged_state = dict(state)
+        merged_state.update(payload)
+        _emit_progress(
+            merged_state,
+            phase="action_completed",
+            current_action=trace_action_name,
+            trace=list(completed_state.get("execution_trace") or []),
+            completed_actions=list(completed_state.get("completed_actions") or []),
+            action_instance_counter=int(completed_state.get("action_instance_counter") or sequence),
+        )
         return payload
 
     return _runner

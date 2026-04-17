@@ -52,13 +52,13 @@ def run_conflict_resolver(state: AgentState) -> dict[str, object]:
     result = SkillResult(
         name="conflict_resolver",
         status="completed",
-        summary="No branch conflict required a dedicated resolution step.",
+        summary="当前没有发现需要单独处理的分支冲突。",
         raw={},
     )
 
     if not isinstance(text_skill, dict) or not text_skill:
         result.status = "skipped"
-        result.summary = "Conflict resolver was skipped because the text branch did not run."
+        result.summary = "文字分支未运行，因此跳过冲突复核。"
         return {"conflict_resolution_result": result.to_dict()}
 
     raw = text_skill.get("raw") if isinstance(text_skill.get("raw"), dict) else {}
@@ -84,12 +84,12 @@ def run_conflict_resolver(state: AgentState) -> dict[str, object]:
 
     if has_conflict:
         result.labels = ["branch_conflict_detected", f"text_{text_level}", f"image_{image_level}"]
-        result.summary = "The text branch and image branch produced materially different risk judgments, so the case should be resolved conservatively."
+        result.summary = "文字分支与图像分支结论差异较大，已按更保守的方式收束。"
         result.evidence.append(
             EvidenceItem(
                 skill="conflict_resolver",
-                title="Branch disagreement",
-                detail=f"Text branch={text_level} ({text_score:.2f}), image branch={image_level} ({image_score:.2f}).",
+                title="分支结论不一致",
+                detail=f"文字分支 {text_level}（{text_score:.2f}），图像分支 {image_level}（{image_score:.2f}）。",
                 severity="warning",
             )
         )
@@ -101,6 +101,6 @@ def run_conflict_resolver(state: AgentState) -> dict[str, object]:
         )
     else:
         result.labels = ["branch_conflict_not_found"]
-        result.summary = "The text and image branches are broadly aligned, so no extra conflict handling is needed."
+        result.summary = "文字分支与图像分支整体一致，无需额外冲突处理。"
 
     return {"conflict_resolution_result": result.to_dict()}

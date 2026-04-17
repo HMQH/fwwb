@@ -34,18 +34,18 @@ def run_image_similarity_verifier(state: AgentState) -> dict[str, object]:
     result = SkillResult(
         name="image_similarity_verifier",
         status="completed",
-        summary="No reverse-image similarity evidence was available for second-pass verification.",
+        summary="当前没有可用于二次复核的反向搜图相似线索。",
         raw={"source": "impersonation_checker"},
     )
 
     if raw is None:
         result.status = "skipped"
-        result.summary = "Image similarity verifier was skipped because impersonation analysis has not run yet."
+        result.summary = "盗图冒充初筛尚未运行，因此跳过本地相似度复核。"
         return {"image_similarity_result": result.to_dict()}
 
     if not isinstance(validation, dict):
         result.status = "skipped"
-        result.summary = "Reverse-image matches exist, but no local similarity metrics could be produced."
+        result.summary = "虽然存在反向搜图候选，但当前未生成本地相似度指标。"
         result.raw["reverse_image_matches"] = list(raw.get("matches") or [])[:5]
         return {"image_similarity_result": result.to_dict()}
 
@@ -87,13 +87,13 @@ def run_image_similarity_verifier(state: AgentState) -> dict[str, object]:
     result.labels = labels
 
     if cross_site_high_similarity_count >= 1 and (hash_near_duplicate_count > 0 or clip_high_similarity_count > 0):
-        result.summary = "Second-pass similarity verification confirmed that the uploaded image is highly similar to public web images."
+        result.summary = "本地相似度复核确认上传图片与公开网页图片高度相似。"
         result.recommendations.append("把这张图视为高风险复用素材，不要单独把它当成真人/官方凭证。")
     elif validated_matches:
-        result.summary = "Second-pass similarity verification found reusable public matches, but the evidence is weaker than a near-duplicate hit."
+        result.summary = "本地相似度复核发现了可复用的公开来源，但证据强度弱于近同图命中。"
         result.recommendations.append("需要结合聊天内容、账号资料和时间上下文一起判断图片是否被冒用。")
     else:
-        result.summary = "Reverse-image search returned candidates, but the second-pass similarity layer did not confirm a strong match."
+        result.summary = "反向搜图返回了候选来源，但本地相似度复核没有确认强匹配。"
         result.recommendations.append("目前不能仅凭百度搜图结果认定为盗图，建议再结合账号行为与其他证据。")
 
     result.recommendations.append("优先查看最高相似来源是否来自社交平台、公开图库或历史新闻页面。")
@@ -110,14 +110,14 @@ def run_image_similarity_verifier(state: AgentState) -> dict[str, object]:
         if item.get("dhash_distance") is not None:
             metric_parts.append(f"dHash={int(item.get('dhash_distance') or 0)}")
         if item.get("clip_similarity") is not None:
-            metric_parts.append(f"CLIP={float(item.get('clip_similarity')):.3f}")
+            metric_parts.append(f"向量相似={float(item.get('clip_similarity')):.3f}")
         if metric_parts:
             detail_parts.append(" / ".join(metric_parts))
         result.evidence.append(
             EvidenceItem(
                 skill="image_similarity_verifier",
-                title="Verified similar image",
-                detail=" | ".join(detail_parts) or "A validated similar image was found.",
+                title="已确认相似图片",
+                detail=" | ".join(detail_parts) or "已发现并确认相似图片来源。",
                 severity="warning",
                 source_path=str(item.get("source_path") or "") or None,
                 extra={
@@ -131,16 +131,16 @@ def run_image_similarity_verifier(state: AgentState) -> dict[str, object]:
     if not validated_matches and raw.get("matches"):
         strongest_domain = str(strongest_match.get("domain") or "").strip()
         strongest_clip = strongest_match.get("clip_similarity")
-        strongest_parts = [f"strongest local hash similarity is {max_hash_similarity:.3f}"]
+        strongest_parts = [f"最高本地哈希相似度 {max_hash_similarity:.3f}"]
         if isinstance(strongest_clip, (int, float)):
-            strongest_parts.append(f"CLIP similarity is {float(strongest_clip):.3f}")
+            strongest_parts.append(f"向量相似度 {float(strongest_clip):.3f}")
         if strongest_domain:
-            strongest_parts.append(f"top source domain: {strongest_domain}")
+            strongest_parts.append(f"候选来源域名：{strongest_domain}")
         result.evidence.append(
             EvidenceItem(
                 skill="image_similarity_verifier",
-                title="Unconfirmed reverse-image candidates",
-                detail="; ".join(strongest_parts) + ".",
+                title="未确认的候选来源",
+                detail="；".join(strongest_parts) + "。",
                 severity="info",
             )
         )

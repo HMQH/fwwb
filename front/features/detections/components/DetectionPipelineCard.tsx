@@ -6,6 +6,7 @@ import Animated, { FadeInDown, FadeOutUp } from "react-native-reanimated";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
+import { formatRiskScore, getResultRiskScore } from "../displayText";
 import type { DetectionJob, DetectionResult, KnownDetectionPipelineStep } from "../types";
 import {
   buildDetectionModuleTrace,
@@ -93,7 +94,6 @@ export function DetectionPipelineCard({
   const metrics = useMemo(() => {
     const graphMetrics =
       resultDetail?.reasoning_graph?.summary_metrics ?? progressDetail?.reasoning_graph?.summary_metrics;
-    const finalScore = resultDetail?.final_score ?? progressDetail?.final_score;
     const signalCount =
       typeof graphMetrics?.signal_count === "number" ? graphMetrics.signal_count : undefined;
     const riskBasisCount =
@@ -111,7 +111,7 @@ export function DetectionPipelineCard({
 
     return [
       { label: "进度", value: `${progress}%` },
-      ...(typeof finalScore === "number" ? [{ label: "评分", value: String(Math.round(finalScore)) }] : []),
+      ...(getResultRiskScore(result) !== null ? [{ label: "风险评分", value: formatRiskScore(getResultRiskScore(result)) }] : []),
       ...(typeof riskBasisCount === "number" ? [{ label: "可疑", value: String(riskBasisCount) }] : []),
       ...(typeof counterBasisCount === "number" ? [{ label: "降险", value: String(counterBasisCount) }] : []),
       ...(typeof blackCount === "number" && typeof counterBasisCount !== "number"
@@ -123,10 +123,8 @@ export function DetectionPipelineCard({
     ].slice(0, 4);
   }, [
     progress,
-    progressDetail?.final_score,
     progressDetail?.reasoning_graph?.summary_metrics,
     result,
-    resultDetail?.final_score,
     resultDetail?.reasoning_graph?.summary_metrics,
   ]);
 

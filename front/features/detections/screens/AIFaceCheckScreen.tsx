@@ -303,6 +303,16 @@ export function AIFaceCheckScreen() {
               <Text style={styles.metaValue}>{result?.stored_file_path ? "已入库" : "--"}</Text>
             </View>
           </View>
+
+          {result?.submission_id ? (
+            <Pressable
+              style={({ pressed }) => [styles.recordBtn, pressed && styles.pressed]}
+              onPress={() => router.push({ pathname: "/records/[id]", params: { id: result.submission_id! } })}
+            >
+              <MaterialCommunityIcons name="history" size={16} color={palette.accentStrong} />
+              <Text style={styles.recordBtnText}>查看记录</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {result ? (
@@ -543,6 +553,23 @@ const styles = StyleSheet.create({
   },
   disabledBtn: {
     opacity: 0.7,
+  },
+  recordBtn: {
+    minHeight: 42,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  recordBtnText: {
+    color: palette.accentStrong,
+    fontFamily: fontFamily.body,
+    fontSize: 13,
+    fontWeight: "700",
   },
   pressed: {
     opacity: 0.86,

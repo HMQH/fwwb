@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -13,11 +14,11 @@ import android.media.audiofx.NoiseSuppressor
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.telephony.TelephonyManager
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.core.os.bundleOf
 import java.io.File
 import java.io.RandomAccessFile
@@ -30,6 +31,7 @@ class FraudRecordingService : Service() {
     private const val TAG = "FraudRecordingService"
     const val ACTION_START = "fraud.action.START_RECORDING"
     const val ACTION_STOP = "fraud.action.STOP_RECORDING"
+    const val ACTION_CALL_CONNECTED = "fraud.action.CALL_CONNECTED"
     const val EXTRA_CALL_ID = "callId"
     const val EXTRA_RISK_LEVEL = "riskLevel"
     const val EXTRA_PHONE_NUMBER = "phoneNumber"
@@ -40,6 +42,10 @@ class FraudRecordingService : Service() {
 
     fun stopActiveRecording(context: Context) {
       context.startService(Intent(context, FraudRecordingService::class.java).apply { action = ACTION_STOP })
+    }
+
+    fun notifyCallConnected(context: Context) {
+      context.startService(Intent(context, FraudRecordingService::class.java).apply { action = ACTION_CALL_CONNECTED })
     }
 
     fun showRiskWarning(context: Context, level: String, text: String) {
@@ -86,7 +92,6 @@ class FraudRecordingService : Service() {
     val recorder: AudioRecord,
     val bufferSize: Int,
     val sourceName: String,
-    val prefersCallAudio: Boolean,
   )
 
   @Volatile
@@ -104,7 +109,8 @@ class FraudRecordingService : Service() {
   private var totalDurationMs: Long = 0L
   private var chunkSeq: Int = 0
   private var activeSourceName: String = "mic"
-  private var prefersCallAudioCapture: Boolean = false
+  private var callConnected: Boolean = false
+  private var speakerphoneForced: Boolean = false
   private var acousticEchoCanceler: AcousticEchoCanceler? = null
   private var noiseSuppressor: NoiseSuppressor? = null
   private var automaticGainControl: AutomaticGainControl? = null
@@ -118,8 +124,18 @@ class FraudRecordingService : Service() {
         riskLevel = intent.getStringExtra(EXTRA_RISK_LEVEL) ?: "low"
         phoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER)
         showOverlayWhileRecording = intent.getBooleanExtra(EXTRA_SHOW_OVERLAY, showOverlayWhileRecording)
+        callConnected = isCallCurrentlyActive()
         if (!workerRunning) {
           startRecording()
+        }
+      }
+
+      ACTION_CALL_CONNECTED -> {
+        callConnected = true
+        if (workerRunning) {
+          configureAudioRouteForCurrentState()
+          updateRecordingNotification()
+          emitStatus("recording", "call_connected")
         }
       }
 
@@ -135,15 +151,16 @@ class FraudRecordingService : Service() {
 
   private fun startRecording() {
     FraudNotificationHelper.ensureChannels(this)
+    configureAudioRouteForCurrentState()
     val recorderSetup = createRecorderSetup()
     if (recorderSetup == null) {
       emitStatus("stopped", "recorder_unavailable")
+      restoreAudioRoute()
       stopSelf()
       return
     }
 
     activeSourceName = recorderSetup.sourceName
-    prefersCallAudioCapture = recorderSetup.prefersCallAudio
     startForeground(
       FraudNotificationHelper.RECORDING_NOTIFICATION_ID,
       createRecordingNotification()
@@ -166,20 +183,26 @@ class FraudRecordingService : Service() {
       }
       audioRecord = null
       emitStatus("stopped", "recorder_start_failed")
+      restoreAudioRoute()
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()
       return
     }
     emitStatus("recording")
+    updateRecordingNotification()
 
     if (showOverlayWhileRecording && FraudCallDetectionHelper.canDrawOverlays(this)) {
       FraudOverlayController.showRecordingOverlay(this, callId, riskLevel, phoneNumber)
     }
 
+    startWorker(recorderSetup)
+  }
+
+  private fun startWorker(recorderSetup: RecorderSetup) {
     workerThread = thread(start = true, name = "fraud-recording-worker") {
       val buffer = ByteArray(recorderSetup.bufferSize)
       while (workerRunning) {
-        val read = recorder.read(buffer, 0, buffer.size)
+        val read = recorderSetup.recorder.read(buffer, 0, buffer.size)
         if (read <= 0) {
           continue
         }
@@ -195,27 +218,21 @@ class FraudRecordingService : Service() {
     val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
     val bufferSize = max(minBuffer, sampleRate)
     val candidates = listOf(
-      Triple(MediaRecorder.AudioSource.UNPROCESSED, "unprocessed", false),
-      Triple(MediaRecorder.AudioSource.VOICE_RECOGNITION, "voice_recognition", false),
-      Triple(MediaRecorder.AudioSource.MIC, "mic", false),
+      Pair(MediaRecorder.AudioSource.MIC, "mic"),
+      Pair(MediaRecorder.AudioSource.VOICE_RECOGNITION, "voice_recognition"),
+      Pair(MediaRecorder.AudioSource.UNPROCESSED, "unprocessed"),
+      Pair(MediaRecorder.AudioSource.CAMCORDER, "camcorder"),
     )
 
-    for ((source, sourceName, prefersCallAudio) in candidates) {
+    for ((source, sourceName) in candidates) {
       try {
-        val recorder = AudioRecord(
-          source,
-          sampleRate,
-          channelConfig,
-          audioFormat,
-          bufferSize,
-        )
+        val recorder = buildRecorder(source, bufferSize)
         if (recorder.state == AudioRecord.STATE_INITIALIZED) {
           configureSpeakerLeakageCapture(recorder)
           return RecorderSetup(
             recorder = recorder,
             bufferSize = bufferSize,
             sourceName = sourceName,
-            prefersCallAudio = prefersCallAudio,
           )
         }
         recorder.release()
@@ -225,6 +242,78 @@ class FraudRecordingService : Service() {
     }
 
     return null
+  }
+
+  private fun buildRecorder(source: Int, bufferSize: Int): AudioRecord {
+    val format = AudioFormat.Builder()
+      .setEncoding(audioFormat)
+      .setSampleRate(sampleRate)
+      .setChannelMask(channelConfig)
+      .build()
+
+    val builder = AudioRecord.Builder()
+      .setAudioSource(source)
+      .setAudioFormat(format)
+      .setBufferSizeInBytes(bufferSize)
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      builder.setPrivacySensitive(false)
+    }
+
+    return builder.build()
+  }
+
+  private fun isCallCurrentlyActive(): Boolean {
+    return try {
+      val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+      telephonyManager?.callState == TelephonyManager.CALL_STATE_OFFHOOK
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  private fun configureAudioRouteForCurrentState() {
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+    if (!callConnected) {
+      return
+    }
+
+    if (!audioManager.isSpeakerphoneOn) {
+      speakerphoneForced = true
+    }
+
+    try {
+      audioManager.stopBluetoothSco()
+    } catch (_: Exception) {
+    }
+    try {
+      audioManager.isBluetoothScoOn = false
+    } catch (_: Exception) {
+    }
+    try {
+      audioManager.isSpeakerphoneOn = true
+    } catch (_: Exception) {
+    }
+  }
+
+  private fun restoreAudioRoute() {
+    val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+
+    try {
+      audioManager.stopBluetoothSco()
+    } catch (_: Exception) {
+    }
+    try {
+      audioManager.isBluetoothScoOn = false
+    } catch (_: Exception) {
+    }
+    if (speakerphoneForced) {
+      try {
+        audioManager.isSpeakerphoneOn = false
+      } catch (_: Exception) {
+      }
+    }
+    speakerphoneForced = false
   }
 
   private fun configureSpeakerLeakageCapture(recorder: AudioRecord) {
@@ -282,10 +371,10 @@ class FraudRecordingService : Service() {
   }
 
   private fun createRecordingNotification(): android.app.Notification {
-    val contentText = if (prefersCallAudioCapture) {
-      "录音、转写和风险分析进行中"
+    val contentText = if (callConnected) {
+      "已自动开启免提；接通后已切换通话态录音"
     } else {
-      "请先开启免提并调高音量，当前采用免提漏声采集"
+      "等待接通；接通后将自动开启免提并切换录音"
     }
 
     return NotificationCompat.Builder(this, FraudNotificationHelper.RECORDING_CHANNEL_ID)
@@ -296,6 +385,16 @@ class FraudRecordingService : Service() {
       .setOngoing(true)
       .setContentIntent(buildLaunchPendingIntent(this, callId, riskLevel))
       .build()
+  }
+
+  private fun updateRecordingNotification() {
+    try {
+      NotificationManagerCompat.from(this).notify(
+        FraudNotificationHelper.RECORDING_NOTIFICATION_ID,
+        createRecordingNotification()
+      )
+    } catch (_: Exception) {
+    }
   }
 
   private fun prepareOutputFiles() {
@@ -373,6 +472,7 @@ class FraudRecordingService : Service() {
       }
     }
 
+    restoreAudioRoute()
     stopForeground(STOP_FOREGROUND_REMOVE)
     stopSelf()
   }
@@ -405,9 +505,12 @@ class FraudRecordingService : Service() {
         "finalFilePath" to finalWavFile?.absolutePath,
         "captureMode" to "speaker_leakage",
         "captureSource" to activeSourceName,
-        "captureHint" to "请先开启免提并调高通话音量",
+        "captureHint" to if (callConnected) {
+          "已自动开启免提；若仍无声，请手动确认扬声器已打开"
+        } else {
+          "等待接通；接通后会自动开启免提并切换录音"
+        },
         "speakerphoneRequired" to true,
-        "prefersCallAudioCapture" to prefersCallAudioCapture,
         "segmentCount" to if (finalWavFile != null) 1 else 0,
         "durationMs" to totalDurationMs
       )

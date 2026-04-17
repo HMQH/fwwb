@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.domain.agent.fraud_types import normalize_fraud_type_display
 from app.domain.agent.state import AgentState
 from app.domain.agent.types import EvidenceItem, SkillResult
 from app.domain.detection import analyzer
@@ -31,7 +32,7 @@ def _collect_text_input(state: AgentState) -> tuple[str | None, dict[str, Any]]:
 
     if ocr_text and (ocr_text != direct_text):
         if direct_text:
-            merged_parts.append(f"[OCR]\n{ocr_text}")
+            merged_parts.append(f"【图中文字】\n{ocr_text}")
             sources.append("ocr_text")
         elif (ocr_provider or "").lower() != "stub":
             merged_parts.append(ocr_text)
@@ -71,9 +72,10 @@ def _build_text_evidence(payload: dict[str, Any]) -> list[EvidenceItem]:
         chunk_text = str(item.get("chunk_text") or "").strip()
         reason = str(item.get("reason") or "").strip()
         fraud_type = str(item.get("fraud_type") or "").strip()
-        title = "RAG 命中风险样本"
+        title = "语义检索命中风险样本"
         if fraud_type:
-            title = f"RAG 命中：{fraud_type}"
+            shown = normalize_fraud_type_display(fraud_type) or fraud_type
+            title = f"语义检索命中：{shown}"
         if not chunk_text:
             continue
         evidence.append(
@@ -100,7 +102,7 @@ def run_text_rag_skill(state: AgentState) -> dict[str, object]:
         result = SkillResult(
             name="text_rag_skill",
             status="failed",
-            summary="Text RAG skill could not start because the database session is missing.",
+            summary="数据库会话缺失，无法启动文本语义检测。",
         )
         return {"text_rag_result": result.to_dict()}
 
@@ -108,17 +110,17 @@ def run_text_rag_skill(state: AgentState) -> dict[str, object]:
     result = SkillResult(
         name="text_rag_skill",
         status="completed",
-        summary="No reusable text was available for text RAG analysis.",
+        summary="当前没有可用于文本语义检测的有效文字。",
         raw={"input_meta": input_meta},
     )
 
     if not merged_text:
         if not input_meta.get("has_direct_text") and input_meta.get("has_ocr_text") and input_meta.get("ocr_provider") == "stub":
             result.status = "skipped"
-            result.summary = "Image OCR is still in stub mode, so text RAG was skipped for image-only input."
+            result.summary = "图片文字识别仍是基础模式，因此暂时跳过纯图片语义检测。"
         else:
             result.status = "skipped"
-            result.summary = "No direct text or real OCR text was available for text RAG."
+            result.summary = "当前没有直接文本或有效识别文字，无法进行文本语义检测。"
         return {"text_rag_input": None, "text_rag_result": result.to_dict()}
 
     analysis = analyzer.analyze_text_submission(session, text=merged_text)
@@ -127,7 +129,7 @@ def run_text_rag_skill(state: AgentState) -> dict[str, object]:
 
     result.triggered = True
     result.risk_score = round(confidence, 3)
-    result.summary = str(payload.get("summary") or "Text RAG produced a structured risk judgment.").strip()
+    result.summary = str(payload.get("summary") or "文本语义检测已生成结构化风险结论。").strip()
     result.labels = [f"text_rag_{str(payload.get('risk_level') or 'unknown').lower()}"]
     result.recommendations = list(payload.get("advice") or [])[:4]
     result.evidence = _build_text_evidence(payload)

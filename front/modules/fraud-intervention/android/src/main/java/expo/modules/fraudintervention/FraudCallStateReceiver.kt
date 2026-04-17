@@ -12,6 +12,11 @@ class FraudCallStateReceiver : BroadcastReceiver() {
     val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
     when (state) {
       TelephonyManager.EXTRA_STATE_RINGING -> handleIncomingRinging(context, intent)
+      TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+        if (FraudRecordingService.isRecordingActive) {
+          FraudRecordingService.notifyCallConnected(context)
+        }
+      }
       TelephonyManager.EXTRA_STATE_IDLE -> {
         if (FraudRecordingService.isRecordingActive) {
           FraudRecordingService.stopActiveRecording(context)

@@ -153,8 +153,8 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
         evidence.append(
             EvidenceItem(
                 skill="official_document_checker",
-                title="Official-style document cues",
-                detail=f"Detected title / issuer cues: {', '.join((title_hits + issuer_hits)[:4]) or joined_hints[:80]}",
+                title="公文样式线索",
+                detail=f"抬头/落款线索：{', '.join((title_hits + issuer_hits)[:4]) or joined_hints[:80]}",
                 severity="info",
             )
         )
@@ -169,13 +169,13 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
         evidence.append(
             EvidenceItem(
                 skill="official_document_checker",
-                title="Suspicious action inside official-looking notice",
-                detail=f"Detected action phrases: {', '.join(action_hits[:4])}",
+                title="公文内出现高风险动作",
+                detail=f"命中动作：{', '.join(action_hits[:4])}",
                 severity="warning",
             )
         )
         recommendations.append(
-            "Treat any official-looking notice that asks you to transfer money, download an app, or share credentials as highly suspicious."
+            "凡是要求转账、下载应用、扫码或提交账号密码的“官方通知”，都要视为高风险。"
         )
 
     if contact_hits:
@@ -184,13 +184,13 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
         evidence.append(
             EvidenceItem(
                 skill="official_document_checker",
-                title="Private contact info found",
-                detail=f"Detected personal contact / link cues: {', '.join(contact_hits[:3])}",
+                title="发现私人联系方式",
+                detail=f"命中联系方式/链接：{', '.join(contact_hits[:3])}",
                 severity="warning",
             )
         )
         recommendations.append(
-            "Use only official government or court contact channels; do not contact personal numbers, QQ, or WeChat accounts from the notice."
+            "只使用机构公开官网或热线核验，不要联系图中的私人手机号、QQ 或微信。"
         )
 
     if pressure_hits:
@@ -199,8 +199,8 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
         evidence.append(
             EvidenceItem(
                 skill="official_document_checker",
-                title="Pressure language detected",
-                detail=f"Detected urgency phrases: {', '.join(pressure_hits[:4])}",
+                title="命中施压催促语",
+                detail=f"命中催促语：{', '.join(pressure_hits[:4])}",
                 severity="warning",
             )
         )
@@ -211,8 +211,8 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
         evidence.append(
             EvidenceItem(
                 skill="official_document_checker",
-                title="Missing formal document number",
-                detail="The text looks official, but no clear case number or document number was detected.",
+                title="缺少正式文号",
+                detail="文字看起来像正式通知，但没有识别到清晰案号或文号。",
                 severity="warning",
             )
         )
@@ -224,14 +224,14 @@ def _heuristic_analysis(text: str, *, filename_hints: list[str]) -> dict[str, An
     suspicious_forgery = bool(candidate and (action_hits or contact_hits or pressure_hits or (not doc_number_hits and not date_hits)))
     if suspicious_forgery:
         labels.append("forged_official_document_suspected")
-        recommendations.append("Verify the document with the official institution's published hotline or website before taking any action.")
-        recommendations.append("Preserve the screenshot and avoid scanning codes, opening links, or paying fees until the notice is confirmed authentic.")
+        recommendations.append("在采取任何动作前，先通过机构公开热线或官网核验文书真伪。")
+        recommendations.append("先保留截图，不要扫码、点链接或缴费，确认真伪后再处理。")
 
-    summary = "No obvious suspicious formal-document cues were found."
+    summary = "未发现明显公文仿冒线索。"
     if candidate and suspicious_forgery:
-        summary = "The image appears to imitate an official document and includes suspicious cues consistent with forged notice scams."
+        summary = "图片疑似仿冒公文，并包含常见伪造通知线索。"
     elif candidate:
-        summary = "The image resembles an official notice, but only limited suspicious cues were found from the current OCR text."
+        summary = "图片看起来像正式通知，但当前识别文字中的可疑线索有限。"
 
     return {
         "candidate": candidate,
@@ -259,17 +259,14 @@ def _build_llm_payload(text: str) -> dict[str, Any] | None:
     except Exception:
         return None
 
-    system_prompt = (
-        "You review OCR text from images and decide whether it looks like a forged official document scam. "
-        "Return strict JSON only."
-    )
+    system_prompt = "你要审核图片 OCR 文本，判断它是否疑似仿冒公文骗局。只返回严格 JSON，summary 和 suspicious_points 必须使用中文。"
     user_prompt = (
-        "Analyze the OCR text below. Determine whether it appears to imitate a court summons, government notice, "
-        "administrative document, or other formal instrument, and whether it contains scam or forgery cues.\n\n"
-        "Return JSON with keys: is_official_document_candidate (bool), suspicious_forgery (bool), "
-        "doc_type (string), risk_score (0-1 number), suspicious_points (array of strings), summary (string), "
-        "labels (array of strings), need_manual_review (bool).\n\n"
-        f"OCR text:\n{text[:2400]}"
+        "请分析下面的 OCR 文本，判断它是否在模仿法院传票、政府通知、行政文书或其他正式公文，"
+        "并识别其中是否存在诈骗或伪造线索。\n\n"
+        "返回 JSON，字段必须包含：is_official_document_candidate（bool）、suspicious_forgery（bool）、"
+        "doc_type（string）、risk_score（0-1 number）、suspicious_points（array of strings）、"
+        "summary（string）、labels（array of strings）、need_manual_review（bool）。\n\n"
+        f"OCR 文本：\n{text[:2400]}"
     )
     try:
         response = client.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
@@ -325,14 +322,14 @@ def run_official_document_checker(state: AgentState) -> dict[str, object]:
             result.evidence.append(
                 EvidenceItem(
                     skill="official_document_checker",
-                    title="LLM review point",
+                    title="模型复核线索",
                     detail=point,
                     severity="warning",
                 )
             )
         if suspicious_points:
             result.recommendations.append(
-                "If the notice claims to be judicial or governmental, confirm it through the institution's official public channels rather than the contact details shown in the image."
+                "如果通知自称法院、公安或政府部门，请通过公开渠道核验，不要直接相信图片中的联系方式。"
             )
 
     result.triggered = bool(heuristic["candidate"] or result.risk_score >= 0.22)
@@ -340,10 +337,10 @@ def run_official_document_checker(state: AgentState) -> dict[str, object]:
     if isinstance(llm_payload, dict) and str(llm_payload.get("summary") or "").strip():
         result.summary = str(llm_payload.get("summary")).strip()
     elif heuristic["candidate"] and not text:
-        result.summary = "The image filename suggests it may be an official notice, but OCR text is insufficient for deeper verification."
+        result.summary = "图片文件名提示它可能是正式通知，但当前文字不足以深入核验。"
 
     if not text and not filename_hints:
-        result.summary = "No OCR text or filename hints are available for official-document analysis."
+        result.summary = "当前没有可用文字或文件名线索，暂无法完成公文核验。"
         result.triggered = False
         result.risk_score = 0.0
 

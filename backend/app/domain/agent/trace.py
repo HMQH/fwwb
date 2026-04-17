@@ -5,6 +5,7 @@ from typing import Any
 
 ACTION_LABELS: dict[str, str] = {
     "planner": "规划器",
+    "followup_router": "继续复核",
     "qr_inspector": "二维码检测",
     "ocr_phishing": "图文 OCR 检测",
     "official_document_checker": "公文仿冒检测",

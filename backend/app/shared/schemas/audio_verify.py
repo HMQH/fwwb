@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AudioVerifyResponse(BaseModel):
@@ -49,3 +49,8 @@ class AudioVerifyBatchJobResponse(AudioVerifyBatchJobSubmitResponse):
     updated_at: datetime
     completed_count: int
     failed_count: int
+
+
+class AudioVerifyUploadsSubmitRequest(BaseModel):
+    audio_paths: list[str] = Field(default_factory=list)
+    relation_profile_id: uuid.UUID | None = None

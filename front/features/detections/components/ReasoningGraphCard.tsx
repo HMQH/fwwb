@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import { formatRiskScore, getResultRiskScore } from "../displayText";
 import type { DetectionResult } from "../types";
 import { buildReasoningGraph, getResultDetail } from "../visualization";
 import { GraphCanvas } from "./GraphCanvas";
@@ -30,13 +31,8 @@ export function ReasoningGraphCard({
   const counterBasisCount = Array.isArray(detail?.counter_evidence) ? detail.counter_evidence.length : Number(graph.summary_metrics?.counter_basis_count ?? 0);
   const metrics = [
     {
-      label: "评分",
-      value:
-        typeof detail?.final_score === "number"
-          ? String(Math.round(detail.final_score))
-          : typeof result.confidence === "number"
-            ? `${Math.round(result.confidence * 100)}`
-            : "--",
+      label: "风险评分",
+      value: formatRiskScore(getResultRiskScore(result)),
     },
     {
       label: "可疑",

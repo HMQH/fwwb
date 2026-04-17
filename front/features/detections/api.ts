@@ -127,6 +127,21 @@ export const detectionsApi = {
     );
   },
 
+  submitAudioVerifyRecordFromUploads(
+    token: string,
+    input: {
+      audio_paths: string[];
+      relation_profile_id?: string | null;
+    }
+  ) {
+    return request<DetectionSubmitAcceptedResponse>(
+      "/api/detections/audio/verify/records/submit-from-uploads",
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
   getAudioVerifyJob(token: string, jobId: string) {
     return request<AudioVerifyJobResponse>(
       `/api/detections/audio/verify/jobs/${jobId}`,

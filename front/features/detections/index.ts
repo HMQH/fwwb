@@ -1,8 +1,10 @@
 export { detectionsApi, buildDetectionSubmitFormData } from "./api";
 export { DetectionModeScreen } from "./screens/DetectionModeScreen";
 export { AIFaceCheckScreen } from "./screens/AIFaceCheckScreen";
+export { SelectUploadedAudioScreen } from "./screens/SelectUploadedAudioScreen";
 export { WebPhishingScreen } from "./screens/WebPhishingScreen";
 export { DetectionResultCard, getRiskMeta, formatConfidence, getVisibleFraudType, getResultHeadline } from "./components/DetectionResultCard";
+export { formatRiskScore, getResultRiskScore, localizeFraudType, localizeRiskLevel, sanitizeDisplayText } from "./displayText";
 export { EvidenceListCard } from "./components/EvidenceListCard";
 export { DetectionPipelineCard } from "./components/DetectionPipelineCard";
 export { ReasoningGraphCard } from "./components/ReasoningGraphCard";
@@ -15,6 +17,7 @@ export type {
   AudioVerifyBatchItemResponse,
   AudioVerifyBatchJobResponse,
   AudioVerifyBatchJobSubmitResponse,
+  AudioVerifyRecordItem,
   AudioVerifyJobResponse,
   AudioVerifyJobSubmitResponse,
   AudioVerifyResponse,

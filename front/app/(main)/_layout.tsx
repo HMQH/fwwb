@@ -143,6 +143,7 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="detect-audio/select-uploaded" options={{ href: null, title: "已上传音频", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-mixed" options={{ href: null, title: "混合检测", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-web" options={{ href: null, title: "网站检测", tabBarStyle: hiddenTabBarStyle }} />
       </Tabs>
