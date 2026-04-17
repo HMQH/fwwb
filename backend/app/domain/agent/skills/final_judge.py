@@ -3,6 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from app.domain.agent.advice import build_final_advice
+from app.domain.agent.fraud_types import (
+    FRAUD_TYPE_FORGED_DOC,
+    FRAUD_TYPE_IMPERSONATION,
+    FRAUD_TYPE_PHISHING_IMAGE,
+    FRAUD_TYPE_PII,
+    FRAUD_TYPE_SUSPICIOUS_QR,
+    is_qr_fraud_type,
+    normalize_fraud_type_display,
+)
 from app.domain.agent.state import AgentState
 from app.domain.agent.trace import action_label, build_execution_trace_item, build_planner_trace_item
 from app.shared.observability.langsmith import traceable
@@ -24,15 +33,15 @@ def _level_rank(level: str | None) -> int:
 
 def _pick_image_fraud_type(labels: list[str]) -> str | None:
     if any(label.startswith("impersonation_") or label.startswith("image_similarity_") for label in labels):
-        return "impersonation_or_stolen_image"
+        return FRAUD_TYPE_IMPERSONATION
     if any(label.startswith("qr_") for label in labels):
-        return "suspicious_qr"
+        return FRAUD_TYPE_SUSPICIOUS_QR
     if any("official_doc" in label or "document_review" in label or label.startswith("forged_official_document") for label in labels):
-        return "forged_official_document"
+        return FRAUD_TYPE_FORGED_DOC
     if any(label.startswith("copy_") for label in labels):
-        return "phishing_image"
+        return FRAUD_TYPE_PHISHING_IMAGE
     if any(label.startswith("pii_") for label in labels):
-        return "sensitive_information_exposure"
+        return FRAUD_TYPE_PII
     return None
 
 
@@ -297,20 +306,28 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
     raw = qr_result.get("raw") if isinstance(qr_result.get("raw"), dict) else {}
     evidence_items = [item for item in list(qr_result.get("evidence") or []) if isinstance(item, dict)]
     decoded_matches = [item for item in list(raw.get("decoded_matches") or []) if isinstance(item, dict)]
-    threatbook_items = [item for item in list(raw.get("threatbook") or []) if isinstance(item, dict)]
+    url_prediction_items = [
+        item for item in list(raw.get("url_predictions") or raw.get("local_url_predictions") or []) if isinstance(item, dict)
+    ]
 
     first_evidence = evidence_items[0] if evidence_items else {}
     first_match = decoded_matches[0] if decoded_matches else {}
-    first_threatbook = threatbook_items[0] if threatbook_items else {}
+    first_prediction = url_prediction_items[0] if url_prediction_items else {}
     extra = first_evidence.get("extra") if isinstance(first_evidence.get("extra"), dict) else {}
 
     payload = str(extra.get("payload") or first_match.get("payload") or "").strip() or None
-    normalized_url = str(extra.get("normalized_url") or first_threatbook.get("query_url") or "").strip() or None
+    normalized_url = str(extra.get("normalized_url") or first_prediction.get("url") or "").strip() or None
     host = str(extra.get("host") or "").strip() or None
     destination_label = str(extra.get("destination_label") or "").strip() or None
     destination_kind = str(extra.get("destination_kind") or "").strip() or None
-    threatbook_verdict = str(first_threatbook.get("verdict") or "").strip().lower() or None
-    threatbook_summary = str(first_threatbook.get("summary") or "").strip() or None
+    local_risk_level = str(first_prediction.get("risk_level") or "").strip().lower() or None
+    local_model_name = str(first_prediction.get("model_name") or "").strip() or None
+    local_clues = [str(item).strip() for item in list(first_prediction.get("clues") or []) if str(item).strip()]
+    try:
+        phish_prob_raw = first_prediction.get("phish_prob")
+        phish_prob = max(0.0, min(1.0, float(phish_prob_raw))) if phish_prob_raw is not None else None
+    except (TypeError, ValueError):
+        phish_prob = None
     qr_score = float(qr_result.get("risk_score") or 0.0)
     qr_risk_level = _qr_risk_level_from_score(qr_score)
 
@@ -328,23 +345,23 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
     if normalized_url and normalized_url != payload:
         reason_parts.append(f"规范化链接：{normalized_url}")
 
-    if threatbook_verdict == "malicious":
-        summary = f"已识别二维码，指向{destination_text}，威胁情报判定为恶意，风险较高。"
-        reason_parts.append(threatbook_summary or "威胁情报显示该链接存在明确恶意风险。")
-    elif threatbook_verdict == "suspicious":
-        summary = f"已识别二维码，指向{destination_text}，威胁情报提示可疑，建议不要直接打开。"
-        reason_parts.append(threatbook_summary or "威胁情报提示该链接存在可疑跳转或诱导风险。")
-    elif threatbook_verdict == "benign":
-        summary = f"已识别二维码，指向{destination_text}，当前未发现直接恶意情报，但仍建议核验链接用途。"
-        if threatbook_summary:
-            reason_parts.append(threatbook_summary)
-    else:
-        if qr_score >= 0.5:
-            summary = f"已识别二维码，指向{destination_text}，包含较强风险线索，建议先核验再操作。"
-        elif qr_score >= 0.3:
-            summary = f"已识别二维码，指向{destination_text}，当前存在一定诱导或跳转风险，需要核验。"
-        if threatbook_summary:
-            reason_parts.append(threatbook_summary)
+    if local_risk_level == "high":
+        summary = f"已识别二维码，指向{destination_text}，本地网址模型判定为高风险。"
+    elif local_risk_level == "medium":
+        summary = f"已识别二维码，指向{destination_text}，本地网址模型判定为中风险，建议不要直接打开。"
+    elif local_risk_level == "suspicious":
+        summary = f"已识别二维码，指向{destination_text}，本地网址模型提示可疑，需要进一步核验。"
+    elif qr_score >= 0.5:
+        summary = f"已识别二维码，指向{destination_text}，包含较强风险线索，建议先核验再操作。"
+    elif qr_score >= 0.3:
+        summary = f"已识别二维码，指向{destination_text}，当前存在一定诱导或跳转风险，需要核验。"
+
+    if phish_prob is not None:
+        reason_parts.append(f"本地模型钓鱼概率：{round(phish_prob * 100)}%")
+    if local_clues:
+        reason_parts.append(f"命中线索：{'、'.join(local_clues[:4])}")
+    if local_model_name:
+        reason_parts.append("检测模型：本地网址模型")
 
     return {
         "payload": payload,
@@ -352,8 +369,10 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
         "host": host,
         "destination_label": destination_label,
         "destination_kind": destination_kind,
-        "threatbook_verdict": threatbook_verdict,
-        "threatbook_summary": threatbook_summary,
+        "local_risk_level": local_risk_level,
+        "local_model_name": local_model_name,
+        "phish_prob": round(phish_prob, 4) if phish_prob is not None else None,
+        "clues": local_clues,
         "risk_score": round(qr_score, 4),
         "risk_level": qr_risk_level,
         "summary": summary,
@@ -433,9 +452,10 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
         if _level_rank(image_level) > _level_rank(risk_level):
             risk_level = image_level
 
-        fraud_type = str(text_payload.get("fraud_type") or "").strip() or image_fraud_type
+        fraud_type = normalize_fraud_type_display(str(text_payload.get("fraud_type") or "").strip()) or image_fraud_type
         if image_fraud_type and image_max_score >= text_score + 0.12:
             fraud_type = image_fraud_type
+        fraud_type = normalize_fraud_type_display(fraud_type)
 
         summary = str(text_payload.get("summary") or "").strip() or "文本分支已完成基础判断。"
         if image_skills and evidence:
@@ -464,7 +484,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
         confidence = max(text_score, image_max_score)
     else:
         risk_level = _risk_level_from_score(final_score)
-        fraud_type = image_fraud_type
+        fraud_type = normalize_fraud_type_display(image_fraud_type)
         summary = (
             f"图像分支完成了 {len(image_skills)} 个专项检查，命中了 {len(evidence)} 条证据。"
             if evidence
@@ -496,7 +516,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
     qr_analysis = _build_qr_analysis(state)
     qr_result = state.get("qr_result")
     qr_branch_triggered = isinstance(qr_result, dict) and bool(qr_result.get("triggered"))
-    qr_branch_dominant = fraud_type == "suspicious_qr" or (qr_branch_triggered and not text_payload)
+    qr_branch_dominant = is_qr_fraud_type(fraud_type) or (qr_branch_triggered and not text_payload)
     if qr_analysis and qr_branch_dominant:
         if (not text_payload) or image_max_score >= text_score:
             summary = str(qr_analysis.get("summary") or summary)
@@ -520,6 +540,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
     )
     advice = list(advice_bundle.get("advice") or [])
     recommendations = list(advice_bundle.get("recommendations") or [])
+    trace_action_name = "followup_router" if followup_actions else "final_judge"
 
     risk_labels = list(labels)
     if text_payload:
@@ -531,7 +552,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
         *list(state.get("execution_trace") or []),
         build_execution_trace_item(
             sequence=current_sequence,
-            action_name="final_judge",
+            action_name=trace_action_name,
             iteration=int(state.get("iteration_count") or current_sequence),
         ),
     ]
@@ -603,6 +624,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
     }
 
     return {
+        "_trace_action_name": trace_action_name,
         "summary_result": {
             "status": "completed",
             "risk_level": risk_level,

@@ -3,6 +3,13 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import {
+  formatRiskScore,
+  getResultRiskScore,
+  localizeFraudType,
+  localizeRiskLevel,
+  sanitizeDisplayText,
+} from "../displayText";
 import type { DetectionJob, DetectionQrAnalysis, DetectionResult } from "../types";
 import { normalizeDetectionStep, pipelineStepMeta } from "../visualization";
 
@@ -50,7 +57,7 @@ export function getVisibleFraudType(result?: Pick<DetectionResult, "risk_level" 
   if (!result || result.risk_level === "low") {
     return null;
   }
-  return isKnownFraudType(result.fraud_type) ? String(result.fraud_type).trim() : null;
+  return isKnownFraudType(result.fraud_type) ? localizeFraudType(String(result.fraud_type).trim()) : null;
 }
 
 export function getResultHeadline(
@@ -64,7 +71,7 @@ export function getResultHeadline(
   if (!summary) {
     return result?.risk_level === "low" ? "低风险结果" : "待分析文本";
   }
-  return summary.split(/[。！!？?\n]/)[0]?.trim() || summary;
+  return sanitizeDisplayText(summary.split(/[。！!？?\n]/)[0]?.trim() || summary);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -88,35 +95,44 @@ function getQrAnalysis(result?: DetectionResult | null): DetectionQrAnalysis | n
   const firstEvidence = evidenceItems.find(isRecord);
   const extra = firstEvidence && isRecord(firstEvidence.extra) ? firstEvidence.extra : null;
   const raw = isRecord(qrResult.raw) ? qrResult.raw : null;
-  const threatbookItems = raw && Array.isArray(raw.threatbook) ? raw.threatbook : [];
-  const firstThreatbook = threatbookItems.find(isRecord);
-  if (!extra && !firstThreatbook && !qrResult.summary) {
+  const urlPredictionItems =
+    raw && Array.isArray(raw.url_predictions)
+      ? raw.url_predictions
+      : raw && Array.isArray(raw.local_url_predictions)
+        ? raw.local_url_predictions
+        : [];
+  const firstPrediction = urlPredictionItems.find(isRecord);
+  if (!extra && !firstPrediction && !qrResult.summary) {
     return null;
   }
   return {
     payload: String(extra?.payload ?? ""),
-    normalized_url: String(extra?.normalized_url ?? firstThreatbook?.query_url ?? ""),
+    normalized_url: String(extra?.normalized_url ?? firstPrediction?.url ?? ""),
     host: String(extra?.host ?? ""),
     destination_label: String(extra?.destination_label ?? ""),
     destination_kind: String(extra?.destination_kind ?? ""),
-    threatbook_verdict: String(firstThreatbook?.verdict ?? ""),
-    threatbook_summary: String(firstThreatbook?.summary ?? ""),
     risk_score: typeof qrResult.risk_score === "number" ? qrResult.risk_score : null,
     risk_level: typeof result?.risk_level === "string" ? result.risk_level : null,
     summary: typeof qrResult.summary === "string" ? qrResult.summary : null,
     final_reason: typeof firstEvidence?.detail === "string" ? firstEvidence.detail : null,
+    local_risk_level: String(firstPrediction?.risk_level ?? ""),
+    local_model_name: String(firstPrediction?.model_name ?? ""),
+    phish_prob: typeof firstPrediction?.phish_prob === "number" ? firstPrediction.phish_prob : null,
+    clues: Array.isArray(firstPrediction?.clues)
+      ? firstPrediction.clues.map((item) => sanitizeDisplayText(String(item))).filter(Boolean)
+      : [],
   };
 }
 
 function getQrRiskCopy(qr?: DetectionQrAnalysis | null) {
-  const verdict = String(qr?.threatbook_verdict ?? "").toLowerCase();
-  if (verdict === "malicious") {
+  const verdict = String(qr?.local_risk_level ?? qr?.risk_level ?? "").toLowerCase();
+  if (verdict === "high" || verdict === "malicious") {
     return { label: "高风险", tone: "#D96A4A", soft: "#FFF0EA" };
   }
-  if (verdict === "suspicious") {
+  if (verdict === "medium" || verdict === "suspicious") {
     return { label: "需核验", tone: "#C48A29", soft: "#FFF7E8" };
   }
-  if (verdict === "benign") {
+  if (verdict === "safe" || verdict === "benign" || verdict === "low") {
     return { label: "较安全", tone: "#2E9D7F", soft: "#E9FAF4" };
   }
   const score = typeof qr?.risk_score === "number" ? qr.risk_score : 0;
@@ -235,14 +251,14 @@ export function DetectionResultCard({
               </View>
             ) : null}
           </View>
-          <Text style={styles.summaryText}>{result.summary ?? "--"}</Text>
+          <Text style={styles.summaryText}>{sanitizeDisplayText(result.summary ?? "--")}</Text>
         </View>
       </View>
 
       <View style={styles.metricsRow}>
         <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>可信度</Text>
-          <Text style={styles.metricValue}>{formatConfidence(result.confidence)}</Text>
+          <Text style={styles.metricLabel}>风险评分</Text>
+          <Text style={styles.metricValue}>{formatRiskScore(getResultRiskScore(result))}</Text>
         </View>
         <View style={styles.metricCard}>
           <Text style={styles.metricLabel}>风险参照</Text>
@@ -258,13 +274,13 @@ export function DetectionResultCard({
         <View style={styles.chipWrap}>
           {result.hit_rules.slice(0, compact ? 3 : 6).map((item) => (
             <View key={item} style={styles.ruleChip}>
-              <Text style={styles.ruleChipText}>{item}</Text>
+              <Text style={styles.ruleChipText}>{sanitizeDisplayText(item)}</Text>
             </View>
           ))}
         </View>
       ) : null}
 
-      {result.final_reason ? <Text style={styles.reasonText}>{result.final_reason}</Text> : null}
+      {result.final_reason ? <Text style={styles.reasonText}>{sanitizeDisplayText(result.final_reason)}</Text> : null}
 
       {qrAnalysis ? (
         <View style={styles.qrBlock}>
@@ -286,10 +302,27 @@ export function DetectionResultCard({
             </View>
           </View>
 
+          {qrAnalysis.local_risk_level ? (
+            <View style={styles.inlineMetaRow}>
+              <View style={[styles.inlinePill, { backgroundColor: qrRiskCopy.soft }]}>
+                <Text style={[styles.inlinePillText, { color: qrRiskCopy.tone }]}>
+                  {localizeRiskLevel(qrAnalysis.local_risk_level)}
+                </Text>
+              </View>
+              {qrAnalysis.local_model_name ? (
+                <View style={styles.inlinePill}>
+                  <Text style={styles.inlinePillText}>本地模型</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
           <Text style={styles.qrSummaryText}>
-            {String(qrAnalysis.summary ?? "").trim()
-              || String(qrAnalysis.threatbook_summary ?? "").trim()
-              || "已识别二维码内容，请结合去向与业务场景核验。"}
+            {sanitizeDisplayText(
+              String(qrAnalysis.summary ?? "").trim()
+                || String(qrAnalysis.final_reason ?? "").trim()
+                || "已识别二维码内容，请结合去向与业务场景核验。",
+            )}
           </Text>
         </View>
       ) : null}

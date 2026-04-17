@@ -81,18 +81,18 @@ def _score_similarity(validated: dict[str, object]) -> tuple[float, list[str]]:
 def _build_similarity_summary(validated: dict[str, object]) -> str:
     summary = validated.get("summary") if isinstance(validated, dict) else None
     if not isinstance(summary, dict):
-        return "Image similarity validation did not return structured metrics."
+        return "本地相似度复核没有返回结构化指标。"
 
     parts: list[str] = []
     if int(summary.get("hash_near_duplicate_count") or 0) > 0:
         parts.append(f"同图/近同图命中 {int(summary.get('hash_near_duplicate_count') or 0)} 个")
     if int(summary.get("clip_high_similarity_count") or 0) > 0:
-        parts.append(f"CLIP 高相似命中 {int(summary.get('clip_high_similarity_count') or 0)} 个")
+        parts.append(f"向量高相似命中 {int(summary.get('clip_high_similarity_count') or 0)} 个")
     if summary.get("max_clip_similarity") is not None:
-        parts.append(f"最高 CLIP 相似度 {float(summary.get('max_clip_similarity')):.3f}")
+        parts.append(f"最高向量相似度 {float(summary.get('max_clip_similarity')):.3f}")
     if int(summary.get("cross_site_high_similarity_count") or 0) > 0:
         parts.append(f"跨站点高相似域名 {int(summary.get('cross_site_high_similarity_count') or 0)} 个")
-    return "；".join(parts) if parts else "No strong image similarity signal was confirmed."
+    return "；".join(parts) if parts else "没有确认到强相似图信号。"
 
 
 @traceable(name="agent.skill.impersonation_checker", run_type="chain")
@@ -102,14 +102,14 @@ def run_impersonation_checker(state: AgentState) -> dict[str, object]:
 
     result = SkillResult(
         name="impersonation_checker",
-        summary="No public reverse-image match was found by the configured provider.",
+        summary="当前没有发现公开网页中的反向搜图匹配结果。",
         raw=payload,
     )
 
     if not matches:
         warnings = payload.get("warnings", [])
         if warnings:
-            result.summary = "Reverse-image lookup returned no matches or only partial data."
+            result.summary = "反向搜图没有返回有效匹配，或返回结果不完整。"
         return {"impersonation_result": result.to_dict()}
 
     validated = validate_reverse_image_matches(
@@ -156,25 +156,25 @@ def run_impersonation_checker(state: AgentState) -> dict[str, object]:
     top_domains = ", ".join(f"{domain} x{count}" for domain, count in domain_counter.most_common(3))
     if validated_matches:
         result.summary = (
-            "High-similarity public reverse-image matches were confirmed, which increases the chance that the image was reused online."
+            "已确认高相似公开来源，图片存在被复用或盗用的可能。"
         )
         if top_domains:
-            result.summary += f" Top validated sources: {top_domains}."
-        result.summary += f" {_build_similarity_summary(validated)}."
+            result.summary += f" 主要来源：{top_domains}。"
+        result.summary += f" {_build_similarity_summary(validated)}。"
     else:
         result.summary = (
-            "Reverse-image search returned public matches, but the local similarity layer did not confirm a strong image match."
+            "反向搜图返回了公开候选，但本地相似度复核没有确认强匹配。"
         )
 
     result.recommendations.append(
-        "Treat profile photos or identity images with public web matches as potentially reused or stolen."
+        "凡是命中公开来源的头像、证件照或人像，都要警惕盗图冒充。"
     )
     result.recommendations.append(
-        "Ask the other party for a fresh, context-specific photo instead of trusting a reused image."
+        "要求对方补充一张带当前场景特征的新照片，不要只信一张旧图。"
     )
     if not validated_matches:
         result.recommendations.append(
-            "Only treat this as a strong impersonation signal when image similarity and cross-site reuse are both high."
+            "只有当图像相似度和跨站复用都较高时，才应将其视为强盗图信号。"
         )
 
     if validated_matches:
@@ -194,14 +194,14 @@ def run_impersonation_checker(state: AgentState) -> dict[str, object]:
         if item.get("dhash_distance") is not None:
             similarity_parts.append(f"dHash 距离 {int(item.get('dhash_distance') or 0)}")
         if item.get("clip_similarity") is not None:
-            similarity_parts.append(f"CLIP {float(item.get('clip_similarity')):.3f}")
+            similarity_parts.append(f"向量相似 {float(item.get('clip_similarity')):.3f}")
         if similarity_parts:
             detail_parts.append(" / ".join(similarity_parts))
         result.evidence.append(
             EvidenceItem(
                 skill="impersonation_checker",
-                title="Validated reverse-image match" if item in validated_matches else "Reverse-image match found",
-                detail=" | ".join(detail_parts) or "A public web match was detected.",
+                title="已确认高相似来源" if item in validated_matches else "发现公开候选来源",
+                detail=" | ".join(detail_parts) or "检测到公开网页匹配来源。",
                 severity="warning" if item in validated_matches else "info",
                 source_path=str(item.get("source_path") or ""),
                 extra={

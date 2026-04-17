@@ -21,7 +21,7 @@ def run_pii_guard(state: AgentState) -> dict[str, object]:
 
     result = SkillResult(
         name="pii_guard",
-        summary="No obvious sensitive information was detected.",
+        summary="未发现明显敏感信息。",
         raw=detection,
     )
 
@@ -30,17 +30,23 @@ def run_pii_guard(state: AgentState) -> dict[str, object]:
 
     result.triggered = True
     result.risk_score = round(min(0.25 + len(hits) * 0.15, 0.95), 3)
-    result.summary = "Sensitive personal or financial information appears in the available text."
+    result.summary = "可用文字中出现了敏感个人或金融信息。"
     result.labels = sorted({f"pii_{item['type']}" for item in hits})
-    result.recommendations.append("Mask personal identifiers before sharing screenshots or documents.")
-    result.recommendations.append("Do not send verification codes, ID numbers, or bank card numbers to strangers.")
+    result.recommendations.append("分享截图或证件前，先遮挡个人敏感信息。")
+    result.recommendations.append("不要把验证码、身份证号或银行卡号发送给陌生人。")
 
     for item in hits:
+        pii_type = {
+            "phone": "手机号",
+            "id_card": "身份证号",
+            "bank_card": "银行卡号",
+            "verification_code": "验证码",
+        }.get(str(item["type"]), str(item["type"]))
         result.evidence.append(
             EvidenceItem(
                 skill="pii_guard",
-                title=f"Detected {item['type']}",
-                detail=f"Matched value: {item['value']}",
+                title=f"命中{pii_type}",
+                detail=f"命中内容：{item['value']}",
                 severity="warning",
             )
         )

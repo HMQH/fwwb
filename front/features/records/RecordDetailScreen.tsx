@@ -24,14 +24,17 @@ import {
   DetectionPipelineCard,
   ReasoningGraphCard,
   detectionsApi,
-  formatConfidence,
+  formatRiskScore,
+  getResultRiskScore,
   getResultHeadline,
   getRiskMeta,
   isAgentDetection,
   getVisibleFraudType,
+  localizeFraudType,
+  sanitizeDisplayText,
 } from "@/features/detections";
 import { guardiansApi } from "@/features/guardians";
-import type { DetectionEvidence, DetectionSubmissionDetail } from "@/features/detections";
+import type { AudioVerifyRecordItem, DetectionEvidence, DetectionJob, DetectionResult, DetectionSubmission, DetectionSubmissionDetail } from "@/features/detections";
 import { resolveEvidencePreviewUrl } from "@/features/detections/evidencePreview";
 import { ApiError, resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
@@ -101,6 +104,23 @@ function getPageIndex(event: NativeSyntheticEvent<NativeScrollEvent>, width: num
   return Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width));
 }
 
+function shouldUseAgentExecutionView(
+  submission?: DetectionSubmission | null,
+  job?: DetectionJob | null,
+  result?: DetectionResult | null,
+) {
+  if (job?.job_type === "agent_multimodal") {
+    return true;
+  }
+  if (result?.stage_tags?.includes("agent_orchestrated")) {
+    return true;
+  }
+  return Boolean(
+    (submission?.has_image || submission?.has_video || submission?.has_audio)
+    && isAgentDetection(job, result),
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -122,43 +142,34 @@ function normalizePercentValue(value: unknown) {
   return Math.max(0, Math.min(100, normalized));
 }
 
-function getResultScore(detail?: DetectionSubmissionDetail | null) {
-  const raw = detail?.latest_result?.result_detail;
-  const progressDetail = detail?.latest_job?.progress_detail;
+function formatAudioPercent(value: unknown) {
+  const normalized = normalizePercentValue(value);
+  return normalized === null ? "--" : `${Math.round(normalized)}%`;
+}
 
-  const candidates: unknown[] = [];
-  if (isRecord(raw)) {
-    candidates.push(raw.final_score);
-    if (isRecord(raw.score_breakdown)) {
-      candidates.push(raw.score_breakdown.final_score);
-      candidates.push(raw.score_breakdown.base_score);
-    }
-    if (isRecord(raw.reasoning_graph) && isRecord(raw.reasoning_graph.summary_metrics)) {
-      candidates.push(raw.reasoning_graph.summary_metrics.final_score);
-    }
+function formatAudioSeconds(value: unknown) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) {
+    return "--";
   }
-  if (isRecord(progressDetail)) {
-    candidates.push(progressDetail.final_score);
-  }
-  candidates.push(detail?.latest_result?.confidence);
-
-  let zeroFallback: number | null = null;
-  for (const candidate of candidates) {
-    const normalized = normalizePercentValue(candidate);
-    if (normalized !== null) {
-      const rounded = Math.round(normalized);
-      if (rounded > 0) {
-        return rounded;
-      }
-      zeroFallback = 0;
-    }
-  }
-  return zeroFallback;
+  return parsed >= 10 ? `${parsed.toFixed(1)}s` : `${parsed.toFixed(2)}s`;
 }
 
 function getSimilarityPercent(value?: number | null) {
   const normalized = normalizePercentValue(value);
   return normalized === null ? "--" : Math.round(normalized);
+}
+
+function getAudioVerifyItems(result?: DetectionResult | null) {
+  const detail = result?.result_detail;
+  if (!isRecord(detail)) {
+    return [];
+  }
+  const raw = detail.audio_verify_items;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is AudioVerifyRecordItem => isRecord(item) && typeof item.file_name === "string");
 }
 
 function InlinePill({
@@ -185,6 +196,61 @@ function MetricChip({ label, value }: { label: string; value: string | number })
     <View style={styles.metricChip}>
       <Text style={styles.metricChipLabel}>{label}</Text>
       <Text style={styles.metricChipValue}>{value}</Text>
+    </View>
+  );
+}
+
+function AudioVerifyResultSection({ items }: { items: AudioVerifyRecordItem[] }) {
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <View style={styles.audioVerifySection}>
+      <SectionLabel>音频结果</SectionLabel>
+      <View style={styles.audioVerifyList}>
+        {items.map((item, index) => {
+          const risk = item.label === "fake";
+          const failed = item.status === "failed";
+          const title = item.file_name || `音频 ${index + 1}`;
+          return (
+            <View key={`${title}-${index}`} style={styles.audioVerifyCard}>
+              <View style={styles.audioVerifyHeader}>
+                <View style={styles.audioVerifyHeaderCopy}>
+                  <Text style={styles.audioVerifyTitle} numberOfLines={1}>
+                    {title}
+                  </Text>
+                  <Text style={styles.audioVerifyMeta}>
+                    {failed ? "识别失败" : risk ? "疑似 AI 合成" : "真人概率更高"}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.audioVerifyBadge,
+                    failed
+                      ? styles.audioVerifyBadgeMuted
+                      : risk
+                        ? styles.audioVerifyBadgeRisk
+                        : styles.audioVerifyBadgeSafe,
+                  ]}
+                >
+                  <Text style={styles.audioVerifyBadgeText}>{failed ? "失败" : risk ? "风险" : "正常"}</Text>
+                </View>
+              </View>
+
+              {failed ? (
+                <Text style={styles.audioVerifyErrorText}>{sanitizeDisplayText(item.error_message ?? "识别失败")}</Text>
+              ) : (
+                <View style={styles.audioVerifyMetricRow}>
+                  <MetricChip label="合成" value={formatAudioPercent(item.fake_prob)} />
+                  <MetricChip label="真人" value={formatAudioPercent(item.genuine_prob)} />
+                  <MetricChip label="时长" value={formatAudioSeconds(item.duration_sec)} />
+                </View>
+              )}
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -338,7 +404,7 @@ function EvidenceCarouselSection({
                   {item.fraud_type ? (
                     <View style={styles.evidenceTypeChip}>
                       <Text style={styles.evidenceTypeChipText} numberOfLines={1}>
-                        {item.fraud_type}
+                        {localizeFraudType(item.fraud_type)}
                       </Text>
                     </View>
                   ) : null}
@@ -448,7 +514,7 @@ export default function RecordDetailScreen() {
   const result = detail?.latest_result;
   const job = detail?.latest_job;
   const guardianEventSummary = detail?.guardian_event_summary;
-  const agentMode = isAgentDetection(job, result);
+  const agentMode = shouldUseAgentExecutionView(submission, job, result);
   const detailPages = agentMode ? AGENT_DETAIL_PAGES : DEFAULT_DETAIL_PAGES;
 
   useEffect(() => {
@@ -458,16 +524,17 @@ export default function RecordDetailScreen() {
     if (job?.status !== "pending" && job?.status !== "running") {
       return;
     }
+    const intervalMs = agentMode ? 900 : 2200;
     const timer = setInterval(() => {
       void loadDetail({ silent: true });
-    }, 2200);
+    }, intervalMs);
     return () => clearInterval(timer);
-  }, [id, job?.status, loadDetail, token]);
+  }, [agentMode, id, job?.status, loadDetail, token]);
 
   const riskMeta = getRiskMeta(result?.risk_level);
   const headline = getResultHeadline(result);
   const visibleFraudType = getVisibleFraudType(result);
-  const score = getResultScore(detail);
+  const audioVerifyItems = getAudioVerifyItems(result);
   const evidenceCardWidth = Math.max(220, Math.min(width - 92, 296));
   const evidenceSheetImageUrl = evidenceSheet ? resolveEvidencePreviewUrl(evidenceSheet.item) : null;
 
@@ -541,7 +608,7 @@ export default function RecordDetailScreen() {
         nestedScrollEnabled
       >
         {agentMode
-          ? (!result ? <AgentExecutionCard job={job} result={result} title="Agent 执行" maxVisibleSteps={4} /> : null)
+          ? (!result ? <AgentExecutionCard job={job} result={result} title="执行预览" maxVisibleSteps={4} forceVisible /> : null)
           : (job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null)}
 
         {result ? (
@@ -553,17 +620,16 @@ export default function RecordDetailScreen() {
               </View>
               {visibleFraudType ? <Text style={styles.heroType}>{visibleFraudType}</Text> : null}
             </View>
-            <Text style={styles.heroTitle}>{headline}</Text>
-            <Text style={styles.heroSummary}>{result.summary ?? "暂无结论"}</Text>
+            <Text style={styles.heroTitle}>{sanitizeDisplayText(headline)}</Text>
+            <Text style={styles.heroSummary}>{sanitizeDisplayText(result.summary ?? "暂无结论")}</Text>
 
             <View style={styles.heroMetricRow}>
-              <MetricChip label="评分" value={score ?? "--"} />
-              <MetricChip label="可信度" value={formatConfidence(result.confidence)} />
+              <MetricChip label="风险评分" value={formatRiskScore(getResultRiskScore(result))} />
             </View>
 
             {result.final_reason ? (
               <View style={styles.reasonBubble}>
-                <Text style={styles.reasonBubbleText}>{result.final_reason}</Text>
+                <Text style={styles.reasonBubbleText}>{sanitizeDisplayText(result.final_reason)}</Text>
               </View>
             ) : null}
 
@@ -574,12 +640,14 @@ export default function RecordDetailScreen() {
                   {result.advice.map((item) => (
                     <View key={item} style={styles.adviceRow}>
                       <View style={styles.adviceDot} />
-                      <Text style={styles.adviceText}>{item}</Text>
+                      <Text style={styles.adviceText}>{sanitizeDisplayText(item)}</Text>
                     </View>
                   ))}
                 </View>
               </View>
             ) : null}
+
+            {audioVerifyItems.length ? <AudioVerifyResultSection items={audioVerifyItems} /> : null}
 
             {guardianEventSummary ? (
               <View style={styles.guardianCard}>
@@ -664,7 +732,6 @@ export default function RecordDetailScreen() {
     riskMeta.soft,
     riskMeta.tone,
     router,
-    score,
     submission,
     visibleFraudType,
   ]);
@@ -678,7 +745,7 @@ export default function RecordDetailScreen() {
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
-          <AgentExecutionCard job={job} result={result} title="执行详情" />
+          <AgentExecutionCard job={job} result={result} title="执行详情" forceVisible />
         </ScrollView>
       );
     }
@@ -781,7 +848,7 @@ export default function RecordDetailScreen() {
         ) : null}
       </ScrollView>
     );
-  }, [detail, evidenceCardWidth, lockPagerScroll, openEvidenceSheet, result, submission, unlockPagerScroll]);
+  }, [audioVerifyItems, detail, evidenceCardWidth, lockPagerScroll, openEvidenceSheet, result, submission, unlockPagerScroll]);
 
   const renderPage = useCallback(({ item }: { item: DetailPage }) => {
     let content: ReactNode = null;
@@ -893,7 +960,7 @@ export default function RecordDetailScreen() {
                     {evidenceSheet.item.fraud_type ? (
                       <View style={styles.evidenceTypeChip}>
                         <Text style={styles.evidenceTypeChipText} numberOfLines={1}>
-                          {evidenceSheet.item.fraud_type}
+                          {localizeFraudType(evidenceSheet.item.fraud_type)}
                         </Text>
                       </View>
                     ) : null}
@@ -1399,6 +1466,76 @@ const styles = StyleSheet.create({
   },
   adviceList: {
     gap: 10,
+  },
+  audioVerifySection: {
+    gap: 10,
+  },
+  audioVerifyList: {
+    gap: 10,
+  },
+  audioVerifyCard: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  audioVerifyHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  audioVerifyHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  audioVerifyTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  audioVerifyMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  audioVerifyBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  audioVerifyBadgeRisk: {
+    backgroundColor: "#FFE7E7",
+  },
+  audioVerifyBadgeSafe: {
+    backgroundColor: "#E8F7ED",
+  },
+  audioVerifyBadgeMuted: {
+    backgroundColor: palette.surface,
+  },
+  audioVerifyBadgeText: {
+    color: palette.ink,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  audioVerifyMetricRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  audioVerifyErrorText: {
+    color: "#C34F4F",
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
   },
   adviceRow: {
     flexDirection: "row",

@@ -16,18 +16,13 @@ def _build_llm_review(text: str) -> dict[str, Any] | None:
     except Exception:
         return None
 
-    system_prompt = (
-        "You are a fraud analyst reviewing OCR text from formal-looking Chinese documents. "
-        "Return strict JSON only."
-    )
+    system_prompt = "你是反诈审核员，负责复核正式文书风格的 OCR 文本。只返回严格 JSON，summary、suspicious_points、authenticity_gaps、recommended_actions 必须使用中文。"
     user_prompt = (
-        "Analyze whether this text looks like a forged official document scam. "
-        "Focus on fake court summons, fake government notices, forged seals, urgent payment demands, "
-        "private contact channels, and document-format defects.\n\n"
-        "Return JSON with keys: verdict (string), risk_score (number 0-1), confidence (number 0-1), "
-        "document_type (string), suspicious_points (array of strings), authenticity_gaps (array of strings), "
-        "recommended_actions (array of strings), need_manual_review (bool), summary (string), labels (array of strings).\n\n"
-        f"OCR text:\n{text[:2600]}"
+        "请判断这段文字是否像仿冒公文诈骗，重点关注假传票、假政府通知、伪造公章、紧急缴费要求、"
+        "私人联系方式和文书格式缺陷。\n\n"
+        "返回 JSON，字段必须包含：verdict、risk_score、confidence、document_type、suspicious_points、"
+        "authenticity_gaps、recommended_actions、need_manual_review、summary、labels。\n\n"
+        f"OCR 文本：\n{text[:2600]}"
     )
     try:
         response = client.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
@@ -44,13 +39,13 @@ def run_document_review(state: AgentState) -> dict[str, object]:
     result = SkillResult(
         name="document_review",
         status="completed",
-        summary="No suspicious official-document signal required a second-pass review.",
+        summary="当前没有需要进入二次文书复核的强线索。",
         raw={"source": "official_document_checker"},
     )
 
     if not isinstance(official, dict) or not official:
         result.status = "skipped"
-        result.summary = "Document review was skipped because official-document analysis has not run yet."
+        result.summary = "公文初筛尚未运行，因此跳过二次文书复核。"
         return {"document_review_result": result.to_dict()}
 
     raw = official.get("raw") if isinstance(official.get("raw"), dict) else {}
@@ -114,17 +109,17 @@ def run_document_review(state: AgentState) -> dict[str, object]:
     result.labels = labels
 
     if suspicious_forgery:
-        result.summary = "Second-pass document review found forged-official-document cues that are consistent with scam notices."
+        result.summary = "二次文书复核发现了与仿冒公文诈骗一致的伪造线索。"
     elif candidate:
-        result.summary = "The image looks like a formal document, but only moderate forgery cues were found in the second-pass review."
+        result.summary = "图片看起来像正式文书，但二次复核仅发现中等强度的伪造线索。"
     else:
-        result.summary = "The current image does not strongly resemble a forged official document after second-pass review."
+        result.summary = "经过二次复核，当前图片暂未表现出强烈的仿冒公文特征。"
 
     for point in suspicious_points[:4]:
         result.evidence.append(
             EvidenceItem(
                 skill="document_review",
-                title="Forgery cue",
+                title="伪造线索",
                 detail=point,
                 severity="warning",
             )
@@ -133,7 +128,7 @@ def run_document_review(state: AgentState) -> dict[str, object]:
         result.evidence.append(
             EvidenceItem(
                 skill="document_review",
-                title="Authenticity gap",
+                title="真实性缺口",
                 detail=gap,
                 severity="warning",
             )
@@ -151,7 +146,7 @@ def run_document_review(state: AgentState) -> dict[str, object]:
         result.summary = str(second_pass_llm.get("summary")).strip()
     if not text and not candidate:
         result.status = "skipped"
-        result.summary = "Document review was skipped because no OCR text or strong document cues were available."
+        result.summary = "当前没有可用文字或强公文线索，因此跳过二次文书复核。"
         result.risk_score = 0.0
 
     if confidence >= 0.75 and suspicious_forgery:

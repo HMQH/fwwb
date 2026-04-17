@@ -45,6 +45,20 @@ export type AudioVerifyBatchJobResponse = AudioVerifyBatchJobSubmitResponse & {
   failed_count: number;
 };
 
+export type AudioVerifyRecordItem = {
+  file_path?: string | null;
+  file_name: string;
+  status: "completed" | "failed" | string;
+  error_message?: string | null;
+  label?: "genuine" | "fake" | string;
+  genuine_prob?: number | null;
+  fake_prob?: number | null;
+  score?: number | null;
+  duration_sec?: number | null;
+  model_version?: string | null;
+  feature_version?: string | null;
+};
+
 export type KnownDetectionPipelineStep =
   | "queued"
   | "preprocess"
@@ -98,6 +112,9 @@ export type AIFaceCheckResponse = {
   storage_batch_id?: string | null;
   stored_file_path?: string | null;
   upload_id?: string | null;
+  submission_id?: string | null;
+  job_id?: string | null;
+  result_id?: string | null;
 };
 
 export type DetectionSubmission = {
@@ -176,8 +193,10 @@ export type DetectionQrAnalysis = {
   host?: string | null;
   destination_label?: string | null;
   destination_kind?: string | null;
-  threatbook_verdict?: string | null;
-  threatbook_summary?: string | null;
+  local_risk_level?: string | null;
+  local_model_name?: string | null;
+  phish_prob?: number | null;
+  clues?: string[] | null;
   risk_score?: number | null;
   risk_level?: string | null;
   summary?: string | null;
@@ -252,6 +271,7 @@ export type DetectionResultDetail = {
   counter_evidence?: string[];
   similar_images?: SimilarImageItem[];
   similar_images_count?: number | null;
+  audio_verify_items?: AudioVerifyRecordItem[];
   [key: string]: unknown;
 };
 

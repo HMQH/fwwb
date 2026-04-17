@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -48,11 +48,21 @@ def _serialize_detail(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@traceable(name="agent.analyze_submission", run_type="chain")
 def analyze_submission(*, db: Session, submission: DetectionSubmission) -> dict[str, Any]:
+    return analyze_submission_with_progress(db=db, submission=submission, progress_callback=None)
+
+
+@traceable(name="agent.analyze_submission", run_type="chain")
+def analyze_submission_with_progress(
+    *,
+    db: Session,
+    submission: DetectionSubmission,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     graph = get_detection_graph()
     initial_state = {
         "db_session": db,
+        "progress_callback": progress_callback,
         "submission_id": str(submission.id),
         "text_content": submission.text_content,
         "image_paths": [_absolute_upload_path(path) for path in submission.image_paths],

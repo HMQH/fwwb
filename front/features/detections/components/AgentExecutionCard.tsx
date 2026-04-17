@@ -4,6 +4,14 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import {
+  formatRiskScore,
+  getResultRiskScore,
+  localizeFraudType,
+  localizePiiType,
+  localizeRiskLevel,
+  sanitizeDisplayText,
+} from "../displayText";
 import type { DetectionJob, DetectionResult, DetectionResultDetail } from "../types";
 import { getProgressDetail, getResultDetail } from "../visualization";
 
@@ -13,6 +21,7 @@ type AgentTimelineItem = {
   label: string;
   status: string;
   summary: string;
+  detailLine?: string | null;
   tags: string[];
   metrics: Array<{ label: string; value: string | number }>;
 };
@@ -41,6 +50,12 @@ const ACTION_META: Record<
     soft: "#EAF2FF",
     tone: palette.accentStrong,
   },
+  followup_router: {
+    label: "继续复核",
+    icon: "source-branch",
+    soft: "#EEF0FF",
+    tone: "#6A78F5",
+  },
   qr_inspector: {
     label: "二维码检查",
     icon: "qrcode-scan",
@@ -48,7 +63,7 @@ const ACTION_META: Record<
     tone: "#D96A4A",
   },
   ocr_phishing: {
-    label: "图文 OCR",
+    label: "文字提取",
     icon: "text-box-search-outline",
     soft: "#EEF0FF",
     tone: "#6A78F5",
@@ -150,11 +165,39 @@ function getStatusLabel(status?: string | null) {
 }
 
 function addTag(target: string[], value?: string | null) {
-  const text = String(value ?? "").trim();
+  const text = sanitizeDisplayText(String(value ?? "").trim());
   if (!text || target.includes(text)) {
     return;
   }
   target.push(text);
+}
+
+function truncateText(value?: string | null, maxLength = 72) {
+  const text = sanitizeDisplayText(value).trim();
+  if (!text) {
+    return "";
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+function getCompactEvidenceTexts(branch: Record<string, unknown> | null, maxItems = 2) {
+  const items = Array.isArray(branch?.evidence) ? branch.evidence : [];
+  return items
+    .filter(isRecord)
+    .flatMap((item) => [
+      truncateText(typeof item.title === "string" ? item.title : "", 28),
+      truncateText(typeof item.detail === "string" ? item.detail : "", 40),
+    ])
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function getCompactTextList(items: Array<string | null | undefined>, maxItems = 2) {
+  return items
+    .map((item) => truncateText(item, 28))
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .join(" · ");
 }
 
 function getBranch(detail: DetectionResultDetail | null, action: string) {
@@ -183,6 +226,17 @@ function summarizePlanner(detail: DetectionResultDetail | null, executedCount: n
     return `已根据当前材料规划并执行 ${executedCount} 个步骤。`;
   }
   return "已根据当前材料生成执行顺序。";
+}
+
+function summarizeFollowupRouter(detail: DetectionResultDetail | null) {
+  const agentLoop = isRecord(detail?.agent_loop) ? detail.agent_loop : null;
+  const followupActions = Array.isArray(agentLoop?.followup_actions)
+    ? agentLoop.followup_actions.map((item) => String(item)).filter(Boolean)
+    : [];
+  if (followupActions.length) {
+    return `初轮综合后追加 ${followupActions.length} 个复核步骤，继续补强证据。`;
+  }
+  return "初轮综合后继续补充复核步骤。";
 }
 
 function summarizeQr(detail: DetectionResultDetail | null, branch: Record<string, unknown> | null) {
@@ -292,7 +346,7 @@ function summarizeConflict(branch: Record<string, unknown> | null) {
 
 function summarizeFinalJudge(result: DetectionResult | null) {
   if (typeof result?.summary === "string" && result.summary.trim()) {
-    return result.summary.trim();
+    return sanitizeDisplayText(result.summary.trim());
   }
   return "已汇总各步骤输出并生成最终结论。";
 }
@@ -301,6 +355,8 @@ function buildSummary(action: string, detail: DetectionResultDetail | null, resu
   switch (action) {
     case "planner":
       return summarizePlanner(detail, executedCount);
+    case "followup_router":
+      return summarizeFollowupRouter(detail);
     case "qr_inspector":
       return summarizeQr(detail, branch);
     case "ocr_phishing":
@@ -335,13 +391,23 @@ function buildTags(action: string, detail: DetectionResultDetail | null, branch:
       const qrAnalysis = isRecord(detail?.qr_analysis) ? detail.qr_analysis : null;
       addTag(tags, "二维码");
       addTag(tags, typeof qrAnalysis?.host === "string" ? qrAnalysis.host : null);
-      addTag(tags, typeof qrAnalysis?.risk_level === "string" ? `风险 ${qrAnalysis.risk_level}` : null);
+      addTag(tags, typeof qrAnalysis?.local_risk_level === "string" ? localizeRiskLevel(qrAnalysis.local_risk_level) : null);
+      addTag(tags, typeof qrAnalysis?.risk_level === "string" ? localizeRiskLevel(qrAnalysis.risk_level) : null);
       break;
     }
     case "ocr_phishing": {
       const text = typeof raw?.aggregated_text === "string" ? raw.aggregated_text.trim() : "";
-      addTag(tags, "OCR");
+      addTag(tags, "文字提取");
       addTag(tags, text ? `${Math.min(text.length, 999)} 字` : "无可用文本");
+      break;
+    }
+    case "followup_router": {
+      const agentLoop = isRecord(detail?.agent_loop) ? detail.agent_loop : null;
+      const followupActions = Array.isArray(agentLoop?.followup_actions)
+        ? agentLoop.followup_actions.map((item) => String(item))
+        : [];
+      addTag(tags, "复核");
+      addTag(tags, followupActions.length ? `${followupActions.length} 个后续步骤` : "补强证据");
       break;
     }
     case "official_document_checker":
@@ -369,7 +435,7 @@ function buildTags(action: string, detail: DetectionResultDetail | null, branch:
         addTag(tags, "提交文本");
       }
       if (sources.includes("ocr_text")) {
-        addTag(tags, "OCR 文本");
+        addTag(tags, "识别文字");
       }
       break;
     }
@@ -390,8 +456,8 @@ function buildTags(action: string, detail: DetectionResultDetail | null, branch:
       addTag(tags, branch?.triggered ? "采用保守结论" : "结果一致");
       break;
     case "final_judge":
-      addTag(tags, result?.risk_level ? `风险 ${result.risk_level}` : null);
-      addTag(tags, result?.fraud_type);
+      addTag(tags, result?.risk_level ? localizeRiskLevel(result.risk_level) : null);
+      addTag(tags, result?.fraud_type ? localizeFraudType(result.fraud_type) : null);
       break;
     default:
       break;
@@ -399,10 +465,95 @@ function buildTags(action: string, detail: DetectionResultDetail | null, branch:
 
   const labels = Array.isArray(branch?.labels) ? branch.labels.map((item) => String(item)) : [];
   if (!tags.length) {
-    labels.slice(0, 2).forEach((item) => addTag(tags, item.replaceAll("_", " ")));
+    labels.slice(0, 2).forEach((item) => addTag(tags, item));
   }
 
   return tags.slice(0, 4);
+}
+
+function buildDetailLine(action: string, detail: DetectionResultDetail | null, branch: Record<string, unknown> | null, result: DetectionResult | null) {
+  const raw = isRecord(branch?.raw) ? branch.raw : null;
+
+  switch (action) {
+    case "planner": {
+      const notes = Array.isArray(detail?.planner_notes) ? detail.planner_notes.map((item) => String(item)) : [];
+      return getCompactTextList(notes, 2) || null;
+    }
+    case "followup_router": {
+      const agentLoop = isRecord(detail?.agent_loop) ? detail.agent_loop : null;
+      const followupActions = Array.isArray(agentLoop?.followup_actions)
+        ? agentLoop.followup_actions.map((item) => ACTION_META[String(item)]?.label ?? sanitizeDisplayText(String(item)))
+        : [];
+      return getCompactTextList(followupActions, 3) || null;
+    }
+    case "qr_inspector": {
+      const qrAnalysis = isRecord(detail?.qr_analysis) ? detail.qr_analysis : null;
+      const clues = Array.isArray(qrAnalysis?.clues) ? qrAnalysis.clues.map((item) => String(item)) : [];
+      return getCompactTextList(
+        [
+          typeof qrAnalysis?.normalized_url === "string" ? qrAnalysis.normalized_url : null,
+          clues.length ? `线索：${clues.slice(0, 2).map((item) => sanitizeDisplayText(item)).join("、")}` : null,
+        ],
+        2,
+      ) || null;
+    }
+    case "ocr_phishing": {
+      const evidenceTexts = getCompactEvidenceTexts(branch, 2);
+      if (evidenceTexts.length) {
+        return evidenceTexts.join(" · ");
+      }
+      const text = typeof raw?.aggregated_text === "string" ? raw.aggregated_text.trim() : "";
+      return truncateText(text, 42) || null;
+    }
+    case "official_document_checker":
+    case "document_review":
+    case "conflict_resolver": {
+      const evidenceTexts = getCompactEvidenceTexts(branch, 2);
+      return evidenceTexts.join(" · ") || null;
+    }
+    case "pii_guard": {
+      const hits = Array.isArray(raw?.hits) ? raw.hits.filter(isRecord) : [];
+      return getCompactTextList(
+        hits.map((item) => `${localizePiiType(String(item.type ?? ""))} ${sanitizeDisplayText(String(item.value ?? ""))}`),
+        3,
+      ) || null;
+    }
+    case "impersonation_checker": {
+      const matches = Array.isArray(raw?.matches) ? raw.matches.filter(isRecord) : [];
+      return getCompactTextList(
+        matches.map((item) => String(item.domain ?? item.source_title ?? item.title ?? item.source_url ?? "")),
+        3,
+      ) || null;
+    }
+    case "text_rag_skill": {
+      const payload = isRecord(raw?.result_payload) ? raw.result_payload : null;
+      return getCompactTextList(
+        [
+          typeof payload?.summary === "string" ? payload.summary : null,
+          typeof payload?.final_reason === "string" ? payload.final_reason : null,
+        ],
+        2,
+      ) || null;
+    }
+    case "image_similarity_verifier": {
+      const validation = isRecord(raw?.validation) ? raw.validation : null;
+      const validatedMatches = Array.isArray(validation?.validated_matches) ? validation.validated_matches.filter(isRecord) : [];
+      return getCompactTextList(
+        validatedMatches.map((item) => String(item.domain ?? item.source_title ?? item.title ?? item.source_url ?? "")),
+        2,
+      ) || null;
+    }
+    case "final_judge":
+      return getCompactTextList(
+        [
+          result?.fraud_type ? localizeFraudType(result.fraud_type) : null,
+          result?.final_reason ? result.final_reason : null,
+        ],
+        2,
+      ) || null;
+    default:
+      return null;
+  }
 }
 
 function buildMetrics(action: string, detail: DetectionResultDetail | null, branch: Record<string, unknown> | null, result: DetectionResult | null) {
@@ -428,17 +579,22 @@ function buildMetrics(action: string, detail: DetectionResultDetail | null, bran
   }
 
   if (action === "text_rag_skill") {
-    const payload = isRecord(raw?.result_payload) ? raw.result_payload : null;
-    const confidence = toPercent(payload?.confidence ?? result?.confidence);
-    if (confidence !== null) {
-      metrics.push({ label: "可信度", value: `${confidence}` });
+    const score = getResultRiskScore(result);
+    if (score !== null) {
+      metrics.push({ label: "风险评分", value: formatRiskScore(score) });
     }
   }
 
+  if (action === "followup_router") {
+    const agentLoop = isRecord(detail?.agent_loop) ? detail.agent_loop : null;
+    const followupActions = Array.isArray(agentLoop?.followup_actions) ? agentLoop.followup_actions.length : 0;
+    metrics.push({ label: "后续", value: followupActions });
+  }
+
   if (action === "final_judge") {
-    const finalScore = toPercent(detail?.final_score ?? result?.confidence);
-    if (finalScore !== null && !metrics.some((item) => item.label === "风险")) {
-      metrics.push({ label: "评分", value: `${finalScore}` });
+    const score = getResultRiskScore(result);
+    if (score !== null) {
+      metrics.push({ label: "风险评分", value: formatRiskScore(score) });
     }
     if (result?.retrieved_evidence?.length) {
       metrics.push({ label: "参照", value: result.retrieved_evidence.length });
@@ -475,10 +631,10 @@ function getAgentExecutionItems(job?: DetectionJob | null, result?: DetectionRes
   const resultDetail = getResultDetail(result);
   const progressDetail = getProgressDetail(job);
   const rawTrace =
-    resultDetail?.module_trace
-    ?? resultDetail?.execution_trace
-    ?? progressDetail?.module_trace
-    ?? progressDetail?.execution_trace;
+    resultDetail?.execution_trace
+    ?? resultDetail?.module_trace
+    ?? progressDetail?.execution_trace
+    ?? progressDetail?.module_trace;
   const trace = normalizeTraceItems(rawTrace);
   const agentTrace = trace.filter((item) => item.action in ACTION_META);
 
@@ -529,15 +685,17 @@ export function isAgentDetection(job?: DetectionJob | null, result?: DetectionRe
 export function AgentExecutionCard({
   job,
   result,
-  title = "Agent 执行",
+  title = "智能体执行",
   showHeader = true,
   maxVisibleSteps,
+  forceVisible = false,
 }: {
   job?: DetectionJob | null;
   result?: DetectionResult | null;
   title?: string;
   showHeader?: boolean;
   maxVisibleSteps?: number;
+  forceVisible?: boolean;
 }) {
   const resultDetail = useMemo(() => getResultDetail(result), [result]);
   const rawItems = useMemo(() => getAgentExecutionItems(job, result), [job, result]);
@@ -551,6 +709,7 @@ export function AgentExecutionCard({
         label: ACTION_META[item.action]?.label ?? item.label,
         status: item.status,
         summary: buildSummary(item.action, resultDetail, result ?? null, branch, executedCount),
+        detailLine: buildDetailLine(item.action, resultDetail, branch, result ?? null),
         tags: buildTags(item.action, resultDetail, branch, result ?? null),
         metrics: buildMetrics(item.action, resultDetail, branch, result ?? null),
       };
@@ -559,6 +718,7 @@ export function AgentExecutionCard({
 
   const visibleTimeline = maxVisibleSteps ? timeline.slice(0, maxVisibleSteps) : timeline;
   const remainingCount = Math.max(0, timeline.length - visibleTimeline.length);
+  const hasTerminalStatus = job?.status === "completed" || job?.status === "failed";
   const headerMetrics = useMemo(() => {
     const executedCount = timeline.filter((item) => item.status === "completed").length;
     const evidenceCount = Array.isArray(result?.evidence) ? result.evidence.length : 0;
@@ -571,7 +731,7 @@ export function AgentExecutionCard({
     ];
   }, [job?.status, result?.evidence, result?.need_manual_review, resultDetail?.agent_loop, timeline]);
 
-  if (!isAgentDetection(job, result)) {
+  if (!forceVisible && !isAgentDetection(job, result)) {
     return null;
   }
 
@@ -630,6 +790,11 @@ export function AgentExecutionCard({
                       <View style={styles.stepTitleCopy}>
                         <Text style={styles.stepTitle}>{item.label}</Text>
                         <Text style={styles.stepSummary}>{item.summary}</Text>
+                        {item.detailLine ? (
+                          <Text style={styles.stepDetailLine} numberOfLines={2}>
+                            {item.detailLine}
+                          </Text>
+                        ) : null}
                       </View>
                     </View>
                     <View style={[styles.stepStatusPill, isFailed ? styles.stepStatusPillRisk : isRunning ? styles.stepStatusPillActive : null]}>
@@ -666,8 +831,10 @@ export function AgentExecutionCard({
         </View>
       ) : (
         <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>等待执行轨迹</Text>
-          <Text style={styles.emptyText}>结果生成后会展示已执行的功能与对应结论。</Text>
+          <Text style={styles.emptyTitle}>{hasTerminalStatus ? "本次结果未保留执行轨迹" : "等待执行轨迹"}</Text>
+          <Text style={styles.emptyText}>
+            {hasTerminalStatus ? "任务已结束，但没有可展示的执行步骤。" : "结果生成后会展示已执行的功能与对应结论。"}
+          </Text>
         </View>
       )}
 
@@ -828,6 +995,12 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontSize: 12,
     lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  stepDetailLine: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 16,
     fontFamily: fontFamily.body,
   },
   stepStatusPill: {

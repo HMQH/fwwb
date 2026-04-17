@@ -98,8 +98,16 @@ def _get_clip_runtime() -> _ClipRuntime:
         )
         raise RuntimeError(_CLIP_RUNTIME_ERROR) from exc
 
-    model = model.to(device)
-    model.eval()
+    try:
+        model = model.to(device)
+        model.eval()
+    except Exception as exc:  # noqa: BLE001
+        _CLIP_RUNTIME_ERROR = (
+            f"Unable to initialize CLIP model on device '{device}'. "
+            f"Original error: {type(exc).__name__}: {exc}"
+        )
+        raise RuntimeError(_CLIP_RUNTIME_ERROR) from exc
+
     _CLIP_RUNTIME = _ClipRuntime(
         model=model,
         processor=processor,

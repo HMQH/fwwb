@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 
 class AgentState(TypedDict, total=False):
     db_session: Any
+    progress_callback: Any
     submission_id: str
     reasoning_goal: str | None
     vision_plan: dict[str, Any]

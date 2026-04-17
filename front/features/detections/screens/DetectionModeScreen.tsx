@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { ActivityIndicator, Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -12,18 +12,19 @@ import { useAuth } from "@/features/auth";
 import { consumeStagedFloatingCapture, floatingCaptureService } from "@/features/floating-capture";
 import { relationsApi } from "@/features/relations/api";
 import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
-import { ApiError } from "@/shared/api";
+import { ApiError, resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import { consumeSelectedUploadedAudioDraft } from "../audio-selection-session";
 import { buildDetectionSubmitFormData, detectionsApi } from "../api";
-import type {
-  AudioVerifyBatchJobResponse,
-  DetectionMode,
-  PickedFile,
-} from "../types";
+import type { DetectionMode, PickedFile } from "../types";
 
 type AppendixSlot = "text" | "audio" | "image" | "video";
-type AppendixItem = PickedFile & { key: string };
+type AppendixItem = PickedFile & {
+  key: string;
+  filePath?: string | null;
+  uploadId?: string | null;
+};
 
 const modeConfig: Record<
   DetectionMode,
@@ -72,6 +73,21 @@ function extOf(name: string) {
   return index < 0 ? "" : name.slice(index).toLowerCase();
 }
 
+function guessAudioMimeType(name: string) {
+  const ext = extOf(name);
+  const mimeMap: Record<string, string> = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".opus": "audio/opus",
+    ".amr": "audio/amr",
+  };
+  return mimeMap[ext] ?? "audio/*";
+}
+
 function isAllowedForSlot(name: string, mime: string, slot: AppendixSlot) {
   const suffix = extOf(name);
   const mimeType = mime.toLowerCase();
@@ -96,55 +112,6 @@ function isAllowedForSlot(name: string, mime: string, slot: AppendixSlot) {
 
 function isImageFile(file: PickedFile) {
   return file.type.toLowerCase().startsWith("image/") || IMAGE_EXT.has(extOf(file.name));
-}
-
-function formatPercent(value?: number | null) {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "--";
-  }
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function formatSeconds(value?: number | null) {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "--";
-  }
-  return value >= 10 ? `${value.toFixed(1)}s` : `${value.toFixed(2)}s`;
-}
-
-function formatAudioJobStatus(status: string) {
-  switch (status) {
-    case "pending":
-      return "排队中";
-    case "running":
-      return "识别中";
-    case "completed":
-      return "已完成";
-    case "failed":
-      return "失败";
-    default:
-      return status;
-  }
-}
-
-function decodeDisplayFilename(name: string | null | undefined) {
-  if (!name) {
-    return "未命名音频";
-  }
-
-  let decoded = name;
-  for (let i = 0; i < 3; i += 1) {
-    try {
-      const next = decodeURIComponent(decoded);
-      if (next === decoded) {
-        break;
-      }
-      decoded = next;
-    } catch {
-      break;
-    }
-  }
-  return decoded;
 }
 
 function CountPill({ label, value }: { label: string; value: number | string }) {
@@ -237,70 +204,6 @@ function CompactActionButton({
   );
 }
 
-function AudioBatchPanel({ batchJob }: { batchJob: AudioVerifyBatchJobResponse }) {
-  return (
-    <View style={styles.sectionCard}>
-      <SectionHeader title="识别结果" count={batchJob.total_count} />
-      <View style={styles.audioSummaryRow}>
-        <CountPill label="总数" value={batchJob.total_count} />
-        <CountPill label="完成" value={batchJob.completed_count} />
-        <CountPill label="失败" value={batchJob.failed_count} />
-      </View>
-      {batchJob.items.map((item) => {
-        const result = item.result;
-        const isGenuine = result?.label === "genuine";
-        return (
-          <View key={item.item_id} style={styles.audioTaskCard}>
-            <View style={styles.audioTaskHeader}>
-              <View style={styles.audioTaskHeaderCopy}>
-                <Text style={styles.audioTaskTitle} numberOfLines={2}>
-                  {decodeDisplayFilename(item.filename)}
-                </Text>
-                <Text style={styles.audioTaskStatus}>{formatAudioJobStatus(item.status)}</Text>
-              </View>
-              {item.status === "pending" || item.status === "running" ? (
-                <ActivityIndicator size="small" color={palette.accentStrong} />
-              ) : null}
-            </View>
-
-            {item.status === "failed" ? (
-              <Text style={styles.audioErrorText}>{item.error_message ?? "识别失败"}</Text>
-            ) : null}
-
-            {result ? (
-              <>
-                <View style={[styles.audioVerdictBadge, isGenuine ? styles.audioVerdictSafe : styles.audioVerdictRisk]}>
-                  <Text style={styles.audioVerdictText}>{isGenuine ? "真人语音" : "AI合成"}</Text>
-                </View>
-                <View style={styles.audioMetricGrid}>
-                  <View style={styles.audioMetricCard}>
-                    <Text style={styles.audioMetricLabel}>真人概率</Text>
-                    <Text style={styles.audioMetricValue}>{formatPercent(result.genuine_prob)}</Text>
-                  </View>
-                  <View style={styles.audioMetricCard}>
-                    <Text style={styles.audioMetricLabel}>合成概率</Text>
-                    <Text style={styles.audioMetricValue}>{formatPercent(result.fake_prob)}</Text>
-                  </View>
-                </View>
-                <View style={styles.audioMetricGrid}>
-                  <View style={styles.audioMetricCard}>
-                    <Text style={styles.audioMetricLabel}>时长</Text>
-                    <Text style={styles.audioMetricValue}>{formatSeconds(result.duration_sec)}</Text>
-                  </View>
-                  <View style={styles.audioMetricCard}>
-                    <Text style={styles.audioMetricLabel}>Score</Text>
-                    <Text style={styles.audioMetricValue}>{result.score.toFixed(4)}</Text>
-                  </View>
-                </View>
-              </>
-            ) : null}
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
 export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
   const { token } = useAuth();
@@ -319,8 +222,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [relationPickerVisible, setRelationPickerVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [matchingImageBank, setMatchingImageBank] = useState(false);
-  const [audioVerifyBatchJob, setAudioVerifyBatchJob] = useState<AudioVerifyBatchJobResponse | null>(null);
 
   const ingestAssets = useCallback(
     (
@@ -345,14 +246,37 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         Alert.alert("文件类型不匹配", invalid.join("\n"));
       }
       if (valid.length) {
-        if (slot === "audio") {
-          setAudioVerifyBatchJob(null);
-        }
         setter((prev) => [...prev, ...valid]);
       }
     },
     [],
   );
+
+  const consumeUploadedAudioDraft = useCallback(() => {
+    const draft = consumeSelectedUploadedAudioDraft();
+    if (!draft?.items.length) {
+      return;
+    }
+
+    setAudioFiles((prev) => {
+      const existingPathSet = new Set(prev.map((item) => item.filePath).filter((item): item is string => Boolean(item)));
+      const nextItems = draft.items
+        .filter((item) => !existingPathSet.has(item.file_path))
+        .map<AppendixItem>((item) => ({
+          key: nextKey(),
+          uri: item.file_url ?? resolveUploadFileUrl(item.file_path) ?? item.file_path,
+          name: item.file_name,
+          type: guessAudioMimeType(item.file_name),
+          filePath: item.file_path,
+          uploadId: item.upload_id,
+        }));
+
+      if (!nextItems.length) {
+        return prev;
+      }
+      return [...prev, ...nextItems];
+    });
+  }, []);
 
   const pickDocumentsForSlot = useCallback(
     async (slot: Extract<AppendixSlot, "text" | "audio" | "video">, setter: Dispatch<SetStateAction<AppendixItem[]>>) => {
@@ -470,12 +394,11 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     [relations, selectedRelationId],
   );
 
-  const audioVerifyBusy = audioVerifyBatchJob?.status === "pending" || audioVerifyBatchJob?.status === "running";
   const materialCount = isVisualMode
     ? imageFiles.length + videoFiles.length
     : textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length + (textContent.trim() ? 1 : 0);
-  const canImageLibraryMatch = !isAudioMode && config.allow.image && imageFiles.length > 0;
-  const isBusy = submitting || matchingImageBank || audioVerifyBusy;
+  const audioStatusLabel = submitting ? "提交中" : audioFiles.length > 0 ? "待识别" : "待添加";
+  const isBusy = submitting;
   const canSubmit = isAudioMode ? audioFiles.length > 0 && !isBusy : hasPayload && !isBusy;
   const visualSelectionCount = imageFiles.length + videoFiles.length;
   const submitButtonLabel = isAudioMode ? "开始识别" : isVisualMode ? "开始综合识别" : "开始检测";
@@ -581,43 +504,14 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   useFocusEffect(
     useCallback(() => {
       void consumeFloatingCapture({ showImportedAlert: false });
+      if (isAudioMode) {
+        consumeUploadedAudioDraft();
+      }
       if (!isAudioMode) {
         void loadRelations();
       }
-    }, [consumeFloatingCapture, isAudioMode, loadRelations]),
+    }, [consumeFloatingCapture, consumeUploadedAudioDraft, isAudioMode, loadRelations]),
   );
-
-  const handleImageLibraryMatch = useCallback(async () => {
-    if (!token) {
-      Alert.alert("未登录", "请先登录");
-      return;
-    }
-    if (!imageFiles.length) {
-      Alert.alert("缺少图片", "请先添加图片");
-      return;
-    }
-
-    const formData = buildDetectionSubmitFormData({
-      relation_profile_id: selectedRelationId,
-      image_files: imageFiles,
-    });
-
-    setMatchingImageBank(true);
-    try {
-      const response = await detectionsApi.submit(token, formData);
-      resetForm();
-      setRelationPickerVisible(false);
-      router.replace({
-        pathname: "/records/[id]",
-        params: { id: response.submission.id },
-      });
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : "图片库比对失败";
-      Alert.alert("图片库比对失败", message);
-    } finally {
-      setMatchingImageBank(false);
-    }
-  }, [imageFiles, resetForm, router, selectedRelationId, token]);
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
@@ -632,19 +526,26 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       }
 
       setSubmitting(true);
-      setAudioVerifyBatchJob(null);
 
       try {
-        const submitResponse = await detectionsApi.submitAudioVerifyBatch(token, audioFiles);
-        setAudioVerifyBatchJob({
-          batch_id: submitResponse.batch_id,
-          status: submitResponse.status,
-          created_at: submitResponse.created_at,
-          updated_at: submitResponse.created_at,
-          total_count: submitResponse.total_count,
-          completed_count: 0,
-          failed_count: 0,
-          items: submitResponse.items,
+        const audioPaths = audioFiles
+          .map((item) => item.filePath)
+          .filter((item): item is string => Boolean(item));
+
+        if (!audioPaths.length) {
+          Alert.alert("缺少音频", "请先从已上传音频中选择");
+          return;
+        }
+
+        const response = await detectionsApi.submitAudioVerifyRecordFromUploads(token, {
+          audio_paths: audioPaths,
+          relation_profile_id: selectedRelationId,
+        });
+        resetForm();
+        setRelationPickerVisible(false);
+        router.replace({
+          pathname: "/records/[id]",
+          params: { id: response.submission.id },
         });
       } catch (error) {
         const message = error instanceof ApiError ? error.message : "AI语音识别失败";
@@ -685,26 +586,6 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       setSubmitting(false);
     }
   }, [audioFiles, hasPayload, imageFiles, isAudioMode, resetForm, router, selectedRelationId, textContent, textFiles, token, videoFiles]);
-
-  useEffect(() => {
-    if (!token || !audioVerifyBatchJob) {
-      return;
-    }
-    if (audioVerifyBatchJob.status !== "pending" && audioVerifyBatchJob.status !== "running") {
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        const nextBatchJob = await detectionsApi.getAudioVerifyBatchJob(token, audioVerifyBatchJob.batch_id);
-        setAudioVerifyBatchJob(nextBatchJob);
-      } catch {
-        // ignore
-      }
-    }, 2200);
-
-    return () => clearTimeout(timer);
-  }, [audioVerifyBatchJob, token]);
 
   if (isTextMode) {
     return (
@@ -1127,19 +1008,22 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 title={isAudioMode ? "待识别音频" : "音频"}
                 count={audioFiles.length}
                 actions={
-                  <Pressable style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]} onPress={() => void pickDocumentsForSlot("audio", setAudioFiles)}>
-                    <MaterialCommunityIcons name="microphone-plus" size={16} color={palette.accentStrong} />
+                  <Pressable
+                    style={({ pressed }) => [styles.addButton, pressed && styles.buttonPressed]}
+                    onPress={() => {
+                      if (isAudioMode) {
+                        router.push("/detect-audio/select-uploaded");
+                        return;
+                      }
+                      void pickDocumentsForSlot("audio", setAudioFiles);
+                    }}
+                  >
+                    <MaterialCommunityIcons name={isAudioMode ? "database-search-outline" : "microphone-plus"} size={16} color={palette.accentStrong} />
                     <Text style={styles.addButtonText}>添加</Text>
                   </Pressable>
                 }
               />
-              <PreviewGrid
-                items={audioFiles}
-                onRemove={(key) => {
-                  setAudioFiles((prev) => prev.filter((item) => item.key !== key));
-                  setAudioVerifyBatchJob(null);
-                }}
-              />
+              <PreviewGrid items={audioFiles} onRemove={(key) => setAudioFiles((prev) => prev.filter((item) => item.key !== key))} />
             </View>
           ) : null}
 
@@ -1154,34 +1038,13 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
               <View style={styles.commandStatsRow}>
                 <CountPill label="文本" value={textContent.trim() ? 1 : 0} />
                 <CountPill label="附件" value={textFiles.length + audioFiles.length + imageFiles.length + videoFiles.length} />
-                <CountPill label="状态" value={isAudioMode && audioVerifyBatchJob ? formatAudioJobStatus(audioVerifyBatchJob.status) : "待提交"} />
+                <CountPill label="状态" value={isAudioMode ? audioStatusLabel : "待提交"} />
               </View>
             )}
             <View style={styles.commandActionColumn}>
-              {config.allow.image ? (
-                <Pressable
-                  style={({ pressed }) => [
-                    isVisualMode ? styles.secondaryButton : styles.submitButton,
-                    pressed && !isBusy && canImageLibraryMatch && styles.buttonPressed,
-                    (!canImageLibraryMatch || isBusy) && styles.submitDisabled,
-                  ]}
-                  onPress={() => void handleImageLibraryMatch()}
-                  disabled={!canImageLibraryMatch || isBusy}
-                >
-                  <MaterialCommunityIcons
-                    name="image-search-outline"
-                    size={18}
-                    color={isVisualMode ? palette.accentStrong : palette.inkInverse}
-                  />
-                  <Text style={[styles.submitButtonText, isVisualMode && styles.secondaryButtonText]}>
-                    {matchingImageBank ? "比对中" : "图片库比对"}
-                  </Text>
-                </Pressable>
-              ) : null}
-
               <Pressable
                 style={({ pressed }) => [
-                  isVisualMode ? styles.submitButton : config.allow.image ? styles.secondaryButton : styles.submitButton,
+                  styles.submitButton,
                   pressed && canSubmit && styles.buttonPressed,
                   !canSubmit && styles.submitDisabled,
                 ]}
@@ -1189,24 +1052,20 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 disabled={!canSubmit}
               >
                 {submitting ? (
-                  <ActivityIndicator size="small" color={isVisualMode || !config.allow.image ? palette.inkInverse : palette.accentStrong} />
+                  <ActivityIndicator size="small" color={palette.inkInverse} />
                 ) : (
                   <>
                     <MaterialCommunityIcons
                       name={isVisualMode ? "arrow-right" : config.allow.image ? "layers-triple-outline" : isAudioMode ? "waveform" : "arrow-right"}
                       size={18}
-                      color={isVisualMode || !config.allow.image ? palette.inkInverse : palette.accentStrong}
+                      color={palette.inkInverse}
                     />
-                    <Text style={[styles.submitButtonText, !isVisualMode && config.allow.image && styles.secondaryButtonText]}>
-                      {submitButtonLabel}
-                    </Text>
+                    <Text style={styles.submitButtonText}>{submitButtonLabel}</Text>
                   </>
                 )}
               </Pressable>
             </View>
           </View>
-
-          {isAudioMode && audioVerifyBatchJob ? <AudioBatchPanel batchJob={audioVerifyBatchJob} /> : null}
         </ScrollView>
       </SafeAreaView>
     </View>

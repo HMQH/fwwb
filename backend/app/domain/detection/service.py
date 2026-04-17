@@ -20,6 +20,8 @@ from app.domain.guardians import service as guardian_service
 from app.domain.image_fraud import service as image_fraud_service
 from app.domain.relations import repository as relation_repository
 from app.domain.relations import service as relation_service
+from app.domain.uploads.entity import UserUpload
+from app.domain.uploads import repository as upload_repository
 from app.domain.uploads import service as upload_service
 from app.domain.user import repository as user_repository
 from app.domain.user import profile_memory as user_profile_memory
@@ -33,12 +35,14 @@ from app.shared.storage.upload_paths import (
     safe_suffix,
     save_upload_bytes,
 )
+from app.domain.agent.trace import action_label
 
 logger = logging.getLogger(__name__)
 
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
 _HISTORY_SCOPES = {"day", "month", "year"}
 _LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
+_AUDIO_VERIFY_MODEL_LABEL = "audio-verify-v1"
 _PIPELINE_STEPS = [
     ("preprocess", "清洗"),
     ("embedding", "编码"),
@@ -47,6 +51,11 @@ _PIPELINE_STEPS = [
     ("llm_reasoning", "判别"),
     ("finalize", "完成"),
 ]
+
+def _load_audio_detector_module():
+    from app.domain.detection import audio_detector as audio_detector_module
+
+    return audio_detector_module
 
 
 def _utcnow() -> datetime:
@@ -407,6 +416,82 @@ def create_submission(
     return detection_repository.save_submission(db, row)
 
 
+def _normalize_requested_paths(paths: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        item = _strip(raw)
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个音频文件")
+    return normalized
+
+
+def _build_reused_storage_batch_id(prefix: str) -> str:
+    return f"reuse-{prefix}-{_utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
+def _is_reused_audio_submission(submission: DetectionSubmission) -> bool:
+    return bool(
+        submission.storage_batch_id.startswith("reuse-audio-")
+        and submission.audio_paths
+        and not submission.image_paths
+        and not submission.video_paths
+        and not _strip(submission.text_content)
+    )
+
+
+def _group_upload_rows_by_selected_paths(
+    *,
+    upload_rows: list[UserUpload],
+    selected_paths: list[str],
+    submission_id: uuid.UUID,
+) -> list[UserUpload]:
+    selected_set = set(selected_paths)
+    grouped_rows: list[UserUpload] = []
+    for upload in upload_rows:
+        matched_paths = [path for path in list(upload.file_paths or []) if path in selected_set]
+        if not matched_paths:
+            continue
+        grouped_rows.append(
+            UserUpload(
+                id=upload.id,
+                user_id=upload.user_id,
+                storage_batch_id=upload.storage_batch_id,
+                upload_type=upload.upload_type,
+                file_paths=matched_paths,
+                source_submission_id=submission_id,
+            )
+        )
+    return grouped_rows
+
+
+def _resolve_audio_upload_rows_for_paths(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    audio_paths: list[str],
+) -> list[UserUpload]:
+    selected_paths = _normalize_requested_paths(audio_paths)
+    upload_rows = upload_repository.list_for_user_by_type(
+        db,
+        user_id=user_id,
+        upload_type="audio",
+    )
+    owned_paths = {
+        path
+        for upload in upload_rows
+        for path in list(upload.file_paths or [])
+    }
+    invalid_paths = [path for path in selected_paths if path not in owned_paths]
+    if invalid_paths:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="存在无效音频路径")
+    return upload_rows
+
+
 def _build_job_snapshot(job: DetectionJob, result: DetectionResult | None = None) -> dict[str, Any]:
     return {
         "id": job.id,
@@ -542,6 +627,8 @@ def _build_submission_snapshot(
 
 
 def _job_profile_for_submission(submission: DetectionSubmission) -> tuple[str, str, str | None]:
+    if submission.audio_paths and not _strip(submission.text_content) and not submission.image_paths and not submission.video_paths:
+        return "audio_verify", "audio", _AUDIO_VERIFY_MODEL_LABEL
     if settings.agent_enabled and (submission.image_paths or submission.audio_paths or submission.video_paths):
         active_modalities = [
             name
@@ -646,6 +733,91 @@ def _build_agent_result_row(
         llm_model=_strip(str(analysis.get("llm_model") or "")) or None,
         result_detail=result_detail,
     )
+
+
+def _normalize_agent_trace(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        action_name = _strip(str(item.get("action") or item.get("key") or ""))
+        if not action_name:
+            continue
+        iteration_raw = item.get("iteration")
+        iteration = (
+            int(iteration_raw)
+            if isinstance(iteration_raw, int)
+            else int(float(iteration_raw))
+            if isinstance(iteration_raw, (float, str)) and str(iteration_raw).strip()
+            else index
+        )
+        normalized.append(
+            {
+                "id": _strip(str(item.get("id") or "")) or f"agent-step-{index}:{action_name}",
+                "action": action_name,
+                "key": action_name,
+                "label": _strip(str(item.get("label") or "")) or action_label(action_name),
+                "status": _strip(str(item.get("status") or "")) or "pending",
+                "iteration": iteration,
+            }
+        )
+    return normalized
+
+
+def _estimate_agent_progress_percent(progress_event: dict[str, Any]) -> int:
+    trace = _normalize_agent_trace(progress_event.get("execution_trace"))
+    completed_count = sum(1 for item in trace if item.get("status") == "completed")
+    running_count = sum(1 for item in trace if item.get("status") == "running")
+    selected_count = len([item for item in list(progress_event.get("selected_skills") or []) if _strip(str(item))])
+    followup_count = len([item for item in list(progress_event.get("followup_actions") or []) if _strip(str(item))])
+    pending_count = len([item for item in list(progress_event.get("pending_actions") or []) if _strip(str(item))])
+    total_count = max(1, selected_count + followup_count + 1, completed_count + running_count + pending_count)
+    progress_units = completed_count + (0.55 if running_count else 0.0)
+    ratio = min(1.0, progress_units / total_count)
+    return max(58, min(96, 58 + round(ratio * 38)))
+
+
+def _build_agent_progress_extra(
+    *,
+    submission: DetectionSubmission,
+    input_modality: str,
+    progress_event: dict[str, Any],
+) -> dict[str, Any]:
+    trace = _normalize_agent_trace(progress_event.get("execution_trace"))
+    used_modules: list[str] = []
+    reasoning_path: list[str] = []
+    for item in trace:
+        action_name = _strip(str(item.get("action") or item.get("key") or ""))
+        label = _strip(str(item.get("label") or ""))
+        if action_name and action_name not in used_modules:
+            used_modules.append(action_name)
+        if label and label not in reasoning_path:
+            reasoning_path.append(label)
+
+    current_action = _strip(str(progress_event.get("current_action") or "")) or None
+    return {
+        "submission_id": str(submission.id),
+        "input_modality": input_modality,
+        "agent_phase": _strip(str(progress_event.get("phase") or "")) or None,
+        "current_action": current_action,
+        "current_action_label": action_label(current_action) if current_action else None,
+        "used_modules": used_modules,
+        "execution_trace": trace,
+        "module_trace": trace,
+        "reasoning_path": reasoning_path,
+        "execution_plan": list(progress_event.get("execution_plan") or []),
+        "selected_skills": [str(item).strip() for item in list(progress_event.get("selected_skills") or []) if str(item).strip()],
+        "pending_actions": [str(item).strip() for item in list(progress_event.get("pending_actions") or []) if str(item).strip()],
+        "completed_actions": [str(item).strip() for item in list(progress_event.get("completed_actions") or []) if str(item).strip()],
+        "followup_actions": [str(item).strip() for item in list(progress_event.get("followup_actions") or []) if str(item).strip()],
+        "iteration_count": progress_event.get("iteration_count"),
+        "max_iterations": progress_event.get("max_iterations"),
+        "requires_followup": bool(progress_event.get("requires_followup")),
+        "stop_reason": progress_event.get("stop_reason"),
+    }
 
 
 def _resolve_submission_upload_path(relative_path: str) -> Path:
@@ -997,6 +1169,224 @@ def _build_image_only_result(submission: DetectionSubmission, job: DetectionJob)
     )
 
 
+def _build_audio_reasoning_graph(
+    *,
+    file_name: str,
+    fake_prob: float,
+    risk_level: str,
+    suspicious_count: int,
+    total_count: int,
+) -> dict[str, Any]:
+    verdict_label = "疑似 AI 合成" if risk_level != "low" else "真人概率更高"
+    return {
+        "nodes": [
+            {
+                "id": "audio_input",
+                "label": file_name,
+                "kind": "input",
+                "tone": "primary",
+                "lane": 0,
+                "order": 0,
+                "strength": 0.72,
+                "meta": {"count": total_count},
+            },
+            {
+                "id": "audio_feature",
+                "label": "声纹特征",
+                "kind": "signal",
+                "tone": "info",
+                "lane": 1,
+                "order": 0,
+                "strength": max(0.22, fake_prob),
+                "meta": {
+                    "fake_prob": _score_to_percent(fake_prob),
+                    "suspicious_count": suspicious_count,
+                },
+            },
+            {
+                "id": "audio_verdict",
+                "label": verdict_label,
+                "kind": "decision",
+                "tone": "danger" if risk_level != "low" else "success",
+                "lane": 2,
+                "order": 0,
+                "strength": max(0.28, fake_prob),
+                "meta": {"risk_level": risk_level},
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge:audio_input:audio_feature",
+                "source": "audio_input",
+                "target": "audio_feature",
+                "tone": "info",
+                "kind": "reasoning",
+                "weight": 0.64,
+            },
+            {
+                "id": "edge:audio_feature:audio_verdict",
+                "source": "audio_feature",
+                "target": "audio_verdict",
+                "tone": "danger" if risk_level != "low" else "success",
+                "kind": "decision",
+                "weight": max(0.42, fake_prob),
+            },
+        ],
+        "highlighted_path": ["audio_input", "audio_feature", "audio_verdict"],
+        "highlighted_labels": [file_name, "声纹特征", verdict_label],
+        "summary_metrics": {
+            "total_count": total_count,
+            "suspicious_count": suspicious_count,
+            "max_fake_prob": _score_to_percent(fake_prob),
+        },
+    }
+
+
+def _build_audio_only_result(submission: DetectionSubmission, job: DetectionJob) -> DetectionResult:
+    audio_detector_module = _load_audio_detector_module()
+    audio_items: list[dict[str, Any]] = []
+    failed_items: list[dict[str, str | None]] = []
+
+    for relative_path in list(submission.audio_paths or []):
+        file_name = Path(relative_path).name
+        full_path = _resolve_submission_upload_path(relative_path)
+        try:
+            result = audio_detector_module.predict_file(str(full_path))
+        except Exception as exc:  # noqa: BLE001
+            failed_items.append(
+                {
+                    "file_path": relative_path,
+                    "file_name": file_name,
+                    "status": "failed",
+                    "error_message": str(exc),
+                }
+            )
+            logger.exception("AI 语音合成识别失败，已跳过: %s", relative_path)
+            continue
+
+        audio_items.append(
+            {
+                "file_path": relative_path,
+                "file_name": file_name,
+                "status": "completed",
+                "error_message": None,
+                **result,
+            }
+        )
+
+    if not audio_items:
+        raise RuntimeError("音频样本读取失败，无法完成 AI 语音合成识别")
+
+    audio_items.sort(key=lambda item: float(item.get("fake_prob") or 0), reverse=True)
+    best_item = audio_items[0]
+    suspicious_items = [item for item in audio_items if str(item.get("label")) == "fake"]
+    suspicious_count = len(suspicious_items)
+    max_fake_prob = float(best_item.get("fake_prob") or 0)
+    best_file_name = str(best_item.get("file_name") or "音频")
+
+    if max_fake_prob >= 0.8:
+        risk_level = "high"
+        summary = "疑似 AI 语音合成"
+        final_reason = f"{best_file_name} 的合成概率达到 {_score_to_percent(max_fake_prob)}，建议停止依赖该语音直接做决定。"
+        advice = ["回拨本人核验", "不要直接转账", "保留录音证据"]
+    elif suspicious_count > 0 or max_fake_prob >= 0.5:
+        risk_level = "medium"
+        summary = "存在 AI 语音合成风险"
+        final_reason = f"{best_file_name} 呈现较高合成特征，最高合成概率 {_score_to_percent(max_fake_prob)}，建议继续人工核验。"
+        advice = ["通过视频或原号码复核", "先核对身份", "不要透露验证码"]
+    else:
+        risk_level = "low"
+        summary = "真人语音概率更高"
+        final_reason = f"{best_file_name} 的真人概率更高，当前未发现明显 AI 合成特征。"
+        advice = ["仍需结合上下文判断", "继续核验转账对象", "保留关键沟通记录"]
+
+    is_fraud = risk_level in {"high", "medium"}
+    confidence = max_fake_prob if is_fraud else float(best_item.get("genuine_prob") or 0)
+    reasoning_graph = _build_audio_reasoning_graph(
+        file_name=best_file_name,
+        fake_prob=max_fake_prob,
+        risk_level=risk_level,
+        suspicious_count=suspicious_count,
+        total_count=len(audio_items),
+    )
+    risk_evidence = [
+        f"{item.get('file_name')}: 合成概率 {_score_to_percent(float(item.get('fake_prob') or 0) )}"
+        for item in audio_items[:3]
+        if float(item.get("fake_prob") or 0) >= 0.5
+    ]
+    counter_evidence = (
+        [
+            f"{best_file_name}: 真人概率 {_score_to_percent(float(best_item.get('genuine_prob') or 0))}"
+        ]
+        if risk_level == "low"
+        else []
+    )
+    detail = {
+        "message": "已完成 AI 语音合成识别。",
+        "used_modules": ["preprocess", "embedding", "graph_reasoning", "finalize"],
+        "module_trace": [
+            {"key": "preprocess", "label": "预处理", "status": "completed"},
+            {"key": "embedding", "label": "声纹特征", "status": "completed"},
+            {"key": "graph_reasoning", "label": "风险判断", "status": "completed"},
+            {"key": "llm_reasoning", "label": "模型判别", "status": "pending", "enabled": False},
+            {"key": "finalize", "label": "完成", "status": "completed"},
+        ],
+        "reasoning_graph": reasoning_graph,
+        "reasoning_path": reasoning_graph["highlighted_labels"],
+        "final_score": _score_to_percent(max_fake_prob),
+        "risk_evidence": risk_evidence,
+        "counter_evidence": counter_evidence,
+        "audio_verify_items": audio_items + failed_items,
+        "failed_items": failed_items,
+        "suspicious_count": suspicious_count,
+        "total_count": len(audio_items),
+        "model_version": best_item.get("model_version"),
+    }
+
+    hit_rules = ["AI语音合成命中"] if is_fraud else []
+    return DetectionResult(
+        submission_id=submission.id,
+        job_id=job.id,
+        risk_level=risk_level,
+        fraud_type="AI语音合成" if is_fraud else "真人语音",
+        confidence=confidence,
+        is_fraud=is_fraud,
+        summary=summary,
+        final_reason=final_reason,
+        need_manual_review=risk_level == "medium",
+        stage_tags=["音频鉴伪", "AI语音识别"],
+        hit_rules=hit_rules,
+        rule_hits=[
+            {
+                "name": "AI语音合成识别",
+                "category": "audio_verify",
+                "risk_points": _score_to_percent(max_fake_prob),
+                "explanation": "上传音频已完成 AI 合成概率识别。",
+                "matched_texts": [best_file_name],
+                "stage_tag": "音频鉴伪",
+                "fraud_type_hint": "AI语音合成" if is_fraud else None,
+            }
+        ],
+        extracted_entities={
+            "audio_count": len(audio_items),
+            "suspicious_count": suspicious_count,
+            "top_audio": best_file_name,
+            "max_fake_probability": max_fake_prob,
+        },
+        input_highlights=[
+            {
+                "text": best_file_name,
+                "reason": f"合成概率 {_score_to_percent(max_fake_prob)}",
+            }
+        ],
+        retrieved_evidence=[],
+        counter_evidence=[],
+        advice=advice,
+        llm_model=str(best_item.get("model_version") or _AUDIO_VERIFY_MODEL_LABEL),
+        result_detail=detail,
+    )
+
+
 def _persist_result_side_effects(
     db: Session,
     *,
@@ -1031,6 +1421,16 @@ def _persist_result_side_effects(
         )
     except Exception:  # noqa: BLE001
         logger.exception("Guardian event sync failed: submission=%s", submission.id)
+
+
+def persist_result_with_side_effects(
+    db: Session,
+    *,
+    submission: DetectionSubmission,
+    result_row: DetectionResult,
+) -> DetectionResult:
+    _persist_result_side_effects(db, submission=submission, result_row=result_row)
+    return result_row
 
 
 def submit_detection(
@@ -1079,6 +1479,74 @@ def submit_detection(
         text_content=submission.text_content,
         upload_rows=upload_rows,
     )
+    job_type, input_modality, llm_model = _job_profile_for_submission(submission)
+    job = detection_repository.create_job(
+        db,
+        submission_id=submission.id,
+        job_type=job_type,
+        input_modality=input_modality,
+        llm_model=llm_model,
+    )
+    job = _initialize_job_progress(db, job)
+    if _should_process_inline(job):
+        job = process_job(db, job.id)
+    return submission, job
+
+
+def submit_audio_verify_from_upload_paths(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    relation_profile_id: uuid.UUID | None,
+    audio_paths: list[str],
+) -> tuple[DetectionSubmission, DetectionJob]:
+    if relation_profile_id is not None:
+        relation = relation_repository.get_profile_for_user(
+            db,
+            user_id=user_id,
+            relation_id=relation_profile_id,
+        )
+        if relation is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="关系对象不存在")
+
+    selected_paths = _normalize_requested_paths(audio_paths)
+    upload_rows = _resolve_audio_upload_rows_for_paths(
+        db,
+        user_id=user_id,
+        audio_paths=selected_paths,
+    )
+
+    submission = detection_repository.save_submission(
+        db,
+        DetectionSubmission(
+            user_id=user_id,
+            relation_profile_id=relation_profile_id,
+            storage_batch_id=_build_reused_storage_batch_id("audio"),
+            has_text=False,
+            has_audio=True,
+            has_image=False,
+            has_video=False,
+            text_paths=[],
+            audio_paths=selected_paths,
+            image_paths=[],
+            video_paths=[],
+            text_content=None,
+        ),
+    )
+
+    relation_service.attach_submission_context(
+        db,
+        user_id=submission.user_id,
+        relation_id=submission.relation_profile_id,
+        submission_id=submission.id,
+        text_content=None,
+        upload_rows=_group_upload_rows_by_selected_paths(
+            upload_rows=upload_rows,
+            selected_paths=selected_paths,
+            submission_id=submission.id,
+        ),
+    )
+
     job_type, input_modality, llm_model = _job_profile_for_submission(submission)
     job = detection_repository.create_job(
         db,
@@ -1230,16 +1698,27 @@ def rerun_submission(
     )
     if submission is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
-    upload_rows = upload_service.sync_submission_uploads(
-        db,
-        submission_id=submission.id,
-        user_id=submission.user_id,
-        storage_batch_id=submission.storage_batch_id,
-        text_paths=list(submission.text_paths or []),
-        audio_paths=list(submission.audio_paths or []),
-        image_paths=list(submission.image_paths or []),
-        video_paths=list(submission.video_paths or []),
-    )
+    if _is_reused_audio_submission(submission):
+        upload_rows = _group_upload_rows_by_selected_paths(
+            upload_rows=_resolve_audio_upload_rows_for_paths(
+                db,
+                user_id=submission.user_id,
+                audio_paths=list(submission.audio_paths or []),
+            ),
+            selected_paths=list(submission.audio_paths or []),
+            submission_id=submission.id,
+        )
+    else:
+        upload_rows = upload_service.sync_submission_uploads(
+            db,
+            submission_id=submission.id,
+            user_id=submission.user_id,
+            storage_batch_id=submission.storage_batch_id,
+            text_paths=list(submission.text_paths or []),
+            audio_paths=list(submission.audio_paths or []),
+            image_paths=list(submission.image_paths or []),
+            video_paths=list(submission.video_paths or []),
+        )
     relation_service.attach_submission_context(
         db,
         user_id=submission.user_id,
@@ -1368,8 +1847,30 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
             )
             try:
                 agent_service = _load_agent_service()
+
+                def agent_progress_callback(progress_event: dict[str, Any]) -> None:
+                    nonlocal job
+                    if not isinstance(progress_event, dict):
+                        return
+                    job = _set_job_progress(
+                        db,
+                        job,
+                        status="running",
+                        step="graph_reasoning",
+                        percent=_estimate_agent_progress_percent(progress_event),
+                        extra=_build_agent_progress_extra(
+                            submission=submission,
+                            input_modality=job.input_modality,
+                            progress_event=progress_event,
+                        ),
+                    )
+
                 with tracing_session():
-                    analysis = agent_service.analyze_submission(db=db, submission=submission)
+                    analysis = agent_service.analyze_submission_with_progress(
+                        db=db,
+                        submission=submission,
+                        progress_callback=agent_progress_callback,
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception("Agent detection failed, fallback to legacy pipeline: submission=%s", submission.id)
             else:
@@ -1403,6 +1904,48 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
                     },
                 )
                 return job
+
+        if job.job_type == "audio_verify":
+            job = _set_job_progress(
+                db,
+                job,
+                status="running",
+                step="embedding",
+                percent=36,
+                extra={
+                    "input_modality": "audio",
+                    "audio_count": len(submission.audio_paths or []),
+                },
+            )
+            result_row = _build_audio_only_result(submission, job)
+            _persist_result_side_effects(db, submission=submission, result_row=result_row)
+            result_detail = result_row.result_detail if isinstance(result_row.result_detail, dict) else {}
+            audio_items = result_detail.get("audio_verify_items") if isinstance(result_detail, dict) else []
+            top_audio_name = None
+            if isinstance(audio_items, list) and audio_items:
+                first_item = audio_items[0]
+                if isinstance(first_item, dict):
+                    top_audio_name = _strip(str(first_item.get("file_name") or ""))
+
+            job.rule_score = int(round(float(result_detail.get("final_score") or 0)))
+            job.retrieval_query = top_audio_name or None
+            job.llm_model = result_row.llm_model or _AUDIO_VERIFY_MODEL_LABEL
+            job.finished_at = _utcnow()
+            job = _set_job_progress(
+                db,
+                job,
+                status="completed",
+                step="finalize",
+                percent=100,
+                extra={
+                    "used_modules": result_detail.get("used_modules", []),
+                    "reasoning_path": result_detail.get("reasoning_path", []),
+                    "module_trace": result_detail.get("module_trace", []),
+                    "final_score": result_detail.get("final_score"),
+                    "reasoning_graph": result_detail.get("reasoning_graph"),
+                },
+            )
+            return job
 
         if not _strip(submission.text_content):
             if submission.image_paths:

@@ -42,3 +42,6 @@ class AIFaceCheckResponse(BaseModel):
     storage_batch_id: str | None = None
     stored_file_path: str | None = None
     upload_id: uuid.UUID | None = None
+    submission_id: uuid.UUID | None = None
+    job_id: uuid.UUID | None = None
+    result_id: uuid.UUID | None = None

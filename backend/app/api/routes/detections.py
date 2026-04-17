@@ -32,6 +32,7 @@ from app.shared.schemas.audio_verify import (
     AudioVerifyJobResponse,
     AudioVerifyJobSubmitResponse,
     AudioVerifyResponse,
+    AudioVerifyUploadsSubmitRequest,
 )
 from app.shared.schemas.detections import (
     DetectionHistoryItemResponse,
@@ -377,6 +378,33 @@ def get_audio_verify_batch_job(
     if batch_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该批量音频鉴伪任务")
     return AudioVerifyBatchJobResponse.model_validate(batch_job)
+
+
+@router.post(
+    "/audio/verify/records/submit-from-uploads",
+    response_model=DetectionSubmitAcceptedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_verify_audio_from_uploads(
+    body: AudioVerifyUploadsSubmitRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> DetectionSubmitAcceptedResponse:
+    submission, job = detection_service.submit_audio_verify_from_upload_paths(
+        db,
+        user_id=current.id,
+        relation_profile_id=body.relation_profile_id,
+        audio_paths=body.audio_paths,
+    )
+    if settings.detection_background_on_submit and job.status == "pending":
+        background_tasks.add_task(detection_service.process_job_in_new_session, job.id)
+    return DetectionSubmitAcceptedResponse.model_validate(
+        {
+            "submission": detection_service.build_submission_payload(db, submission),
+            "job": detection_service.get_job_detail(db, user_id=current.id, job_id=job.id),
+        }
+    )
 
 
 @router.post("/web/phishing/predict", response_model=WebPhishingDetectResponse)

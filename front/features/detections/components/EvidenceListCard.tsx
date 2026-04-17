@@ -3,6 +3,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
+import { localizeFraudType, sanitizeDisplayText } from "../displayText";
 import { getEvidenceReasonText, resolveEvidenceLinkUrl, resolveEvidencePreviewUrl } from "../evidencePreview";
 import type { DetectionEvidence } from "../types";
 
@@ -66,12 +67,12 @@ export function EvidenceListCard({
                 ) : null}
 
                 <Text style={styles.chunkText} numberOfLines={previewUrl ? 3 : 4}>
-                  {item.chunk_text}
+                  {sanitizeDisplayText(item.chunk_text)}
                 </Text>
-                {reasonText ? <Text style={styles.reasonText}>{reasonText}</Text> : null}
+                {reasonText ? <Text style={styles.reasonText}>{sanitizeDisplayText(reasonText)}</Text> : null}
 
                 <View style={styles.metaRow}>
-                  {item.fraud_type ? <Text style={styles.metaText}>{item.fraud_type}</Text> : null}
+                  {item.fraud_type ? <Text style={styles.metaText}>{localizeFraudType(item.fraud_type)}</Text> : null}
                   {item.data_source ? <Text style={styles.metaText}>{item.data_source}</Text> : null}
                 </View>
 
