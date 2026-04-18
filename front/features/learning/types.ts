@@ -68,6 +68,8 @@ export type LearningQuizQuestion = {
   explanation: string;
   source_case_id: string | null;
   source_case_title: string | null;
+  /** 案例摘要，有 source_case_id 时由后端从案例库注入 */
+  source_case_summary?: string | null;
 };
 
 export type LearningQuizSet = {

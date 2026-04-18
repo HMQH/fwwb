@@ -63,7 +63,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <AuthShell title="登录账户" description="" hero={<MeerkatWelcome />}>
+    <AuthShell adjustForKeyboard={false} title="" description="" hero={<MeerkatWelcome />}>
       {errors.form ? (
         <View style={styles.messageBox}>
           <Text style={styles.messageText}>{errors.form}</Text>

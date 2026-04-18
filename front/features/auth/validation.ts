@@ -1,3 +1,5 @@
+import type { UserRole } from "./types";
+
 export type LoginFormValues = {
   phone: string;
   password: string;
@@ -7,7 +9,7 @@ export type RegisterFormValues = {
   phone: string;
   displayName: string;
   birthDate: string;
-  role: "child" | "youth" | "elder" | "";
+  role: UserRole | "";
   password: string;
   passwordConfirm: string;
   agreeTerms: boolean;
@@ -93,7 +95,7 @@ export function validateRegister(values: RegisterFormValues): RegisterFormErrors
   }
 
   if (!values.role) {
-    errors.role = "请选择角色";
+    errors.role = "请选择人群";
   }
 
   if (values.password.length < 8) {

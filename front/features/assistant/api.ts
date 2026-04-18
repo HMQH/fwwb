@@ -6,8 +6,12 @@ import type {
   AssistantSession,
   AssistantSessionDetail,
   AssistantStreamAck,
+  AssistantStreamClarify,
+  AssistantStreamContextBudget,
   AssistantStreamDelta,
   AssistantStreamDone,
+  AssistantStreamPlan,
+  AssistantStreamStepEvent,
 } from "./types";
 
 const ASSISTANT_SEND_TIMEOUT_MS = 120_000;
@@ -16,6 +20,13 @@ type AssistantStreamHandlers = {
   onAck?: (payload: AssistantStreamAck) => void;
   onDelta?: (payload: AssistantStreamDelta) => void;
   onDone?: (payload: AssistantStreamDone) => void;
+  onContextBudget?: (payload: AssistantStreamContextBudget) => void;
+  onClarify?: (payload: AssistantStreamClarify) => void;
+  onPlan?: (payload: AssistantStreamPlan) => void;
+  onStepStart?: (payload: AssistantStreamStepEvent) => void;
+  onStepUpdate?: (payload: AssistantStreamStepEvent) => void;
+  onStepDone?: (payload: AssistantStreamStepEvent) => void;
+  onStepError?: (payload: AssistantStreamStepEvent) => void;
   onError?: (message: string) => void;
 };
 
@@ -85,6 +96,34 @@ function dispatchSseBlock(block: string, handlers: AssistantStreamHandlers) {
   }
   if (eventName === "done") {
     handlers.onDone?.(payload as AssistantStreamDone);
+    return;
+  }
+  if (eventName === "context_budget") {
+    handlers.onContextBudget?.(payload as AssistantStreamContextBudget);
+    return;
+  }
+  if (eventName === "clarify") {
+    handlers.onClarify?.(payload as AssistantStreamClarify);
+    return;
+  }
+  if (eventName === "plan") {
+    handlers.onPlan?.(payload as AssistantStreamPlan);
+    return;
+  }
+  if (eventName === "step_start") {
+    handlers.onStepStart?.(payload as AssistantStreamStepEvent);
+    return;
+  }
+  if (eventName === "step_update") {
+    handlers.onStepUpdate?.(payload as AssistantStreamStepEvent);
+    return;
+  }
+  if (eventName === "step_done") {
+    handlers.onStepDone?.(payload as AssistantStreamStepEvent);
+    return;
+  }
+  if (eventName === "step_error") {
+    handlers.onStepError?.(payload as AssistantStreamStepEvent);
     return;
   }
   if (eventName === "error" && payload && typeof payload === "object" && "message" in payload) {

@@ -65,6 +65,7 @@ class LearningQuizQuestionResponse(BaseModel):
     explanation: str
     source_case_id: str | None = None
     source_case_title: str | None = None
+    source_case_summary: str | None = None
 
 
 class LearningQuizSetResponse(BaseModel):

@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
+import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
@@ -133,7 +134,7 @@ function PreviewGrid({
           size={28}
           color={palette.inkSoft}
         />
-        <Text style={styles.previewEmptyText}>上传图片后在这里显示</Text>
+        <Text style={styles.previewEmptyText}>图片预览</Text>
       </View>
     );
   }
@@ -202,6 +203,208 @@ function AudioResultBlock({ result }: { result: AudioVerifyResponse }) {
   );
 }
 
+function ReasoningModeSwitch({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  const options = [
+    {
+      key: "standard",
+      label: "普通检测",
+      icon: "radar" as const,
+      active: !value,
+      tint: "#2F70E6",
+      soft: "#EAF2FF",
+    },
+    {
+      key: "deep",
+      label: "深度推理",
+      icon: "graph-outline" as const,
+      active: value,
+      tint: "#E38A57",
+      soft: "#FFF1E8",
+    },
+  ];
+
+  return (
+    <LinearGradient
+      colors={["#F7FBFF", "#EEF5FF"]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.modeSwitchShell}
+    >
+      {options.map((option) => (
+        <Pressable
+          key={option.key}
+          style={({ pressed }) => [
+            styles.modeOption,
+            option.active && styles.modeOptionActive,
+            pressed && styles.chipPressed,
+          ]}
+          onPress={() => onChange(option.key === "deep")}
+        >
+          {option.active ? (
+            <LinearGradient
+              colors={option.key === "deep" ? ["#FFF2EA", "#FFE2D0"] : ["#EEF5FF", "#DCEAFF"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.modeOptionGlow}
+            />
+          ) : null}
+          <View style={[styles.modeIconWrap, { backgroundColor: option.soft }]}>
+            <MaterialCommunityIcons name={option.icon} size={16} color={option.tint} />
+          </View>
+          <Text style={[styles.modeLabel, option.active && styles.modeLabelActive]}>{option.label}</Text>
+        </Pressable>
+      ))}
+    </LinearGradient>
+  );
+}
+
+function MetaChip({
+  icon,
+  label,
+  tone = "blue",
+}: {
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  label: string;
+  tone?: "blue" | "orange" | "slate";
+}) {
+  const toneMap = {
+    blue: { soft: "#EEF5FF", ink: "#2F70E6" },
+    orange: { soft: "#FFF1E8", ink: "#D96A4A" },
+    slate: { soft: "#F3F6FB", ink: "#5B6880" },
+  } as const;
+  const current = toneMap[tone];
+
+  return (
+    <View style={[styles.metaChip, { backgroundColor: current.soft }]}>
+      <MaterialCommunityIcons name={icon} size={13} color={current.ink} />
+      <Text style={[styles.metaChipText, { color: current.ink }]}>{label}</Text>
+    </View>
+  );
+}
+
+function TextModeHero({
+  deepReasoning,
+  textFileCount,
+  hasTextContent,
+}: {
+  deepReasoning: boolean;
+  textFileCount: number;
+  hasTextContent: boolean;
+}) {
+  const flow = deepReasoning
+    ? ["原文", "关系", "证据", "判定"]
+    : ["原文", "规则", "检索", "结果"];
+  const tags = deepReasoning
+    ? ["KAG", "风险链", "反证", "图谱"]
+    : ["FAST", "规则", "相似", "结果"];
+  const title = deepReasoning ? "关系图谱" : "规则检索";
+  const countLabel = `${textFileCount}${hasTextContent ? "+1" : ""}`;
+
+  if (deepReasoning) {
+    return (
+      <LinearGradient
+        colors={["#163A70", "#2859A8", "#6B98F7"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.modeHeroDeep}
+      >
+        <View style={styles.modeHeroTop}>
+          <View style={styles.modeHeroBadge}>
+            <Text style={styles.modeHeroBadgeText}>KAG</Text>
+          </View>
+          <View style={styles.modeHeroCount}>
+            <MaterialCommunityIcons name="file-document-multiple-outline" size={14} color="#F3F7FF" />
+            <Text style={styles.modeHeroCountText}>{countLabel}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.modeHeroTitle}>{title}</Text>
+
+        <View style={styles.modeHeroFlowRow}>
+          {flow.map((item, index) => (
+            <View key={item} style={styles.modeHeroFlowItem}>
+              <View
+                style={[
+                  styles.modeHeroFlowChip,
+                  index === flow.length - 1 && styles.modeHeroFlowChipActive,
+                ]}
+              >
+                <Text style={styles.modeHeroFlowText}>{item}</Text>
+              </View>
+              {index < flow.length - 1 ? (
+                <MaterialCommunityIcons name="arrow-right" size={14} color="rgba(243,247,255,0.76)" />
+              ) : null}
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.modeHeroTagRow}>
+          {tags.map((item) => (
+            <View key={item} style={styles.modeHeroTag}>
+              <Text style={styles.modeHeroTagText}>{item}</Text>
+            </View>
+          ))}
+        </View>
+      </LinearGradient>
+    );
+  }
+
+  return (
+    <View style={styles.modeHeroStandard}>
+      <View style={styles.modeHeroTop}>
+        <View style={styles.modeHeroBadgeStandard}>
+          <Text style={styles.modeHeroBadgeStandardText}>FAST</Text>
+        </View>
+        <View style={styles.modeHeroCountStandard}>
+          <MaterialCommunityIcons name="file-document-multiple-outline" size={14} color="#2F70E6" />
+          <Text style={styles.modeHeroCountStandardText}>{countLabel}</Text>
+        </View>
+      </View>
+
+      <Text style={styles.modeHeroTitleStandard}>{title}</Text>
+
+      <View style={styles.modeHeroFlowRowStandard}>
+        {flow.map((item, index) => (
+          <View key={item} style={styles.modeHeroFlowItem}>
+            <View
+              style={[
+                styles.modeHeroFlowChipStandard,
+                index === flow.length - 1 && styles.modeHeroFlowChipStandardActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.modeHeroFlowTextStandard,
+                  index === flow.length - 1 && styles.modeHeroFlowTextStandardActive,
+                ]}
+              >
+                {item}
+              </Text>
+            </View>
+            {index < flow.length - 1 ? (
+              <MaterialCommunityIcons name="arrow-right" size={14} color="#8DA7D3" />
+            ) : null}
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.modeHeroTagRowStandard}>
+        {tags.map((item) => (
+          <View key={item} style={styles.modeHeroTagStandard}>
+            <Text style={styles.modeHeroTagStandardText}>{item}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const router = useRouter();
   const { feature } = useLocalSearchParams<{ feature?: string }>();
@@ -213,6 +416,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const [imageFiles, setImageFiles] = useState<PreviewFile[]>([]);
   const [audioFile, setAudioFile] = useState<PreviewFile | null>(null);
   const [audioResult, setAudioResult] = useState<AudioVerifyResponse | null>(null);
+  const [deepReasoning, setDeepReasoning] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const isTextMode = mode === "text";
@@ -440,6 +644,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
     const formData = buildDetectionSubmitFormData({
       text_content: textContent,
+      deep_reasoning: deepReasoning,
       text_files: textFiles,
       image_files: imageFiles,
     });
@@ -460,7 +665,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     } finally {
       setSubmitting(false);
     }
-  }, [audioFile, canSubmit, imageFiles, isAudioMode, pickAudio, router, textContent, textFiles, token]);
+  }, [audioFile, canSubmit, deepReasoning, imageFiles, isAudioMode, pickAudio, router, textContent, textFiles, token]);
 
   const primaryLabel = useMemo(() => {
     if (isAudioMode) {
@@ -469,8 +674,14 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       }
       return audioResult ? "重新上传" : preset.buttonLabel;
     }
+    if (isTextMode && deepReasoning) {
+      return "开始KAG";
+    }
+    if (isTextMode) {
+      return "开始检测";
+    }
     return preset.buttonLabel;
-  }, [audioFile, audioResult, isAudioMode, preset.buttonLabel]);
+  }, [audioFile, audioResult, deepReasoning, isAudioMode, isTextMode, preset.buttonLabel]);
 
   const handlePrimaryPress = useCallback(() => {
     if (isAudioMode && (!audioFile || audioResult)) {
@@ -483,6 +694,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   return (
     <TaskScreen
       title={preset.title}
+      cardStyle={isTextMode && deepReasoning ? styles.taskCardDeep : undefined}
       footer={
         <TaskPrimaryButton
           label={primaryLabel}
@@ -503,21 +715,51 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           </View>
           <View style={styles.headCopy}>
             <Text style={styles.headTitle}>{preset.title}</Text>
-            <Text style={styles.headMeta}>
-              {isTextMode
-                ? `${textFiles.length} 个文本附件`
-                : isVisualMode
-                  ? `${imageFiles.length} 张图片`
-                  : audioFile
-                    ? "1 个音频"
-                    : "未上传"}
-            </Text>
+            <View style={styles.headMetaRow}>
+              {isTextMode ? (
+                <>
+                  <MetaChip
+                    icon={deepReasoning ? "graph-outline" : "radar"}
+                    label={deepReasoning ? "KAG" : "普通"}
+                    tone={deepReasoning ? "orange" : "blue"}
+                  />
+                  <MetaChip icon="file-document-outline" label={`${textFiles.length} 附件`} tone="slate" />
+                  <MetaChip
+                    icon={textContent.trim() ? "text-box-check-outline" : "text-box-outline"}
+                    label={textContent.trim() ? "已输入" : "未输入"}
+                    tone="slate"
+                  />
+                </>
+              ) : isVisualMode ? (
+                <>
+                  <MetaChip icon="image-multiple-outline" label={`${imageFiles.length} 图片`} tone="blue" />
+                  <MetaChip
+                    icon={imageFiles.length ? "check-circle-outline" : "image-off-outline"}
+                    label={imageFiles.length ? "已选择" : "未选择"}
+                    tone="slate"
+                  />
+                </>
+              ) : (
+                <>
+                  <MetaChip icon="waveform" label={audioFile ? "已上传" : "未上传"} tone="blue" />
+                  <MetaChip icon="file-music-outline" label={audioFile ? "1 音频" : "0 音频"} tone="slate" />
+                </>
+              )}
+            </View>
           </View>
         </View>
 
         {isTextMode ? (
           <>
-            <View style={styles.inputWrap}>
+            <ReasoningModeSwitch value={deepReasoning} onChange={setDeepReasoning} />
+
+            <TextModeHero
+              deepReasoning={deepReasoning}
+              textFileCount={textFiles.length}
+              hasTextContent={Boolean(textContent.trim())}
+            />
+
+            <View style={[styles.inputWrap, deepReasoning && styles.inputWrapDeep]}>
               <TextInput
                 style={styles.textInput}
                 value={textContent}
@@ -547,7 +789,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                   />
                 ))
               ) : (
-                <Text style={styles.placeholderLine}>支持补充文本附件</Text>
+                <Text style={styles.placeholderLine}>文本附件</Text>
               )}
             </View>
           </>
@@ -606,7 +848,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
             {audioResult ? <AudioResultBlock result={audioResult} /> : null}
 
             {!audioResult ? (
-              <Text style={styles.placeholderLine}>支持本地音频直接鉴别</Text>
+              <Text style={styles.placeholderLine}>本地鉴别</Text>
             ) : null}
           </>
         ) : null}
@@ -616,6 +858,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 }
 
 const styles = StyleSheet.create({
+  taskCardDeep: {
+    borderColor: "#CCDCF9",
+    backgroundColor: "#FBFDFF",
+  },
   cardContent: {
     flex: 1,
     gap: 16,
@@ -643,10 +889,214 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  headMeta: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 17,
+  headMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  metaChip: {
+    minHeight: 28,
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  metaChipText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroDeep: {
+    borderRadius: radius.xl,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 18,
+    gap: 14,
+    shadowColor: "#7CA2E8",
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  modeHeroStandard: {
+    borderRadius: radius.xl,
+    backgroundColor: "#F7FBFF",
+    borderWidth: 1,
+    borderColor: "#D7E6FC",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 18,
+    gap: 14,
+  },
+  modeHeroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  modeHeroBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  modeHeroBadgeText: {
+    color: "#F3F7FF",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  modeHeroCount: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  modeHeroCountText: {
+    color: "#F3F7FF",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroTitle: {
+    color: "#FFFFFF",
+    fontSize: 26,
+    lineHeight: 30,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  modeHeroFlowRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  modeHeroFlowItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  modeHeroFlowChip: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  modeHeroFlowChipActive: {
+    backgroundColor: "rgba(255,255,255,0.24)",
+  },
+  modeHeroFlowText: {
+    color: "#F3F7FF",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroTagRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  modeHeroTag: {
+    borderRadius: radius.md,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  modeHeroTagText: {
+    color: "#F3F7FF",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroBadgeStandard: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "#EAF2FF",
+  },
+  modeHeroBadgeStandardText: {
+    color: "#2F70E6",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  modeHeroCountStandard: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#DBE7FA",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  modeHeroCountStandardText: {
+    color: "#2F70E6",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroTitleStandard: {
+    color: palette.ink,
+    fontSize: 24,
+    lineHeight: 28,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  modeHeroFlowRowStandard: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  modeHeroFlowChipStandard: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D8E4F7",
+  },
+  modeHeroFlowChipStandardActive: {
+    backgroundColor: "#2F70E6",
+    borderColor: "#2F70E6",
+  },
+  modeHeroFlowTextStandard: {
+    color: "#5B6880",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeHeroFlowTextStandardActive: {
+    color: "#FFFFFF",
+  },
+  modeHeroTagRowStandard: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  modeHeroTagStandard: {
+    borderRadius: radius.md,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "#EEF5FF",
+  },
+  modeHeroTagStandardText: {
+    color: "#2F70E6",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
     fontFamily: fontFamily.body,
   },
   inputWrap: {
@@ -656,6 +1106,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
     padding: 12,
+  },
+  inputWrapDeep: {
+    borderColor: "#C8DBFA",
+    backgroundColor: "#F8FBFF",
+    shadowColor: "#B4CBF2",
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   textInput: {
     flex: 1,
@@ -669,6 +1128,56 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  modeSwitchShell: {
+    flexDirection: "row",
+    gap: 10,
+    borderRadius: radius.lg,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: "#D7E6FC",
+  },
+  modeOption: {
+    flex: 1,
+    minHeight: 70,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: "rgba(255,255,255,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(214,228,250,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    overflow: "hidden",
+  },
+  modeOptionActive: {
+    borderColor: "#9DBBE3",
+    shadowColor: "#ABC9F4",
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  modeOptionGlow: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modeIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modeLabel: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  modeLabelActive: {
+    color: palette.ink,
   },
   actionChip: {
     minHeight: 40,

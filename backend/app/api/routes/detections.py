@@ -98,6 +98,23 @@ def _form_uuid(value: object | None) -> uuid.UUID | None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="关系对象参数无效") from exc
 
 
+def _form_bool(value: object | None) -> bool | None:
+    normalized = _form_str(value)
+    if normalized is None:
+        return None
+    return normalized.lower() in {"1", "true", "yes", "on"}
+
+
+def _form_analysis_mode(value: object | None) -> str | None:
+    normalized = _form_str(value)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered in {"deep", "standard"}:
+        return lowered
+    return None
+
+
 def _read_audio_upload(audio_file: UploadFile) -> tuple[str, str]:
     filename = (audio_file.filename or "").strip()
     suffix = Path(filename.lower()).suffix or ".wav"
@@ -243,6 +260,10 @@ async def submit_detection(
 
     text_content = _form_str(form.get("text_content"))
     relation_profile_id = _form_uuid(form.get("relation_profile_id"))
+    requested_analysis_mode = _form_analysis_mode(form.get("analysis_mode"))
+    deep_reasoning = _form_bool(form.get("deep_reasoning"))
+    if requested_analysis_mode is not None:
+        deep_reasoning = requested_analysis_mode == "deep"
     bundles: dict[UploadKind, list[tuple[bytes, str]]] = {
         "text": await _collect_uploads(form, "text_files", max_bytes=max_b),
         "audio": await _collect_uploads(form, "audio_files", max_bytes=max_b),
@@ -257,6 +278,7 @@ async def submit_detection(
         max_upload_bytes=max_b,
         text_content=text_content,
         relation_profile_id=relation_profile_id,
+        deep_reasoning=deep_reasoning,
         file_bundles=bundles,
     )
     if settings.detection_background_on_submit and job.status == "pending":

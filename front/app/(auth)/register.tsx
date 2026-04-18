@@ -22,6 +22,7 @@ import {
   formatBirthDateInput,
   isValidBirthDate,
   normalizePhone,
+  roleOptions,
   useAuth,
   validateRegister,
   type LocalImageAsset,
@@ -33,32 +34,6 @@ import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 const fallbackAvatar = require("../../assets/images/anti-fraud-logo.png");
-
-const roleOptions: {
-  value: UserRole;
-  title: string;
-  detail: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-}[] = [
-  {
-    value: "child",
-    title: "未成年守护",
-    detail: "偏重游戏交易、陌生链接与账号共享场景",
-    icon: "baby-face-outline",
-  },
-  {
-    value: "youth",
-    title: "日常防护",
-    detail: "偏重兼职返利、客服冒充与验证码风险",
-    icon: "account-outline",
-  },
-  {
-    value: "elder",
-    title: "长者守护",
-    detail: "偏重转账核验、亲友冒充与陌生来电风险",
-    icon: "human-cane",
-  },
-];
 
 const stepItems = [
   {
@@ -441,19 +416,12 @@ export default function RegisterScreen() {
                 pressed && styles.roleCardPressed,
               ]}
             >
-              <View style={[styles.roleIconWrap, active && styles.roleIconWrapActive]}>
-                <MaterialCommunityIcons
-                  name={item.icon}
-                  size={20}
-                  color={active ? palette.inkInverse : palette.accentStrong}
-                />
+              <View style={[styles.roleImageWrap, { backgroundColor: item.soft }]}>
+                <Image source={item.image} style={styles.roleImage} resizeMode="cover" />
               </View>
               <View style={styles.roleBody}>
                 <Text style={[styles.roleTitle, active && styles.roleTitleActive]}>
-                  {item.title}
-                </Text>
-                <Text style={[styles.roleDetail, active && styles.roleDetailActive]}>
-                  {item.detail}
+                  {item.label}
                 </Text>
               </View>
             </Pressable>
@@ -732,16 +700,17 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.body,
   },
   roleList: {
-    gap: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
   },
   roleCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    width: "48%",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderRadius: radius.lg,
-    backgroundColor: palette.surfaceSoft,
+    backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.line,
   },
@@ -752,20 +721,18 @@ const styles = StyleSheet.create({
   roleCardPressed: {
     opacity: 0.92,
   },
-  roleIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: palette.accentSoft,
+  roleImageWrap: {
+    width: "100%",
+    height: 128,
+    borderRadius: 18,
+    overflow: "hidden",
   },
-  roleIconWrapActive: {
-    backgroundColor: "rgba(255,255,255,0.18)",
+  roleImage: {
+    width: "100%",
+    height: "100%",
   },
   roleBody: {
-    flex: 1,
-    gap: 2,
+    gap: 6,
   },
   roleTitle: {
     color: palette.ink,
@@ -776,15 +743,6 @@ const styles = StyleSheet.create({
   },
   roleTitleActive: {
     color: palette.inkInverse,
-  },
-  roleDetail: {
-    color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: fontFamily.body,
-  },
-  roleDetailActive: {
-    color: "rgba(255,255,255,0.86)",
   },
   confirmBlock: {
     gap: 12,

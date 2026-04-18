@@ -4,10 +4,12 @@ import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -16,7 +18,6 @@ import { roleMeta, useAuth } from "@/features/auth";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { profileMemoryApi } from "./api";
-import { MemoryMarkdown } from "./MemoryMarkdown";
 import type { ProfileMemoryDocument, ProfileMemoryHistoryItem } from "./types";
 
 function clampScore(value: number | null | undefined, fallback: number) {
@@ -42,7 +43,13 @@ function formatDateTime(value?: string | null) {
 }
 
 function formatSourceLabel(source: string) {
-  return source === "assistant" ? "助手" : source === "detection" ? "检测" : "记忆";
+  if (source === "assistant") {
+    return "助手";
+  }
+  if (source === "detection") {
+    return "检测";
+  }
+  return "画像";
 }
 
 function getSafetyMeta(score: number) {
@@ -78,44 +85,11 @@ function getSafetyMeta(score: number) {
   };
 }
 
-function getUrgencyMeta(score: number) {
-  if (score >= 70) {
-    return {
-      label: "待沉淀",
-      icon: "lightning-bolt-circle" as const,
-      accent: "#D85E6A",
-      soft: "#FFE6EA",
-      track: "#F3BAC2",
-      text: "#C34653",
-    };
-  }
-
-  if (score >= 36) {
-    return {
-      label: "积累中",
-      icon: "progress-clock" as const,
-      accent: "#D68A1F",
-      soft: "#FFF2DF",
-      track: "#F3D19D",
-      text: "#B66D05",
-    };
-  }
-
-  return {
-    label: "低",
-    icon: "timer-sand-empty" as const,
-    accent: "#2F70E6",
-    soft: "#EAF2FF",
-    track: "#C7DBFF",
-    text: "#1E5CC7",
-  };
-}
-
 function getTimelineStatus(item: ProfileMemoryHistoryItem) {
   const promoted = item.snapshot?.promoted_now || item.snapshot?.promoted;
   if (promoted) {
     return {
-      label: "已入长期",
+      label: "已归纳",
       soft: "#EAF2FF",
       text: "#1E5CC7",
     };
@@ -128,8 +102,18 @@ function getTimelineStatus(item: ProfileMemoryHistoryItem) {
   };
 }
 
+function buildHistorySummary(item: ProfileMemoryHistoryItem) {
+  return (
+    item.snapshot?.merged_profile_summary?.trim() ||
+    item.snapshot?.candidate_memory?.trim() ||
+    item.summary?.trim() ||
+    "暂无"
+  );
+}
+
 export default function ProfileMemoryScreen() {
   const router = useRouter();
+  const { width: windowWidth } = useWindowDimensions();
   const { user, token, refreshCurrentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,23 +141,26 @@ export default function ProfileMemoryScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load])
+    }, [load]),
   );
 
   const role = user ? roleMeta[user.role] : null;
   const safetyScore = clampScore(user?.safety_score, 95);
-  const urgencyScore = clampScore(user?.memory_urgency_score, 0);
   const safetyMeta = getSafetyMeta(safetyScore);
-  const urgencyMeta = getUrgencyMeta(urgencyScore);
   const history = document?.history ?? [];
-  const historyCount = history.length;
-  const latestMemory = useMemo(
-    () =>
-      history.find((item) => item.snapshot?.candidate_memory || item.snapshot?.merged_profile_summary)?.snapshot
-        ?.candidate_memory ??
-      history.find((item) => item.snapshot?.merged_profile_summary)?.snapshot?.merged_profile_summary ??
-      null,
-    [history]
+  const latestItem = history[0] ?? null;
+  const latestSummary =
+    latestItem?.snapshot?.merged_profile_summary?.trim() ||
+    latestItem?.snapshot?.candidate_memory?.trim() ||
+    user?.profile_summary?.trim() ||
+    role?.detail ||
+    "暂无";
+
+  const recentItems = useMemo(() => history.slice(0, 5), [history]);
+  /** 内容区与卡片左右各 16，卡片之间留缝以便露出下一张边缘 */
+  const timelineCardWidth = useMemo(
+    () => Math.max(260, Math.round(windowWidth - 32 - 32 - 28)),
+    [windowWidth],
   );
 
   if (!user || !role || !token) {
@@ -196,7 +183,7 @@ export default function ProfileMemoryScreen() {
             </Pressable>
 
             <View style={styles.titleBlock}>
-              <Text style={styles.pageTitle}>用户画像</Text>
+              <Text style={styles.pageTitle}>个人画像</Text>
               <Text style={styles.pageSubtitle}>{user.display_name}</Text>
             </View>
           </View>
@@ -204,7 +191,7 @@ export default function ProfileMemoryScreen() {
           <View style={styles.heroCard}>
             <View style={styles.heroHead}>
               <View>
-                <Text style={styles.heroLabel}>长期画像</Text>
+                <Text style={styles.heroLabel}>当前人群</Text>
                 <Text style={styles.heroTitle}>{role.label}</Text>
               </View>
               <View style={[styles.statusPill, { backgroundColor: safetyMeta.soft }]}>
@@ -213,7 +200,18 @@ export default function ProfileMemoryScreen() {
               </View>
             </View>
 
-            <Text style={styles.heroSummary}>{user.profile_summary?.trim() || "系统待积累"}</Text>
+            <View style={styles.sectionHead}>
+              <Text style={styles.sectionTitle}>画像摘要</Text>
+              <Text style={styles.sectionMeta}>{formatDateTime(document?.updated_at)}</Text>
+            </View>
+            <View style={styles.summaryWithImageRow}>
+              <View style={styles.summaryTextColumn}>
+                <Text style={styles.summaryText}>{latestSummary}</Text>
+              </View>
+              <View style={[styles.heroImageCard, { backgroundColor: role.soft }]}>
+                <Image source={role.image} style={styles.heroImage} resizeMode="cover" />
+              </View>
+            </View>
 
             <View style={styles.metricRow}>
               <View style={[styles.metricCard, { backgroundColor: safetyMeta.soft }]}>
@@ -223,32 +221,13 @@ export default function ProfileMemoryScreen() {
                   <View style={[styles.progressFill, { width: `${safetyScore}%`, backgroundColor: safetyMeta.accent }]} />
                 </View>
               </View>
-
-              <View style={[styles.metricCard, { backgroundColor: urgencyMeta.soft }]}>
-                <Text style={styles.metricLabel}>紧迫值</Text>
-                <Text style={[styles.metricValue, { color: urgencyMeta.accent }]}>{urgencyScore}</Text>
-                <View style={[styles.progressTrack, { backgroundColor: urgencyMeta.track }]}>
-                  <View style={[styles.progressFill, { width: `${urgencyScore}%`, backgroundColor: urgencyMeta.accent }]} />
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.summaryGrid}>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>角色焦点</Text>
-                <Text style={styles.summaryText}>{role.tone}</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>记忆文件</Text>
-                <Text style={styles.summaryText}>{document?.path || "待生成"}</Text>
-              </View>
             </View>
           </View>
 
           <View style={styles.sectionCard}>
             <View style={styles.sectionHead}>
-              <Text style={styles.sectionTitle}>MEMORY.md</Text>
-              <Text style={styles.sectionMeta}>{document?.updated_at ? formatDateTime(document.updated_at) : "未生成"}</Text>
+              <Text style={styles.sectionTitle}>近期归纳</Text>
+              <Text style={styles.sectionMeta}>{history.length}</Text>
             </View>
 
             {loading ? (
@@ -260,51 +239,23 @@ export default function ProfileMemoryScreen() {
               <View style={styles.stateCard}>
                 <Text style={styles.stateText}>{error}</Text>
               </View>
-            ) : document?.markdown ? (
-              <View style={styles.markdownCard}>
-                <MemoryMarkdown markdown={document.markdown} />
-              </View>
-            ) : (
-              <View style={styles.stateCard}>
-                <Text style={styles.stateText}>暂无</Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHead}>
-              <Text style={styles.sectionTitle}>最新归纳</Text>
-              {latestMemory ? <Text style={styles.sectionMeta}>已生成</Text> : null}
-            </View>
-            <Text style={styles.latestMemory}>{latestMemory || "暂无"}</Text>
-          </View>
-
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHead}>
-              <Text style={styles.sectionTitle}>归纳记录</Text>
-              <Text style={styles.sectionMeta}>{historyCount}</Text>
-            </View>
-
-            {loading ? (
-              <View style={styles.stateCard}>
-                <ActivityIndicator size="small" color={palette.accentStrong} />
-                <Text style={styles.stateText}>加载中</Text>
-              </View>
-            ) : error ? (
-              <View style={styles.stateCard}>
-                <Text style={styles.stateText}>{error}</Text>
-              </View>
-            ) : history.length ? (
-              <View style={styles.timeline}>
-                {history.map((item) => {
-                  const snapshot = item.snapshot;
+            ) : recentItems.length ? (
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.timelineCarouselContent}
+              >
+                {recentItems.map((item) => {
                   const status = getTimelineStatus(item);
+                  const summary = buildHistorySummary(item);
+
                   return (
-                    <View key={item.id} style={styles.timelineCard}>
+                    <View key={item.id} style={[styles.timelineCard, { width: timelineCardWidth }]}>
                       <View style={styles.timelineHead}>
                         <View style={styles.timelineMeta}>
                           <Text style={styles.timelineTitle}>
-                            {snapshot?.candidate_memory || snapshot?.merged_profile_summary || snapshot?.event_title || "本次归纳"}
+                            {item.snapshot?.event_title?.trim() || item.summary?.trim() || "本次归纳"}
                           </Text>
                           <Text style={styles.timelineTime}>
                             {formatDateTime(item.created_at)} · {formatSourceLabel(item.source)}
@@ -316,30 +267,18 @@ export default function ProfileMemoryScreen() {
                         </View>
                       </View>
 
-                      <View style={styles.signalRow}>
-                        <View style={styles.signalItem}>
-                          <Text style={styles.signalItemLabel}>来源</Text>
-                          <Text style={styles.signalItemValue}>{formatSourceLabel(item.source)}</Text>
-                        </View>
-                        <View style={styles.signalItem}>
-                          <Text style={styles.signalItemLabel}>晋升分</Text>
-                          <Text style={styles.signalItemValue}>
-                            {Number.isFinite(snapshot?.promotion_score) ? Number(snapshot?.promotion_score).toFixed(2) : "—"}
-                          </Text>
-                        </View>
-                        <View style={styles.signalItem}>
-                          <Text style={styles.signalItemLabel}>紧迫</Text>
-                          <Text style={styles.signalItemValue}>{snapshot?.urgency_score_after ?? 0}</Text>
-                        </View>
-                      </View>
+                      <Text style={styles.timelineSummary}>{summary}</Text>
 
-                      {!!snapshot?.relation_name && <Text style={styles.timelineHint}>对象：{snapshot.relation_name}</Text>}
-                      {!!snapshot?.promotion_reason && <Text style={styles.timelineHint}>{snapshot.promotion_reason}</Text>}
-                      {!!snapshot?.merge_reason && <Text style={styles.timelineHint}>{snapshot.merge_reason}</Text>}
+                      {item.snapshot?.relation_name ? (
+                        <View style={styles.timelineFooter}>
+                          <MaterialCommunityIcons name="account-outline" size={14} color={palette.lineStrong} />
+                          <Text style={styles.timelineHint}>{item.snapshot.relation_name}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   );
                 })}
-              </View>
+              </ScrollView>
             ) : (
               <View style={styles.stateCard}>
                 <Text style={styles.stateText}>暂无</Text>
@@ -406,7 +345,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.line,
-    gap: 14,
+    gap: 16,
     ...panelShadow,
   },
   heroHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
@@ -419,8 +358,8 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: palette.ink,
-    fontSize: 20,
-    lineHeight: 26,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
@@ -438,12 +377,56 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  heroSummary: {
+  summaryWithImageRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  summaryTextColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroImageCard: {
+    width: 108,
+    borderRadius: 18,
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+  heroImage: {
+    width: "100%",
+    height: 140,
+  },
+  sectionCard: {
+    borderRadius: radius.xl,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    gap: 14,
+    ...panelShadow,
+  },
+  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  sectionTitle: {
     color: palette.ink,
-    fontSize: 18,
-    lineHeight: 28,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: "800",
     fontFamily: fontFamily.display,
+  },
+  sectionMeta: {
+    color: palette.accentStrong,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  summaryText: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
   },
   metricRow: { flexDirection: "row", gap: 10 },
   metricCard: {
@@ -476,73 +459,8 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: radius.pill,
   },
-  summaryGrid: { flexDirection: "row", gap: 10 },
-  summaryCard: {
-    flex: 1,
-    borderRadius: radius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    backgroundColor: palette.surfaceSoft,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: 8,
-  },
-  summaryLabel: {
-    color: palette.inkSoft,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  summaryText: {
-    color: palette.ink,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  sectionCard: {
-    borderRadius: radius.xl,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: 14,
-    ...panelShadow,
-  },
-  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  sectionTitle: {
-    color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "800",
-    fontFamily: fontFamily.display,
-  },
-  sectionMeta: {
-    color: palette.accentStrong,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  markdownCard: {
-    borderRadius: radius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    backgroundColor: palette.background,
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  latestMemory: {
-    color: palette.ink,
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
   stateCard: {
-    minHeight: 96,
+    minHeight: 104,
     borderRadius: radius.lg,
     backgroundColor: palette.surfaceSoft,
     alignItems: "center",
@@ -555,8 +473,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
-  timeline: { gap: 10 },
+  timelineCarouselContent: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    paddingRight: 6,
+  },
   timelineCard: {
+    marginRight: 10,
     borderRadius: radius.lg,
     paddingHorizontal: 14,
     paddingVertical: 14,
@@ -565,7 +488,12 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     gap: 10,
   },
-  timelineHead: { flexDirection: "row", gap: 10, alignItems: "flex-start", justifyContent: "space-between" },
+  timelineHead: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+  },
   timelineMeta: { flex: 1, gap: 4 },
   timelineTitle: {
     color: palette.ink,
@@ -591,30 +519,16 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  signalRow: { flexDirection: "row", gap: 8 },
-  signalItem: {
-    flex: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: 4,
-  },
-  signalItemLabel: {
-    color: palette.inkSoft,
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  signalItemValue: {
+  timelineSummary: {
     color: palette.ink,
     fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "800",
+    lineHeight: 20,
     fontFamily: fontFamily.body,
+  },
+  timelineFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   timelineHint: {
     color: palette.inkSoft,

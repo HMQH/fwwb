@@ -24,14 +24,11 @@ from app.domain.user.profile_memory_prompts import (
     build_profile_merge_prompts,
 )
 from app.shared.core.config import settings
+from app.shared.user_roles import USER_ROLE_LABELS
 
 logger = logging.getLogger(__name__)
 
-_USER_ROLE_LABELS = {
-    "child": "未成年人",
-    "youth": "青年/成年人",
-    "elder": "老年人",
-}
+_USER_ROLE_LABELS = USER_ROLE_LABELS
 
 _MEMORY_BUCKET_LABELS = {
     "risk_pattern": "风险模式",
