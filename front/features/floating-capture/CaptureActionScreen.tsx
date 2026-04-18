@@ -1,485 +1,390 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useFocusEffect } from "@react-navigation/native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useAuth } from "@/features/auth";
-import { setUploadArchiveDraft } from "@/features/uploads/archive-session";
-import { flattenUserUploads } from "@/features/uploads/asset-utils";
 import { uploadsApi } from "@/features/uploads/api";
-import type { UserUpload } from "@/features/uploads/types";
 import { ApiError } from "@/shared/api";
-import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { fontFamily, palette, radius } from "@/shared/theme";
+import { TaskPrimaryButton, TaskScreen } from "@/shared/ui/TaskScreen";
 
+import { floatingCaptureService } from "./service";
 import {
   clearRecentFloatingCaptureDraft,
-  floatingCaptureService,
   patchRecentFloatingCaptureUpload,
   peekRecentFloatingCaptureDraft,
   setRecentFloatingCaptureDraft,
+  stageRecentFloatingCapture,
   type FloatingCaptureFile,
-} from "./index";
+} from "./session";
+import type { FloatingCaptureStatus } from "./types";
 
-function ActionCard({
-  icon,
-  label,
-  disabled,
-  onPress,
-}: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  label: string;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.actionCard,
-        disabled && styles.actionCardDisabled,
-        pressed && !disabled && styles.buttonPressed,
-      ]}
-    >
-      <View style={styles.actionIconWrap}>
-        <MaterialCommunityIcons name={icon} size={20} color={palette.accentStrong} />
-      </View>
-      <Text style={styles.actionLabel}>{label}</Text>
-      <MaterialCommunityIcons name="chevron-right" size={20} color={palette.inkSoft} />
-    </Pressable>
-  );
-}
+const fallbackStatus: FloatingCaptureStatus = {
+  platformSupported: false,
+  overlayPermission: false,
+  bubbleActive: false,
+  hasPendingCapture: false,
+  screenCapturePermission: false,
+};
 
 export default function CaptureActionScreen() {
   const router = useRouter();
-  const { captureId } = useLocalSearchParams<{ captureId?: string }>();
   const { token } = useAuth();
-  const latestCaptureUriRef = useRef<string | null>(null);
-
+  const [captureStatus, setCaptureStatus] = useState<FloatingCaptureStatus>(fallbackStatus);
   const [captureFile, setCaptureFile] = useState<FloatingCaptureFile | null>(null);
-  const [upload, setUpload] = useState<UserUpload | null>(null);
-  const [loadingCapture, setLoadingCapture] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  const applyCapture = useCallback((file: FloatingCaptureFile | null, nextUpload: UserUpload | null) => {
-    latestCaptureUriRef.current = file?.uri ?? null;
-    setCaptureFile(file);
-    setUpload(nextUpload);
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [archiving, setArchiving] = useState(false);
 
   const loadCapture = useCallback(async () => {
-    setLoadingCapture(true);
+    setLoading(true);
+    const status = await floatingCaptureService.getStatus();
+    setCaptureStatus(status);
 
     const captured = await floatingCaptureService.consumePendingCapture();
     if (captured) {
-      applyCapture(captured, null);
-      setUploadError(null);
-      setUploading(false);
-      setRecentFloatingCaptureDraft({ file: captured, upload: null, target: null });
-      setLoadingCapture(false);
+      setRecentFloatingCaptureDraft({ file: captured });
+      setCaptureFile(captured);
+      setLoading(false);
       return;
     }
 
-    const existing = peekRecentFloatingCaptureDraft();
-    applyCapture(existing?.file ?? null, existing?.upload ?? null);
-    setLoadingCapture(false);
-  }, [applyCapture]);
-
-  useEffect(() => {
-    void loadCapture();
-  }, [captureId, loadCapture]);
+    setCaptureFile(peekRecentFloatingCaptureDraft()?.file ?? null);
+    setLoading(false);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       void loadCapture();
-    }, [loadCapture])
+    }, [loadCapture]),
   );
 
-  const uploadCapture = useCallback(
-    async (file: FloatingCaptureFile) => {
-      if (!token) {
-        setUploadError("请先登录");
+  const actionLabel = useMemo(() => {
+    if (loading) {
+      return "读取中";
+    }
+    if (captureFile) {
+      return "继续截图";
+    }
+    if (!floatingCaptureService.isSupported()) {
+      return "当前设备不支持";
+    }
+    if (!captureStatus.overlayPermission) {
+      return "开启悬浮权限";
+    }
+    return captureStatus.bubbleActive ? "关闭悬浮助手" : "开启悬浮助手";
+  }, [captureFile, captureStatus.bubbleActive, captureStatus.overlayPermission, loading]);
+
+  const openTarget = useCallback(
+    (target: "visual" | "ai-face") => {
+      stageRecentFloatingCapture(target);
+      if (target === "ai-face") {
+        router.replace("/detect-ai-face" as never);
         return;
       }
-
-      const targetUri = file.uri;
-      setUploading(true);
-      setUploadError(null);
-      try {
-        const result = await uploadsApi.uploadImage(file, token);
-        if (latestCaptureUriRef.current !== targetUri) {
-          return;
-        }
-        setUpload(result);
-        patchRecentFloatingCaptureUpload(result);
-      } catch (error) {
-        if (latestCaptureUriRef.current !== targetUri) {
-          return;
-        }
-        const message = error instanceof ApiError ? error.message : "保存失败";
-        setUploadError(message);
-      } finally {
-        if (latestCaptureUriRef.current === targetUri) {
-          setUploading(false);
-        }
-      }
+      router.replace("/detect-visual?feature=image" as never);
     },
-    [token]
+    [router],
   );
 
-  useEffect(() => {
-    if (!captureFile || upload || uploading || uploadError) {
-      return;
-    }
-    void uploadCapture(captureFile);
-  }, [captureFile, upload, uploading, uploadError, uploadCapture]);
-
-  const previewSource = useMemo(() => {
+  const archiveToUploads = useCallback(async () => {
     if (!captureFile) {
-      return null;
-    }
-    return { uri: captureFile.uri };
-  }, [captureFile]);
-
-  const handleOpenAIFace = useCallback(() => {
-    if (!captureFile || !upload) {
       return;
     }
-    setRecentFloatingCaptureDraft({ file: captureFile, upload, target: "ai-face" });
-    router.replace("/detect-ai-face" as never);
-  }, [captureFile, router, upload]);
-
-  const handleOpenVisual = useCallback(() => {
-    if (!captureFile || !upload) {
-      return;
-    }
-    setRecentFloatingCaptureDraft({ file: captureFile, upload, target: "visual" });
-    router.replace("/detect-visual" as never);
-  }, [captureFile, router, upload]);
-
-  const handleArchive = useCallback(() => {
-    if (!upload) {
+    if (!token) {
+      Alert.alert("未登录", "请先登录");
       return;
     }
 
-    const asset = flattenUserUploads([upload])[0];
-    if (!asset) {
-      Alert.alert("保存失败", "未找到图片记录");
+    setArchiving(true);
+    try {
+      const upload = await uploadsApi.uploadImage(captureFile, token);
+      patchRecentFloatingCaptureUpload(upload);
+      router.replace("/uploads" as never);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "归档失败";
+      Alert.alert("归档失败", message);
+    } finally {
+      setArchiving(false);
+    }
+  }, [captureFile, router, token]);
+
+  const handlePrimaryPress = useCallback(async () => {
+    if (loading) {
       return;
     }
 
-    clearRecentFloatingCaptureDraft();
-    setUploadArchiveDraft([asset]);
-    router.replace("/uploads/archive" as never);
-  }, [router, upload]);
+    if (captureFile) {
+      clearRecentFloatingCaptureDraft();
+      setCaptureFile(null);
+      if (!captureStatus.bubbleActive && floatingCaptureService.isSupported() && captureStatus.overlayPermission) {
+        const nextStatus = await floatingCaptureService.startAssistant();
+        setCaptureStatus(nextStatus);
+      }
+      return;
+    }
+
+    if (!floatingCaptureService.isSupported()) {
+      Alert.alert("当前设备不支持", "仅安卓 development build 支持悬浮截图");
+      return;
+    }
+
+    if (!captureStatus.overlayPermission) {
+      floatingCaptureService.openOverlaySettings();
+      return;
+    }
+
+    if (captureStatus.bubbleActive) {
+      const nextStatus = await floatingCaptureService.stopAssistant();
+      setCaptureStatus(nextStatus);
+      return;
+    }
+
+    const nextStatus = await floatingCaptureService.startAssistant();
+    setCaptureStatus(nextStatus);
+    Alert.alert("悬浮助手已开启", "切到任意页面后即可截图");
+  }, [captureFile, captureStatus.bubbleActive, captureStatus.overlayPermission, loading]);
 
   return (
-    <View style={styles.root}>
-      <View style={styles.backgroundOrbTop} />
-      <View style={styles.backgroundOrbBottom} />
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.headerRow}>
-            <Pressable style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
-              <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
-            </Pressable>
-            <Text style={styles.title}>截图去向</Text>
-            <View style={styles.headerSpacer} />
+    <TaskScreen
+      title="悬浮窗截图"
+      footer={
+        <TaskPrimaryButton
+          label={actionLabel}
+          onPress={() => void handlePrimaryPress()}
+          disabled={loading}
+        />
+      }
+    >
+      <View style={styles.content}>
+        <View style={styles.headRow}>
+          <View style={[styles.iconWrap, { backgroundColor: "#EEF5FF" }]}>
+            <MaterialCommunityIcons
+              name="gesture-tap-button"
+              size={22}
+              color="#4C7DFF"
+            />
           </View>
-
-          <View style={styles.previewCard}>
-            {loadingCapture ? (
-              <View style={styles.stateWrap}>
-                <ActivityIndicator size="small" color={palette.accentStrong} />
-                <Text style={styles.stateText}>读取中</Text>
-              </View>
-            ) : previewSource ? (
-              <Image source={previewSource} style={styles.previewImage} contentFit="cover" />
-            ) : (
-              <View style={styles.stateWrap}>
-                <MaterialCommunityIcons name="image-off-outline" size={22} color={palette.inkSoft} />
-                <Text style={styles.stateText}>没有截图</Text>
-              </View>
-            )}
+          <View style={styles.headCopy}>
+            <Text style={styles.headTitle}>悬浮窗截图</Text>
+            <Text style={styles.headMeta}>
+              {captureFile ? "截图已就绪" : captureStatus.bubbleActive ? "助手已开启" : "待开启"}
+            </Text>
           </View>
+        </View>
 
+        <View style={styles.statusGrid}>
           <View style={styles.statusCard}>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>上传</Text>
-              {upload ? (
-                <View style={styles.statusBadgeSuccess}>
-                  <Text style={styles.statusBadgeTextSuccess}>已保存</Text>
-                </View>
-              ) : uploading ? (
-                <View style={styles.statusBadgeNeutral}>
-                  <ActivityIndicator size="small" color={palette.accentStrong} />
-                  <Text style={styles.statusBadgeTextNeutral}>保存中</Text>
-                </View>
-              ) : uploadError ? (
-                <View style={styles.statusBadgeError}>
-                  <Text style={styles.statusBadgeTextError}>失败</Text>
-                </View>
-              ) : (
-                <View style={styles.statusBadgeNeutral}>
-                  <Text style={styles.statusBadgeTextNeutral}>等待</Text>
-                </View>
-              )}
+            <Text style={styles.statusLabel}>悬浮权限</Text>
+            <Text style={styles.statusValue}>
+              {captureStatus.overlayPermission ? "已开启" : "未开启"}
+            </Text>
+          </View>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>助手状态</Text>
+            <Text style={styles.statusValue}>
+              {captureStatus.bubbleActive ? "运行中" : "未运行"}
+            </Text>
+          </View>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>待处理截图</Text>
+            <Text style={styles.statusValue}>{captureFile ? "1 张" : "0 张"}</Text>
+          </View>
+        </View>
+
+        <View style={styles.previewWrap}>
+          {captureFile ? (
+            <Image
+              source={{ uri: captureFile.uri }}
+              style={styles.previewImage}
+              contentFit="contain"
+            />
+          ) : (
+            <View style={styles.previewEmpty}>
+              <MaterialCommunityIcons
+                name="image-outline"
+                size={28}
+                color={palette.inkSoft}
+              />
+              <Text style={styles.previewEmptyText}>截图会显示在这里</Text>
             </View>
+          )}
+        </View>
 
-            {uploadError ? (
-              <View style={styles.retryWrap}>
-                <Text style={styles.errorText} numberOfLines={2}>
-                  {uploadError}
-                </Text>
-                <Pressable
-                  style={({ pressed }) => [styles.retryButton, pressed && styles.buttonPressed]}
-                  onPress={() => {
-                    if (captureFile) {
-                      void uploadCapture(captureFile);
-                    }
-                  }}
-                >
-                  <MaterialCommunityIcons name="refresh" size={16} color={palette.accentStrong} />
-                  <Text style={styles.retryText}>重试</Text>
-                </Pressable>
+        {captureFile ? (
+          <View style={styles.targetGrid}>
+            <Pressable
+              style={({ pressed }) => [styles.targetCard, pressed && styles.pressed]}
+              onPress={() => openTarget("visual")}
+            >
+              <View style={[styles.targetIconWrap, { backgroundColor: "#F2EEFF" }]}>
+                <MaterialCommunityIcons name="image-search-outline" size={18} color="#6C63FF" />
               </View>
-            ) : null}
-          </View>
+              <Text style={styles.targetTitle}>图片检测</Text>
+              <Text style={styles.targetMeta}>进入图片检测</Text>
+            </Pressable>
 
-          <View style={styles.actionList}>
-            <ActionCard
-              icon="face-recognition"
-              label="AI换脸"
-              disabled={!upload || !captureFile}
-              onPress={handleOpenAIFace}
-            />
-            <ActionCard
-              icon="image-search-outline"
-              label="图片检测"
-              disabled={!upload || !captureFile}
-              onPress={handleOpenVisual}
-            />
-            <ActionCard
-              icon="archive-arrow-down-outline"
-              label="归档到人"
-              disabled={!upload}
-              onPress={handleArchive}
-            />
+            <Pressable
+              style={({ pressed }) => [styles.targetCard, pressed && styles.pressed]}
+              onPress={() => openTarget("ai-face")}
+            >
+              <View style={[styles.targetIconWrap, { backgroundColor: "#FFF1F8" }]}>
+                <MaterialCommunityIcons name="face-recognition" size={18} color="#D65FA1" />
+              </View>
+              <Text style={styles.targetTitle}>AI换脸检测</Text>
+              <Text style={styles.targetMeta}>进入AI换脸鉴别</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.targetCard,
+                styles.targetCardWide,
+                archiving && styles.targetCardDisabled,
+                pressed && styles.pressed,
+              ]}
+              disabled={archiving}
+              onPress={() => void archiveToUploads()}
+            >
+              <View style={[styles.targetIconWrap, { backgroundColor: "#EEF5FF" }]}>
+                <MaterialCommunityIcons name="folder-upload-outline" size={18} color="#4C7DFF" />
+              </View>
+              <Text style={styles.targetTitle}>归档到上传管理</Text>
+              <Text style={styles.targetMeta}>{archiving ? "归档中" : "上传后进入上传管理"}</Text>
+            </Pressable>
           </View>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
+        ) : null}
+      </View>
+    </TaskScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: palette.background },
-  safeArea: { flex: 1 },
-  backgroundOrbTop: {
-    position: "absolute",
-    top: -90,
-    left: -34,
-    width: 220,
-    height: 220,
-    borderRadius: 999,
-    backgroundColor: "rgba(117, 167, 255, 0.14)",
-  },
-  backgroundOrbBottom: {
-    position: "absolute",
-    right: -74,
-    bottom: 90,
-    width: 220,
-    height: 220,
-    borderRadius: 999,
-    backgroundColor: "rgba(196, 218, 255, 0.18)",
-  },
   content: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
-    gap: 14,
+    flex: 1,
+    gap: 16,
   },
-  headerRow: {
+  headRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 12,
   },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  iconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
   },
-  headerSpacer: {
-    width: 38,
-    height: 38,
+  headCopy: {
+    flex: 1,
+    gap: 4,
   },
-  title: {
+  headTitle: {
     color: palette.ink,
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 19,
+    lineHeight: 24,
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  previewCard: {
-    borderRadius: radius.xl,
-    overflow: "hidden",
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    minHeight: 260,
-    ...panelShadow,
-  },
-  previewImage: {
-    width: "100%",
-    aspectRatio: 0.78,
-    backgroundColor: palette.backgroundDeep,
-  },
-  stateWrap: {
-    minHeight: 260,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
-  stateText: {
+  headMeta: {
     color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  statusCard: {
-    borderRadius: radius.lg,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 12,
-    ...panelShadow,
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  statusLabel: {
-    color: palette.ink,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "800",
-    fontFamily: fontFamily.display,
-  },
-  statusBadgeSuccess: {
-    borderRadius: radius.pill,
-    backgroundColor: "#E8F7ED",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  statusBadgeTextSuccess: {
-    color: "#218A4A",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  statusBadgeNeutral: {
-    borderRadius: radius.pill,
-    backgroundColor: palette.surfaceSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  statusBadgeTextNeutral: {
-    color: palette.accentStrong,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  statusBadgeError: {
-    borderRadius: radius.pill,
-    backgroundColor: "#FFE7E7",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  statusBadgeTextError: {
-    color: "#C62828",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  retryButton: {
-    minHeight: 40,
-    borderRadius: radius.pill,
-    backgroundColor: palette.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 6,
-  },
-  retryWrap: {
-    gap: 10,
-  },
-  errorText: {
-    color: "#C62828",
     fontSize: 12,
     lineHeight: 17,
     fontFamily: fontFamily.body,
   },
-  retryText: {
-    color: palette.accentStrong,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  actionList: {
+  statusGrid: {
+    flexDirection: "row",
     gap: 10,
   },
-  actionCard: {
-    minHeight: 64,
-    borderRadius: radius.lg,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    ...panelShadow,
-  },
-  actionCardDisabled: {
-    opacity: 0.45,
-  },
-  actionIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    backgroundColor: palette.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actionLabel: {
+  statusCard: {
     flex: 1,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  statusLabel: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: fontFamily.body,
+  },
+  statusValue: {
     color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: "800",
     fontFamily: fontFamily.display,
   },
-  buttonPressed: {
+  previewWrap: {
+    flex: 1,
+    minHeight: 210,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    overflow: "hidden",
+    backgroundColor: palette.surfaceSoft,
+  },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  previewEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  previewEmptyText: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  targetGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  targetCard: {
+    width: "48%",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  targetCardWide: {
+    width: "100%",
+  },
+  targetCardDisabled: {
+    opacity: 0.6,
+  },
+  targetIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  targetTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  targetMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fontFamily.body,
+  },
+  pressed: {
     opacity: 0.9,
   },
 });

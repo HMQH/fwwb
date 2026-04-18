@@ -87,7 +87,7 @@ export type AIFaceFaceResult = {
   det_score: number;
   fake_score: number;
   label: "fake" | "real" | string;
-  landmarks: Array<[number, number] | number[]>;
+  landmarks: ([number, number] | number[])[];
 };
 
 export type AIFaceCheckResponse = {
@@ -306,7 +306,7 @@ export type DetectionResult = {
   hit_rules: string[];
   rule_hits: DetectionRuleHit[];
   extracted_entities: Record<string, unknown>;
-  input_highlights: Array<{ text: string; reason: string }>;
+  input_highlights: { text: string; reason: string }[];
   retrieved_evidence: DetectionEvidence[];
   counter_evidence: DetectionEvidence[];
   advice: string[];
@@ -385,4 +385,37 @@ export type WebPhishingPredictResponse = {
   confidence: number;
   risk_level: WebPhishingRiskLevel;
   features: Record<string, number> | null;
+  submission_id?: string | null;
+  job_id?: string | null;
+  result_id?: string | null;
+};
+
+export type DirectSkillEvidence = {
+  skill: string;
+  title: string;
+  detail: string;
+  severity: "info" | "warning" | "error" | string;
+  source_path?: string | null;
+  extra?: Record<string, unknown>;
+};
+
+export type DirectSkillResult = {
+  name: string;
+  status: string;
+  summary: string;
+  triggered: boolean;
+  risk_score: number;
+  labels: string[];
+  evidence: DirectSkillEvidence[];
+  recommendations: string[];
+  raw: Record<string, unknown>;
+};
+
+export type DirectImageSkillCheckResponse = {
+  kind: "ocr" | "official-document" | "pii" | "qr" | "impersonation" | string;
+  image_name?: string | null;
+  result: DirectSkillResult;
+  submission_id?: string | null;
+  job_id?: string | null;
+  result_id?: string | null;
 };

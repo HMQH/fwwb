@@ -1,4 +1,4 @@
-"""?? API schema?"""
+"""Detection API schemas."""
 from __future__ import annotations
 
 import uuid
@@ -162,3 +162,36 @@ class WebPhishingDetectResponse(BaseModel):
     confidence: float
     risk_level: str
     features: dict[str, float] | None = None
+    submission_id: uuid.UUID | None = None
+    job_id: uuid.UUID | None = None
+    result_id: uuid.UUID | None = None
+
+
+class DirectSkillEvidenceResponse(BaseModel):
+    skill: str
+    title: str
+    detail: str
+    severity: str = "info"
+    source_path: str | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class DirectSkillResultResponse(BaseModel):
+    name: str
+    status: str
+    summary: str
+    triggered: bool = False
+    risk_score: float = 0.0
+    labels: list[str] = Field(default_factory=list)
+    evidence: list[DirectSkillEvidenceResponse] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class DirectImageSkillCheckResponse(BaseModel):
+    kind: str
+    image_name: str | None = None
+    result: DirectSkillResultResponse
+    submission_id: uuid.UUID | None = None
+    job_id: uuid.UUID | None = None
+    result_id: uuid.UUID | None = None

@@ -74,10 +74,52 @@ export default function MainTabsLayout() {
           tabBarIcon: ({ color }) => <MaterialCommunityIcons name="history" size={22} color={color} />,
         }}
       />
-      <Tabs.Screen name="settings/index" options={{ href: null, title: "权限设置" }} />
-      <Tabs.Screen name="call-intervention/index" options={{ href: null, title: "来电预警" }} />
-      <Tabs.Screen name="call-intervention/[sessionId]" options={{ href: null, title: "通话回看" }} />
-      <Tabs.Screen name="assistant/index" options={{ href: null, title: "反诈助手" }} />
+      <Tabs.Screen
+        name="assistant/index"
+        options={{
+          title: "智能体",
+          tabBarIcon: ({ color, focused }) => (
+            <MaterialCommunityIcons
+              name={focused ? "robot" : "robot-outline"}
+              size={22}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="learning/index"
+        options={{
+          title: "学习中心",
+          tabBarIcon: ({ color, focused }) => (
+            <MaterialCommunityIcons
+              name={focused ? "school" : "school-outline"}
+              size={22}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "我的",
+          tabBarIcon: ({ color, focused }) => (
+            <MaterialCommunityIcons
+              name={focused ? "account-circle" : "account-circle-outline"}
+              size={22}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen name="settings/index" options={{ href: null, title: "权限设置", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="call-intervention/index" options={{ href: null, title: "来电预警", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="call-intervention/[sessionId]" options={{ href: null, title: "通话回看", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="cases/index" options={{ href: null, title: "案例", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="cases/[id]" options={{ href: null, title: "案例详情", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="learning/quiz" options={{ href: null, title: "刷题", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="learning/simulation" options={{ href: null, title: "模拟", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen
         name="profile-memory/index"
         options={{ href: null, title: "用户画像", tabBarStyle: hiddenTabBarStyle }}
@@ -122,23 +164,21 @@ export default function MainTabsLayout() {
         name="guardians/events/[id]"
         options={{ href: null, title: "联动详情", tabBarStyle: hiddenTabBarStyle }}
       />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "我的",
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialCommunityIcons
-              name={focused ? "account-circle" : "account-circle-outline"}
-              size={22}
-              color={color}
-            />
-          ),
-        }}
-      />
       <Tabs.Screen name="submit" options={{ href: null, title: "提交检测" }} />
       <Tabs.Screen
         name="detect-text"
         options={{ href: null, title: "文本检测", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen name="detect-ocr" options={{ href: null, title: "OCR 话术识别", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen
+        name="detect-official-document"
+        options={{ href: null, title: "公章仿造检测", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen name="detect-pii" options={{ href: null, title: "敏感信息检测", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="detect-qr" options={{ href: null, title: "二维码检测", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen
+        name="detect-impersonation"
+        options={{ href: null, title: "网图识别", tabBarStyle: hiddenTabBarStyle }}
       />
       <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别", tabBarStyle: hiddenTabBarStyle }} />

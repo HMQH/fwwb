@@ -1,14 +1,22 @@
-﻿"""检测路由：提交、轮询任务、历史记录、详情。"""
+"""检测路由：提交、轮询任务、历史记录、详情。"""
 from __future__ import annotations
 
+import tempfile
 import uuid
 from pathlib import Path
+from typing import Any, Callable
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.domain.agent.skills.impersonation_checker import run_impersonation_checker
+from app.domain.agent.skills.ocr_phishing import run_ocr_phishing
+from app.domain.agent.skills.official_document_checker import run_official_document_checker
+from app.domain.agent.skills.pii_guard import run_pii_guard
+from app.domain.agent.skills.qr_inspector import run_qr_inspector
+from app.domain.agent.tools.ocr_tool import extract_texts
 from app.domain.detection import service as detection_service
 from app.domain.detection.audio_detector import (
     AudioDecodeError,
@@ -40,6 +48,7 @@ from app.shared.schemas.detections import (
     DetectionJobResponse,
     DetectionSubmissionDetailResponse,
     DetectionSubmitAcceptedResponse,
+    DirectImageSkillCheckResponse,
     WebPhishingDetectRequest,
     WebPhishingDetectResponse,
 )
@@ -95,6 +104,12 @@ def _read_audio_upload(audio_file: UploadFile) -> tuple[str, str]:
     return filename, suffix
 
 
+def _read_image_upload(image_file: UploadFile) -> tuple[str, str]:
+    filename = (image_file.filename or "").strip()
+    suffix = Path(filename.lower()).suffix or ".jpg"
+    return filename, suffix
+
+
 def _decode_text_bytes(data: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
@@ -126,6 +141,90 @@ async def _read_html_upload(html_file: UploadFile | None, *, max_bytes: int) -> 
             detail=f"HTML 文件过大，超过 {max_bytes} 字节限制",
         )
     return _decode_text_bytes(data)
+
+
+def _extract_direct_skill_result(payload: dict[str, Any], result_key: str) -> dict[str, Any]:
+    result = payload.get(result_key)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"专项检测返回结构缺少 {result_key}")
+    return result
+
+
+async def _run_direct_image_skill(
+    *,
+    db: Session,
+    current: User,
+    image_file: UploadFile,
+    kind: str,
+    result_key: str,
+    runner: Callable[[dict[str, Any]], dict[str, Any]],
+    with_ocr: bool = False,
+) -> DirectImageSkillCheckResponse:
+    _ = current
+    filename, suffix = _read_image_upload(image_file)
+    data = await image_file.read()
+
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="空图片文件")
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"图片文件过大，超过 {settings.max_upload_bytes} 字节限制",
+        )
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(data)
+            temp_path = Path(tmp.name)
+
+        state: dict[str, Any] = {
+            "image_paths": [str(temp_path)],
+            "text_content": None,
+        }
+        if with_ocr:
+            state["ocr_result"] = {
+                "raw": extract_texts(image_paths=[str(temp_path)], fallback_text=None),
+            }
+
+        payload = runner(state)
+        result = _extract_direct_skill_result(payload, result_key)
+        record_refs = detection_service.persist_direct_image_skill_result(
+            db,
+            user_id=current.id,
+            image_bytes=data,
+            filename=filename or None,
+            kind=kind,
+            result_key=result_key,
+            result=result,
+            with_ocr=with_ocr,
+        )
+        return DirectImageSkillCheckResponse.model_validate(
+            {
+                "kind": kind,
+                "image_name": filename or None,
+                "result": result,
+                **record_refs,
+            }
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"专项检测失败：{type(exc).__name__}: {exc}",
+        ) from exc
+    finally:
+        if temp_path is not None:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass
 
 
 @router.post(
@@ -411,6 +510,7 @@ def submit_verify_audio_from_uploads(
 @router.post("/web/phishing", response_model=WebPhishingDetectResponse, include_in_schema=False)
 def detect_web_phishing(
     payload: WebPhishingDetectRequest,
+    db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ) -> WebPhishingDetectResponse:
     _ = current
@@ -419,12 +519,21 @@ def detect_web_phishing(
         html=payload.html,
         return_features=payload.return_features,
     )
+    result.update(
+        detection_service.persist_web_phishing_result(
+            db,
+            user_id=current.id,
+            url=payload.url,
+            payload=result,
+        )
+    )
     return WebPhishingDetectResponse.model_validate(result)
 
 
 @router.post("/web/phishing/predict-upload", response_model=WebPhishingDetectResponse)
 @router.post("/web/phishing/upload", response_model=WebPhishingDetectResponse, include_in_schema=False)
 async def detect_web_phishing_upload(
+    db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     url: str = Form(...),
     html_file: UploadFile | None = File(default=None),
@@ -437,4 +546,94 @@ async def detect_web_phishing_upload(
         html=html,
         return_features=return_features,
     )
+    result.update(
+        detection_service.persist_web_phishing_result(
+            db,
+            user_id=current.id,
+            url=url,
+            payload=result,
+        )
+    )
     return WebPhishingDetectResponse.model_validate(result)
+
+
+@router.post("/ocr-phishing/check", response_model=DirectImageSkillCheckResponse)
+async def check_ocr_phishing(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    image_file: UploadFile = File(...),
+) -> DirectImageSkillCheckResponse:
+    return await _run_direct_image_skill(
+        db=db,
+        current=current,
+        image_file=image_file,
+        kind="ocr",
+        result_key="ocr_result",
+        runner=run_ocr_phishing,
+    )
+
+
+@router.post("/official-document/check", response_model=DirectImageSkillCheckResponse)
+async def check_official_document(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    image_file: UploadFile = File(...),
+) -> DirectImageSkillCheckResponse:
+    return await _run_direct_image_skill(
+        db=db,
+        current=current,
+        image_file=image_file,
+        kind="official-document",
+        result_key="official_document_result",
+        runner=run_official_document_checker,
+        with_ocr=True,
+    )
+
+
+@router.post("/pii/check", response_model=DirectImageSkillCheckResponse)
+async def check_pii(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    image_file: UploadFile = File(...),
+) -> DirectImageSkillCheckResponse:
+    return await _run_direct_image_skill(
+        db=db,
+        current=current,
+        image_file=image_file,
+        kind="pii",
+        result_key="pii_result",
+        runner=run_pii_guard,
+        with_ocr=True,
+    )
+
+
+@router.post("/qr/check", response_model=DirectImageSkillCheckResponse)
+async def check_qr(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    image_file: UploadFile = File(...),
+) -> DirectImageSkillCheckResponse:
+    return await _run_direct_image_skill(
+        db=db,
+        current=current,
+        image_file=image_file,
+        kind="qr",
+        result_key="qr_result",
+        runner=run_qr_inspector,
+    )
+
+
+@router.post("/impersonation/check", response_model=DirectImageSkillCheckResponse)
+async def check_impersonation(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    image_file: UploadFile = File(...),
+) -> DirectImageSkillCheckResponse:
+    return await _run_direct_image_skill(
+        db=db,
+        current=current,
+        image_file=image_file,
+        kind="impersonation",
+        result_key="impersonation_result",
+        runner=run_impersonation_checker,
+    )

@@ -10,6 +10,7 @@ import type {
   DetectionJob,
   DetectionSubmissionDetail,
   DetectionSubmitAcceptedResponse,
+  DirectImageSkillCheckResponse,
   PickedFile,
   WebPhishingPredictRequest,
   WebPhishingPredictResponse,
@@ -64,6 +65,15 @@ function buildWebPhishingUploadFormData(input: {
       } as unknown as Blob
     );
   }
+  return form;
+}
+
+function buildSingleImageFormData(fieldName: string, imageFile: PickedFile): FormData {
+  const form = new FormData();
+  form.append(
+    fieldName,
+    { uri: imageFile.uri, name: imageFile.name, type: imageFile.type || "image/jpeg" } as unknown as Blob
+  );
   return form;
 }
 
@@ -201,15 +211,54 @@ export const detectionsApi = {
   },
 
   checkAIFace(token: string, imageFile: PickedFile) {
-    const form = new FormData();
-    form.append(
-      "image_file",
-      { uri: imageFile.uri, name: imageFile.name, type: imageFile.type } as unknown as Blob
-    );
-
     return request<AIFaceCheckResponse>(
       "/api/detections/ai-face/check",
-      { method: "POST", body: form },
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  checkOcrPhishing(token: string, imageFile: PickedFile) {
+    return request<DirectImageSkillCheckResponse>(
+      "/api/detections/ocr-phishing/check",
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  checkOfficialDocument(token: string, imageFile: PickedFile) {
+    return request<DirectImageSkillCheckResponse>(
+      "/api/detections/official-document/check",
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  checkPii(token: string, imageFile: PickedFile) {
+    return request<DirectImageSkillCheckResponse>(
+      "/api/detections/pii/check",
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  checkQr(token: string, imageFile: PickedFile) {
+    return request<DirectImageSkillCheckResponse>(
+      "/api/detections/qr/check",
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  checkImpersonation(token: string, imageFile: PickedFile) {
+    return request<DirectImageSkillCheckResponse>(
+      "/api/detections/impersonation/check",
+      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
