@@ -11,8 +11,10 @@ from app.api.routes import ai_face as ai_face_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import assistant as assistant_routes
 from app.api.routes import call_intervention as call_intervention_routes
+from app.api.routes import cases as cases_routes
 from app.api.routes import detections as detections_routes
 from app.api.routes import guardians as guardians_routes
+from app.api.routes import learning as learning_routes
 from app.api.routes import profile_memory as profile_memory_routes
 from app.api.routes import rag as rag_routes
 from app.api.routes import relations as relations_routes
@@ -42,8 +44,10 @@ app.include_router(ai_face_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(assistant_routes.router)
 app.include_router(call_intervention_routes.router)
+app.include_router(cases_routes.router)
 app.include_router(detections_routes.router)
 app.include_router(guardians_routes.router)
+app.include_router(learning_routes.router)
 app.include_router(profile_memory_routes.router)
 app.include_router(rag_routes.router)
 app.include_router(uploads_routes.router)

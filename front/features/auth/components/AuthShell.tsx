@@ -1,8 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,7 +12,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AuthBackdrop } from "./AuthBackdrop";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
@@ -22,6 +23,7 @@ type AuthShellProps = {
   title: string;
   description?: string;
   showBranding?: boolean;
+  hero?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   headerAction?: ReactNode;
@@ -31,12 +33,16 @@ export function AuthShell({
   title,
   description,
   showBranding = true,
+  hero,
   children,
   footer,
   headerAction,
 }: AuthShellProps) {
   const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const reveal = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<ScrollView>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   useEffect(() => {
     Animated.timing(reveal, {
@@ -45,6 +51,27 @@ export function AuthShell({
       useNativeDriver: true,
     }).start();
   }, [reveal]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 60);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const revealStyle = useMemo(
     () => ({
@@ -66,32 +93,52 @@ export function AuthShell({
       <AuthBackdrop />
 
       <SafeAreaView style={styles.flex} edges={["top", "bottom"]}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : insets.top}
+          style={styles.flex}
+        >
           <ScrollView
+            ref={scrollRef}
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             contentContainerStyle={[
               styles.scrollContent,
-              {
-                minHeight: showBranding
-                  ? Math.max(windowHeight * 0.92, 520)
-                  : Math.max(windowHeight * 0.72, 420),
-              },
+              !keyboardVisible
+                ? {
+                    minHeight: showBranding
+                      ? Math.max(windowHeight * 0.92, 520)
+                      : Math.max(windowHeight * 0.72, 420),
+                  }
+                : null,
+              keyboardVisible ? styles.scrollContentKeyboard : null,
             ]}
             showsVerticalScrollIndicator={false}
           >
-            <Animated.View style={[styles.shell, showBranding ? revealStyle : undefined, !showBranding && styles.shellCompact]}>
+            <Animated.View
+              style={[
+                styles.shell,
+                showBranding ? revealStyle : undefined,
+                !showBranding && styles.shellCompact,
+                keyboardVisible && styles.shellKeyboard,
+              ]}
+            >
               <View style={styles.topBar}>
                 <View style={styles.actionSlot}>{headerAction}</View>
               </View>
 
               {showBranding ? (
-                <View style={styles.logoBlock}>
-                  <View style={styles.logoRing}>
-                    <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
-                  </View>
-                  <Text style={styles.brandName}>{"反诈守护"}</Text>
-                  <View style={styles.pageTag}>
+                <View style={[styles.logoBlock, keyboardVisible && styles.logoBlockCompact]}>
+                  {hero ? (
+                    <View style={[styles.heroSlot, keyboardVisible && styles.heroSlotCompact]}>{hero}</View>
+                  ) : (
+                    <View style={styles.logoRing}>
+                      <Image source={antiFraudLogo} style={styles.logo} resizeMode="contain" />
+                    </View>
+                  )}
+                  <Text style={[styles.brandName, keyboardVisible && styles.brandNameCompact]}>{"反诈守护"}</Text>
+                  <View style={[styles.pageTag, keyboardVisible && styles.pageTagCompact]}>
                     <MaterialCommunityIcons name="shield-check-outline" size={14} color={palette.accentStrong} />
                     <Text style={styles.pageTagText}>{title}</Text>
                   </View>
@@ -99,7 +146,7 @@ export function AuthShell({
                 </View>
               ) : null}
 
-              <View style={styles.panel}>
+              <View style={[styles.panel, keyboardVisible && styles.panelCompact]}>
                 <View style={styles.formStack}>{children}</View>
                 {footer ? <View style={styles.footer}>{footer}</View> : null}
               </View>
@@ -121,11 +168,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 40,
   },
+  scrollContentKeyboard: {
+    paddingBottom: 20,
+  },
   shell: { width: "100%", maxWidth: 420, alignSelf: "center", gap: 18 },
   shellCompact: { gap: 10 },
+  shellKeyboard: { gap: 12 },
   topBar: { minHeight: 40, justifyContent: "center" },
   actionSlot: { width: 40, height: 40, justifyContent: "center" },
   logoBlock: { alignItems: "center", gap: 10, paddingHorizontal: 8 },
+  logoBlockCompact: { gap: 6 },
+  heroSlot: { width: "100%", alignItems: "center", paddingTop: 2 },
+  heroSlotCompact: { transform: [{ scale: 0.84 }] },
   logoRing: {
     width: 112,
     height: 112,
@@ -139,6 +193,7 @@ const styles = StyleSheet.create({
   },
   logo: { width: 84, height: 84 },
   brandName: { color: palette.ink, fontSize: 28, lineHeight: 34, fontWeight: "800", fontFamily: fontFamily.display },
+  brandNameCompact: { fontSize: 24, lineHeight: 30 },
   pageTag: {
     flexDirection: "row",
     alignItems: "center",
@@ -147,6 +202,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     backgroundColor: palette.accentSoft,
+  },
+  pageTagCompact: {
+    paddingVertical: 6,
   },
   pageTagText: { color: palette.accentStrong, fontSize: 13, lineHeight: 18, fontWeight: "700", fontFamily: fontFamily.body },
   description: { maxWidth: 260, color: palette.inkSoft, fontSize: 13, lineHeight: 20, textAlign: "center", fontFamily: fontFamily.body },
@@ -159,6 +217,9 @@ const styles = StyleSheet.create({
     paddingVertical: 22,
     gap: 16,
     ...panelShadow,
+  },
+  panelCompact: {
+    paddingVertical: 18,
   },
   formStack: { gap: 14 },
   footer: { marginTop: 4 },

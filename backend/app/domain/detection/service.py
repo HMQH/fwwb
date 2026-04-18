@@ -2135,3 +2135,526 @@ def detect_web_phishing(*, url: str, html: str | None = None, return_features: b
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"网站钓鱼检测失败：{exc}",
         ) from exc
+
+
+_DIRECT_DETECTION_STAGE_TAG = "direct_detection"
+
+_DIRECT_IMAGE_KIND_LABELS = {
+    "ocr": "OCR话术识别",
+    "official-document": "公章仿造检测",
+    "pii": "敏感信息检测",
+    "qr": "二维码URL检测",
+    "impersonation": "网图识别",
+}
+
+_DIRECT_IMAGE_KIND_FRAUD_TYPES = {
+    "ocr": "phishing_image",
+    "official-document": "forged_official_document",
+    "pii": "sensitive_information_exposure",
+    "qr": "suspicious_qr",
+    "impersonation": "impersonation_or_stolen_image",
+}
+
+
+def _score_ratio(value: Any) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if numeric > 1:
+        numeric /= 100.0
+    return max(0.0, min(1.0, numeric))
+
+
+
+def _normalize_direct_risk_level(score: float, triggered: bool) -> str:
+    if score >= 0.75:
+        return "high"
+    if score >= 0.45 or triggered:
+        return "medium"
+    return "low"
+
+
+
+def _build_direct_module_trace(*, with_ocr: bool = False) -> list[dict[str, Any]]:
+    trace = [{"key": "preprocess", "label": "预处理", "status": "completed"}]
+    if with_ocr:
+        trace.append({"key": "embedding", "label": "OCR解析", "status": "completed"})
+    trace.extend(
+        [
+            {"key": "graph_reasoning", "label": "风险判定", "status": "completed"},
+            {"key": "finalize", "label": "结果生成", "status": "completed"},
+        ]
+    )
+    return trace
+
+
+
+def _normalize_direct_similar_image_item(
+    item: dict[str, Any],
+    *,
+    index: int,
+    validated: bool = False,
+) -> dict[str, Any] | None:
+    title = _strip(str(item.get("title") or ""))
+    source_url = _strip(str(item.get("source_url") or ""))
+    image_url = _strip(str(item.get("image_url") or ""))
+    thumbnail_url = _strip(str(item.get("thumbnail_url") or "")) or image_url
+    domain = _strip(str(item.get("domain") or ""))
+    provider = _strip(str(item.get("provider") or ""))
+    match_type = _strip(str(item.get("match_type") or ""))
+
+    if not any([title, source_url, image_url, thumbnail_url, domain]):
+        return None
+
+    raw_id = _strip(str(item.get("id") or ""))
+    fallback = source_url or image_url or thumbnail_url or domain or f"similar-image-{index + 1}"
+    normalized: dict[str, Any] = {
+        "id": raw_id or f"{fallback}-{index + 1}",
+        "title": title or None,
+        "source_url": source_url or None,
+        "image_url": image_url or None,
+        "thumbnail_url": thumbnail_url or None,
+        "domain": domain or None,
+        "provider": provider or None,
+        "match_type": match_type or None,
+        "is_validated": bool(item.get("is_validated")) or validated,
+        "clip_similarity": item.get("clip_similarity"),
+        "hash_similarity": item.get("hash_similarity"),
+        "phash_distance": item.get("phash_distance"),
+        "dhash_distance": item.get("dhash_distance"),
+        "hash_near_duplicate": bool(item.get("hash_near_duplicate")) if item.get("hash_near_duplicate") is not None else None,
+        "clip_high_similarity": bool(item.get("clip_high_similarity")) if item.get("clip_high_similarity") is not None else None,
+    }
+    return normalized
+
+
+
+def _collect_direct_similar_images(result: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+    validation = raw.get("similarity_validation") if isinstance(raw.get("similarity_validation"), dict) else {}
+    validated_matches = validation.get("validated_matches") if isinstance(validation.get("validated_matches"), list) else []
+    raw_matches = raw.get("matches") if isinstance(raw.get("matches"), list) else []
+    evidence_items = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+
+    merged: list[tuple[dict[str, Any], bool]] = []
+    merged.extend((item, True) for item in validated_matches if isinstance(item, dict))
+    merged.extend((item, False) for item in raw_matches if isinstance(item, dict))
+
+    for evidence in evidence_items:
+        if not isinstance(evidence, dict):
+            continue
+        extra = evidence.get("extra") if isinstance(evidence.get("extra"), dict) else None
+        if not extra:
+            continue
+        candidate = dict(extra)
+        if not candidate.get("title") and evidence.get("title"):
+            candidate["title"] = evidence.get("title")
+        merged.append((candidate, str(evidence.get("severity") or "").strip().lower() == "warning"))
+
+    seen: set[str] = set()
+    items: list[dict[str, Any]] = []
+    for index, (item, validated) in enumerate(merged):
+        normalized = _normalize_direct_similar_image_item(item, index=index, validated=validated)
+        if normalized is None:
+            continue
+        dedupe_key = "|".join(
+            [
+                _strip(str(normalized.get("source_url") or "")),
+                _strip(str(normalized.get("image_url") or "")),
+                _strip(str(normalized.get("thumbnail_url") or "")),
+                _strip(str(normalized.get("domain") or "")),
+            ]
+        )
+        dedupe_key = dedupe_key or str(normalized.get("id"))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        items.append(normalized)
+
+    items.sort(
+        key=lambda item: (
+            0 if (item.get("is_validated") or item.get("hash_near_duplicate") or item.get("clip_high_similarity")) else 1,
+            -(float(item.get("clip_similarity") or -1)),
+            -(float(item.get("hash_similarity") or -1)),
+        )
+    )
+    return items
+
+
+
+def _build_direct_image_skill_result_row(
+    *,
+    submission: DetectionSubmission,
+    job_id: uuid.UUID,
+    kind: str,
+    result_key: str,
+    result: dict[str, Any],
+    with_ocr: bool,
+) -> DetectionResult:
+    kind_label = _DIRECT_IMAGE_KIND_LABELS.get(kind, "专项检测")
+    risk_score = _score_ratio(result.get("risk_score"))
+    triggered = bool(result.get("triggered"))
+    risk_level = _normalize_direct_risk_level(risk_score, triggered)
+    score_percent = _score_to_percent(risk_score)
+    labels = [str(item).strip() for item in list(result.get("labels") or []) if str(item).strip()]
+    evidence_items = [item for item in list(result.get("evidence") or []) if isinstance(item, dict)]
+    recommendations = [str(item).strip() for item in list(result.get("recommendations") or []) if str(item).strip()]
+    similar_images = _collect_direct_similar_images(result) if kind == "impersonation" else []
+    summary = _strip(str(result.get("summary") or "")) or f"{kind_label}已完成"
+    first_reason = next(
+        (
+            _strip(str(item.get("detail") or ""))
+            for item in evidence_items
+            if _strip(str(item.get("detail") or ""))
+        ),
+        "",
+    )
+    final_reason = first_reason or summary
+    matched_texts = [
+        _strip(str(item.get("title") or ""))
+        for item in evidence_items
+        if _strip(str(item.get("title") or ""))
+    ][:3]
+    input_highlights = [
+        {
+            "text": _strip(str(item.get("title") or "")) or kind_label,
+            "reason": _strip(str(item.get("detail") or "")) or summary,
+        }
+        for item in evidence_items[:3]
+    ]
+    module_trace = _build_direct_module_trace(with_ocr=with_ocr)
+    used_modules = [str(item.get("key")) for item in module_trace if item.get("key")]
+    reasoning_path = [kind_label, "风险判定", "结果生成"]
+    llm_model = _strip(str((result.get("raw") or {}).get("provider") or "")) or None if isinstance(result.get("raw"), dict) else None
+
+    result_detail: dict[str, Any] = {
+        "kind": kind,
+        "message": f"已完成{kind_label}",
+        "final_score": score_percent,
+        "used_modules": used_modules,
+        "module_trace": module_trace,
+        "reasoning_path": reasoning_path,
+        "branches": {result_key: result},
+        result_key: result,
+        "direct_skill_result": result,
+        "risk_evidence": [
+            _strip(str(item.get("detail") or ""))
+            for item in evidence_items[:5]
+            if _strip(str(item.get("detail") or ""))
+        ],
+        "counter_evidence": [] if risk_level != "low" else [summary],
+        "similar_images": similar_images,
+        "similar_images_count": len(similar_images),
+    }
+
+    return DetectionResult(
+        submission_id=submission.id,
+        job_id=job_id,
+        risk_level=risk_level,
+        fraud_type=_DIRECT_IMAGE_KIND_FRAUD_TYPES.get(kind) if risk_level != "low" else None,
+        confidence=risk_score,
+        is_fraud=risk_level != "low",
+        summary=summary,
+        final_reason=final_reason,
+        need_manual_review=risk_level == "medium",
+        stage_tags=[kind_label, _DIRECT_DETECTION_STAGE_TAG],
+        hit_rules=labels,
+        rule_hits=[
+            {
+                "name": kind_label,
+                "category": kind.replace("-", "_"),
+                "risk_points": score_percent,
+                "explanation": summary,
+                "matched_texts": matched_texts,
+                "stage_tag": kind_label,
+                "fraud_type_hint": _DIRECT_IMAGE_KIND_FRAUD_TYPES.get(kind) if risk_level != "low" else None,
+            }
+        ],
+        extracted_entities={
+            "kind": kind,
+            "risk_score": risk_score,
+            "labels": labels,
+            "evidence_count": len(evidence_items),
+            "similar_images_count": len(similar_images),
+        },
+        input_highlights=input_highlights,
+        retrieved_evidence=[],
+        counter_evidence=[],
+        advice=recommendations,
+        llm_model=llm_model,
+        result_detail=result_detail,
+    )
+
+
+
+def persist_direct_image_skill_result(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    image_bytes: bytes,
+    filename: str | None,
+    kind: str,
+    result_key: str,
+    result: dict[str, Any],
+    with_ocr: bool = False,
+) -> dict[str, uuid.UUID]:
+    safe_name = _strip(filename) or f"{kind}.jpg"
+    bundles: dict[UploadKind, list[tuple[bytes, str]]] = {
+        "text": [],
+        "audio": [],
+        "image": [(image_bytes, safe_name)],
+        "video": [],
+    }
+    submission = create_submission(
+        db,
+        user_id=user_id,
+        upload_root_cfg=settings.upload_root,
+        max_upload_bytes=settings.max_upload_bytes,
+        text_content=None,
+        relation_profile_id=None,
+        file_bundles=bundles,
+    )
+    upload_rows = upload_service.sync_submission_uploads(
+        db,
+        submission_id=submission.id,
+        user_id=submission.user_id,
+        storage_batch_id=submission.storage_batch_id,
+        text_paths=list(submission.text_paths or []),
+        audio_paths=list(submission.audio_paths or []),
+        image_paths=list(submission.image_paths or []),
+        video_paths=list(submission.video_paths or []),
+    )
+    relation_service.attach_submission_context(
+        db,
+        user_id=submission.user_id,
+        relation_id=None,
+        submission_id=submission.id,
+        text_content=None,
+        upload_rows=upload_rows,
+    )
+
+    job = detection_repository.create_job(
+        db,
+        submission_id=submission.id,
+        job_type=f"direct_{kind.replace('-', '_')}",
+        input_modality="image",
+        llm_model=None,
+    )
+    score_percent = _score_to_percent(_score_ratio(result.get("risk_score")))
+    now = _utcnow()
+    job.status = "completed"
+    job.current_step = "finalize"
+    job.progress_percent = 100
+    job.started_at = now
+    job.finished_at = now
+    job.progress_detail = {
+        "status": "completed",
+        "current_step": "finalize",
+        "progress_percent": 100,
+        "module_trace": _build_direct_module_trace(with_ocr=with_ocr),
+        "used_modules": [item["key"] for item in _build_direct_module_trace(with_ocr=with_ocr)],
+        "final_score": score_percent,
+    }
+    job.rule_score = score_percent
+    job.retrieval_query = safe_name
+    detection_repository.save_job(db, job)
+
+    result_row = _build_direct_image_skill_result_row(
+        submission=submission,
+        job_id=job.id,
+        kind=kind,
+        result_key=result_key,
+        result=result,
+        with_ocr=with_ocr,
+    )
+    persist_result_with_side_effects(
+        db,
+        submission=submission,
+        result_row=result_row,
+    )
+    return {
+        "submission_id": submission.id,
+        "job_id": job.id,
+        "result_id": result_row.id,
+    }
+
+
+
+def _normalize_web_risk_level(payload: dict[str, Any]) -> str:
+    normalized = _strip(str(payload.get("risk_level") or "")).lower()
+    if normalized == "high":
+        return "high"
+    if normalized in {"medium", "suspicious"}:
+        return "medium"
+    if normalized in {"safe", "low", "benign"}:
+        return "low"
+    return _normalize_direct_risk_level(_score_ratio(payload.get("phish_prob")), bool(payload.get("is_phishing")))
+
+
+
+def _build_web_phishing_result_row(
+    *,
+    submission: DetectionSubmission,
+    job_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> DetectionResult:
+    normalized_url = _strip(str(payload.get("url") or submission.text_content or ""))
+    phish_prob = _score_ratio(payload.get("phish_prob"))
+    confidence = _score_ratio(payload.get("confidence"))
+    risk_level = _normalize_web_risk_level(payload)
+    score_percent = _score_to_percent(phish_prob)
+    summary = (
+        "网址存在高风险钓鱼特征"
+        if risk_level == "high"
+        else "网址存在可疑钓鱼特征"
+        if risk_level == "medium"
+        else "网址未发现明显钓鱼特征"
+    )
+    final_reason = f"钓鱼概率 {score_percent}% · 可信度 {_score_to_percent(confidence)}%"
+    advice = (
+        ["勿输入账号密码", "先核验域名来源", "建议人工复核"]
+        if risk_level != "low"
+        else ["可继续核验页面", "建议保留检测记录"]
+    )
+    module_trace = [
+        {"key": "preprocess", "label": "预处理", "status": "completed"},
+        {"key": "graph_reasoning", "label": "风险判定", "status": "completed"},
+        {"key": "finalize", "label": "结果生成", "status": "completed"},
+    ]
+    result_detail = {
+        "message": "已完成网址钓鱼检测",
+        "kind": "web_phishing",
+        "final_score": score_percent,
+        "used_modules": ["preprocess", "graph_reasoning", "finalize"],
+        "module_trace": module_trace,
+        "reasoning_path": ["网址钓鱼检测", "风险判定", "结果生成"],
+        "web_phishing": payload,
+        "phish_prob": phish_prob,
+        "confidence": confidence,
+        "url": normalized_url,
+        "features": payload.get("features"),
+    }
+    return DetectionResult(
+        submission_id=submission.id,
+        job_id=job_id,
+        risk_level=risk_level,
+        fraud_type="phishing_site" if risk_level != "low" else None,
+        confidence=confidence,
+        is_fraud=bool(payload.get("is_phishing")) or risk_level != "low",
+        summary=summary,
+        final_reason=final_reason,
+        need_manual_review=risk_level == "medium",
+        stage_tags=["网址钓鱼检测", _DIRECT_DETECTION_STAGE_TAG],
+        hit_rules=["web_phishing_detected"] if risk_level != "low" else [],
+        rule_hits=[
+            {
+                "name": "网址钓鱼检测",
+                "category": "web_phishing",
+                "risk_points": score_percent,
+                "explanation": final_reason,
+                "matched_texts": [normalized_url] if normalized_url else [],
+                "stage_tag": "网址钓鱼检测",
+                "fraud_type_hint": "phishing_site" if risk_level != "low" else None,
+            }
+        ],
+        extracted_entities={
+            "url": normalized_url,
+            "phish_prob": phish_prob,
+            "model_name": payload.get("model_name"),
+        },
+        input_highlights=[
+            {
+                "text": normalized_url or "网址",
+                "reason": final_reason,
+            }
+        ],
+        retrieved_evidence=[],
+        counter_evidence=[],
+        advice=advice,
+        llm_model=_strip(str(payload.get("model_name") or "")) or None,
+        result_detail=result_detail,
+    )
+
+
+
+def persist_web_phishing_result(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    url: str,
+    payload: dict[str, Any],
+) -> dict[str, uuid.UUID]:
+    submission = create_submission(
+        db,
+        user_id=user_id,
+        upload_root_cfg=settings.upload_root,
+        max_upload_bytes=settings.max_upload_bytes,
+        text_content=url,
+        relation_profile_id=None,
+        file_bundles={"text": [], "audio": [], "image": [], "video": []},
+    )
+    upload_rows = upload_service.sync_submission_uploads(
+        db,
+        submission_id=submission.id,
+        user_id=submission.user_id,
+        storage_batch_id=submission.storage_batch_id,
+        text_paths=list(submission.text_paths or []),
+        audio_paths=list(submission.audio_paths or []),
+        image_paths=list(submission.image_paths or []),
+        video_paths=list(submission.video_paths or []),
+    )
+    relation_service.attach_submission_context(
+        db,
+        user_id=submission.user_id,
+        relation_id=None,
+        submission_id=submission.id,
+        text_content=submission.text_content,
+        upload_rows=upload_rows,
+    )
+
+    job = detection_repository.create_job(
+        db,
+        submission_id=submission.id,
+        job_type="web_phishing",
+        input_modality="text",
+        llm_model=_strip(str(payload.get("model_name") or "")) or None,
+    )
+    now = _utcnow()
+    score_percent = _score_to_percent(_score_ratio(payload.get("phish_prob")))
+    job.status = "completed"
+    job.current_step = "finalize"
+    job.progress_percent = 100
+    job.started_at = now
+    job.finished_at = now
+    job.progress_detail = {
+        "status": "completed",
+        "current_step": "finalize",
+        "progress_percent": 100,
+        "module_trace": [
+            {"key": "preprocess", "label": "预处理", "status": "completed"},
+            {"key": "graph_reasoning", "label": "风险判定", "status": "completed"},
+            {"key": "finalize", "label": "结果生成", "status": "completed"},
+        ],
+        "used_modules": ["preprocess", "graph_reasoning", "finalize"],
+        "final_score": score_percent,
+    }
+    job.rule_score = score_percent
+    job.retrieval_query = _strip(url) or None
+    detection_repository.save_job(db, job)
+
+    result_row = _build_web_phishing_result_row(
+        submission=submission,
+        job_id=job.id,
+        payload=payload,
+    )
+    persist_result_with_side_effects(
+        db,
+        submission=submission,
+        result_row=result_row,
+    )
+    return {
+        "submission_id": submission.id,
+        "job_id": job.id,
+        "result_id": result_row.id,
+    }

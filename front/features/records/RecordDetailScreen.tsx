@@ -23,6 +23,7 @@ import {
   AgentExecutionCard,
   DetectionPipelineCard,
   ReasoningGraphCard,
+  SimilarImageGalleryCard,
   detectionsApi,
   formatRiskScore,
   getResultRiskScore,
@@ -34,7 +35,16 @@ import {
   sanitizeDisplayText,
 } from "@/features/detections";
 import { guardiansApi } from "@/features/guardians";
-import type { AudioVerifyRecordItem, DetectionEvidence, DetectionJob, DetectionResult, DetectionSubmission, DetectionSubmissionDetail } from "@/features/detections";
+import type {
+  AudioVerifyRecordItem,
+  DetectionEvidence,
+  DetectionJob,
+  DetectionResult,
+  DetectionResultDetail,
+  DetectionSubmission,
+  DetectionSubmissionDetail,
+  SimilarImageItem,
+} from "@/features/detections";
 import { resolveEvidencePreviewUrl } from "@/features/detections/evidencePreview";
 import { ApiError, resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
@@ -57,6 +67,12 @@ const AGENT_DETAIL_PAGES: DetailPage[] = [
   { key: "graph", label: "执行" },
   { key: "materials", label: "材料" },
 ];
+
+const DIRECT_DETAIL_PAGES: DetailPage[] = [
+  { key: "overview", label: "结果" },
+  { key: "materials", label: "材料" },
+];
+
 function formatDateTime(value?: string | null) {
   if (!value) {
     return "--";
@@ -121,6 +137,23 @@ function shouldUseAgentExecutionView(
   );
 }
 
+function shouldUseDirectResultView(
+  job?: DetectionJob | null,
+  result?: DetectionResult | null,
+) {
+  if (!job && !result) {
+    return false;
+  }
+  const jobType = String(job?.job_type ?? "").trim();
+  if (jobType.startsWith("direct_")) {
+    return true;
+  }
+  if (["audio_verify", "ai_face", "web_phishing"].includes(jobType)) {
+    return true;
+  }
+  return Boolean(result?.stage_tags?.includes("direct_detection"));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -158,6 +191,78 @@ function formatAudioSeconds(value: unknown) {
 function getSimilarityPercent(value?: number | null) {
   const normalized = normalizePercentValue(value);
   return normalized === null ? "--" : Math.round(normalized);
+}
+
+function getResultDetail(result?: DetectionResult | null): DetectionResultDetail | null {
+  if (!isRecord(result?.result_detail)) {
+    return null;
+  }
+  return result.result_detail as DetectionResultDetail;
+}
+
+function normalizeSimilarImageItem(item: unknown, index: number): SimilarImageItem | null {
+  if (!isRecord(item)) {
+    return null;
+  }
+
+  const title = typeof item.title === "string" ? item.title.trim() : "";
+  const sourceUrl = typeof item.source_url === "string" ? item.source_url.trim() : "";
+  const imageUrl = typeof item.image_url === "string" ? item.image_url.trim() : "";
+  const thumbnailUrl = typeof item.thumbnail_url === "string" ? item.thumbnail_url.trim() : "";
+  const domain = typeof item.domain === "string" ? item.domain.trim() : "";
+  const provider = typeof item.provider === "string" ? item.provider.trim() : "";
+  const matchType = typeof item.match_type === "string" ? item.match_type.trim() : "";
+
+  if (!title && !sourceUrl && !imageUrl && !thumbnailUrl && !domain) {
+    return null;
+  }
+
+  const fallbackKey = sourceUrl || imageUrl || thumbnailUrl || domain || "similar-image";
+  const rawId = typeof item.id === "string" ? item.id.trim() : "";
+
+  return {
+    id: rawId || `${fallbackKey}-${index + 1}`,
+    title: title || null,
+    source_url: sourceUrl || null,
+    image_url: imageUrl || null,
+    thumbnail_url: thumbnailUrl || imageUrl || null,
+    domain: domain || null,
+    provider: provider || null,
+    match_type: matchType || null,
+    is_validated: typeof item.is_validated === "boolean" ? item.is_validated : undefined,
+    clip_similarity: toFiniteNumber(item.clip_similarity),
+    hash_similarity: toFiniteNumber(item.hash_similarity),
+    phash_distance: toFiniteNumber(item.phash_distance),
+    dhash_distance: toFiniteNumber(item.dhash_distance),
+    hash_near_duplicate: typeof item.hash_near_duplicate === "boolean" ? item.hash_near_duplicate : undefined,
+    clip_high_similarity: typeof item.clip_high_similarity === "boolean" ? item.clip_high_similarity : undefined,
+  };
+}
+
+function isHighSimilarityImage(item: SimilarImageItem) {
+  return Boolean(item.is_validated || item.hash_near_duplicate || item.clip_high_similarity);
+}
+
+function getSimilarImages(result?: DetectionResult | null) {
+  const detail = getResultDetail(result);
+  if (!detail || !Array.isArray(detail.similar_images)) {
+    return [];
+  }
+
+  return detail.similar_images
+    .map((item, index) => normalizeSimilarImageItem(item, index))
+    .filter((item): item is SimilarImageItem => Boolean(item))
+    .sort((left, right) => {
+      const priority = Number(isHighSimilarityImage(right)) - Number(isHighSimilarityImage(left));
+      if (priority !== 0) {
+        return priority;
+      }
+      const clipGap = (right.clip_similarity ?? -1) - (left.clip_similarity ?? -1);
+      if (clipGap !== 0) {
+        return clipGap;
+      }
+      return (right.hash_similarity ?? -1) - (left.hash_similarity ?? -1);
+    });
 }
 
 function getAudioVerifyItems(result?: DetectionResult | null) {
@@ -514,8 +619,13 @@ export default function RecordDetailScreen() {
   const result = detail?.latest_result;
   const job = detail?.latest_job;
   const guardianEventSummary = detail?.guardian_event_summary;
-  const agentMode = shouldUseAgentExecutionView(submission, job, result);
-  const detailPages = agentMode ? AGENT_DETAIL_PAGES : DEFAULT_DETAIL_PAGES;
+  const directMode = shouldUseDirectResultView(job, result);
+  const agentMode = !directMode && shouldUseAgentExecutionView(submission, job, result);
+  const detailPages = directMode
+    ? DIRECT_DETAIL_PAGES
+    : agentMode
+      ? AGENT_DETAIL_PAGES
+      : DEFAULT_DETAIL_PAGES;
 
   useEffect(() => {
     if (!token || !id) {
@@ -535,6 +645,7 @@ export default function RecordDetailScreen() {
   const headline = getResultHeadline(result);
   const visibleFraudType = getVisibleFraudType(result);
   const audioVerifyItems = getAudioVerifyItems(result);
+  const similarImages = getSimilarImages(result);
   const evidenceCardWidth = Math.max(220, Math.min(width - 92, 296));
   const evidenceSheetImageUrl = evidenceSheet ? resolveEvidencePreviewUrl(evidenceSheet.item) : null;
 
@@ -607,11 +718,13 @@ export default function RecordDetailScreen() {
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
       >
-        {agentMode
-          ? (!result ? <AgentExecutionCard job={job} result={result} title="执行预览" maxVisibleSteps={4} forceVisible /> : null)
-          : (job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null)}
+        {directMode
+          ? null
+          : agentMode
+            ? (!result ? <AgentExecutionCard job={job} result={result} title="执行链路" maxVisibleSteps={4} forceVisible /> : null)
+            : (job ? <DetectionPipelineCard job={job} result={result} title="检测流程" /> : null)}
 
-        {result ? (
+{result ? (
           <PageSurface>
             <View style={styles.heroRow}>
               <View style={[styles.heroBadge, { backgroundColor: riskMeta.soft }]}>
@@ -719,16 +832,17 @@ export default function RecordDetailScreen() {
     );
   }, [
     agentMode,
+    audioVerifyItems,
     detail,
     guardianEventSummary,
     handleNotifyGuardian,
     handleRerun,
     headline,
     job,
-    job?.status,
     notifyingGuardian,
     result,
     riskMeta.icon,
+    riskMeta.label,
     riskMeta.soft,
     riskMeta.tone,
     router,
@@ -795,6 +909,15 @@ export default function RecordDetailScreen() {
           <Text style={styles.rawText}>{submission.text_content?.trim() || "无文本"}</Text>
         </PageSurface>
 
+        {similarImages.length ? (
+          <SimilarImageGalleryCard
+            items={similarImages}
+            title="网络搜图"
+            onRailTouchStart={lockPagerScroll}
+            onRailTouchEnd={unlockPagerScroll}
+          />
+        ) : null}
+
         {result?.retrieved_evidence?.length ? (
           <EvidenceCarouselSection
             title="风险参照"
@@ -848,7 +971,16 @@ export default function RecordDetailScreen() {
         ) : null}
       </ScrollView>
     );
-  }, [audioVerifyItems, detail, evidenceCardWidth, lockPagerScroll, openEvidenceSheet, result, submission, unlockPagerScroll]);
+  }, [
+    detail,
+    evidenceCardWidth,
+    lockPagerScroll,
+    openEvidenceSheet,
+    result,
+    similarImages,
+    submission,
+    unlockPagerScroll,
+  ]);
 
   const renderPage = useCallback(({ item }: { item: DetailPage }) => {
     let content: ReactNode = null;
@@ -869,7 +1001,7 @@ export default function RecordDetailScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <View style={styles.header}>
           <View style={styles.headerTopRow}>
-            <Pressable style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
+            <Pressable style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]} onPress={() => router.replace("/records")}>
               <MaterialCommunityIcons name="chevron-left" size={18} color={palette.accentStrong} />
             </Pressable>
             <View style={styles.headerTitleWrap}>

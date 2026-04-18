@@ -1,32 +1,30 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useAuth } from "@/features/auth";
 import { ApiError } from "@/shared/api";
-import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { fontFamily, palette, radius } from "@/shared/theme";
+import { TaskPrimaryButton, TaskScreen } from "@/shared/ui/TaskScreen";
 
 import { detectionsApi } from "../api";
-import type { WebPhishingPredictResponse, WebPhishingRiskLevel } from "../types";
+import type {
+  WebPhishingPredictResponse,
+  WebPhishingRiskLevel,
+} from "../types";
 
-function riskMeta(
-  level: WebPhishingRiskLevel,
-  isPhishing: boolean
-): { label: string; tone: string; soft: string; icon: keyof typeof MaterialCommunityIcons.glyphMap } {
+function riskMeta(level: WebPhishingRiskLevel, isPhishing: boolean) {
   switch (level) {
     case "high":
-      return { label: "高风险", tone: "#D96A4A", soft: "#FFF0EA", icon: "shield-alert-outline" };
+      return { label: "高风险", tint: "#D96A4A", soft: "#FFF0EA" };
     case "medium":
-      return { label: "中风险", tone: "#C48A29", soft: "#FFF7E8", icon: "shield-half-full" };
     case "suspicious":
-      return { label: "可疑", tone: "#8A63D2", soft: "#F3EEFF", icon: "shield-star-outline" };
-    case "safe":
+      return { label: "可疑", tint: "#C48A29", soft: "#FFF7E8" };
     default:
       return isPhishing
-        ? { label: "可疑", tone: "#8A63D2", soft: "#F3EEFF", icon: "shield-star-outline" }
-        : { label: "安全", tone: "#2F70E6", soft: "#EAF2FF", icon: "shield-check-outline" };
+        ? { label: "可疑", tint: "#C48A29", soft: "#FFF7E8" }
+        : { label: "安全", tint: "#2F70E6", soft: "#EAF2FF" };
   }
 }
 
@@ -34,49 +32,7 @@ function formatPercent(value?: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "--";
   }
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function ResultCard({ result }: { result: WebPhishingPredictResponse }) {
-  const meta = riskMeta(result.risk_level, result.is_phishing);
-  return (
-    <View style={styles.resultCard}>
-      <View style={styles.resultHeader}>
-        <View style={[styles.resultIconWrap, { backgroundColor: meta.soft }]}>
-          <MaterialCommunityIcons name={meta.icon} size={22} color={meta.tone} />
-        </View>
-        <View style={styles.resultHeaderCopy}>
-          <Text style={styles.resultTitle}>{meta.label}</Text>
-          <Text style={styles.resultSubtitle}>{result.is_phishing ? "疑似钓鱼网站" : "暂未发现明显风险"}</Text>
-        </View>
-      </View>
-
-      <View style={styles.metricsRow}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>钓鱼概率</Text>
-          <Text style={styles.metricValue}>{formatPercent(result.phish_prob)}</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>可信度</Text>
-          <Text style={styles.metricValue}>{formatPercent(result.confidence)}</Text>
-        </View>
-      </View>
-
-      <View style={styles.infoCard}>
-        <Text style={styles.infoLabel}>网址</Text>
-        <Text style={styles.infoValue}>{result.url}</Text>
-      </View>
-
-      <View style={styles.metaRow}>
-        <View style={styles.metaChip}>
-          <Text style={styles.metaChipText}>本地模型</Text>
-        </View>
-        <View style={styles.metaChip}>
-          <Text style={styles.metaChipText}>{result.model_name}</Text>
-        </View>
-      </View>
-    </View>
-  );
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 export function WebPhishingScreen() {
@@ -86,7 +42,10 @@ export function WebPhishingScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<WebPhishingPredictResponse | null>(null);
 
-  const canSubmit = useMemo(() => Boolean(url.trim()) && !submitting, [submitting, url]);
+  const meta = useMemo(
+    () => riskMeta(result?.risk_level ?? "safe", Boolean(result?.is_phishing)),
+    [result],
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!token) {
@@ -94,268 +53,180 @@ export function WebPhishingScreen() {
       return;
     }
     if (!url.trim()) {
-      Alert.alert("缺少网址", "请输入网址");
+      Alert.alert("请输入网址", "先补充网址");
       return;
     }
 
     setSubmitting(true);
     try {
-      const nextResult = await detectionsApi.predictWebPhishing(token, {
+      const next = await detectionsApi.predictWebPhishing(token, {
         url: url.trim(),
         return_features: false,
       });
-      setResult(nextResult);
+      if (next.submission_id) {
+        router.replace({
+          pathname: "/records/[id]",
+          params: { id: next.submission_id },
+        });
+        return;
+      }
+      setResult(next);
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "检测失败";
       Alert.alert("检测失败", message);
     } finally {
       setSubmitting(false);
     }
-  }, [token, url]);
+  }, [router, token, url]);
 
   return (
-    <View style={styles.root}>
-      <View style={styles.backgroundOrbTop} />
-      <View style={styles.backgroundOrbBottom} />
-      <SafeAreaView style={styles.safeArea} edges={["top"]}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.headerRow}>
-            <Pressable style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]} onPress={() => router.back()}>
-              <MaterialCommunityIcons name="chevron-left" size={20} color={palette.accentStrong} />
-            </Pressable>
-            <Text style={styles.title}>钓鱼网站识别</Text>
-            <View style={styles.headerSpacer} />
-          </View>
-
-          <View style={styles.heroCard}>
-            <View style={styles.heroIcon}>
-              <MaterialCommunityIcons name="web-check" size={22} color={palette.accentStrong} />
-            </View>
-            <View style={styles.heroCopy}>
-              <Text style={styles.heroTitle}>本地 URL 检测</Text>
-              <View style={styles.heroChip}>
-                <Text style={styles.heroChipText}>仅使用本地模型</Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>目标网址</Text>
-            <TextInput
-              style={styles.input}
-              value={url}
-              onChangeText={setUrl}
-              placeholder="https://example.com/login"
-              placeholderTextColor={palette.inkSoft}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
+    <TaskScreen
+      title="网址钓鱼检测"
+      footer={
+        <TaskPrimaryButton
+          label="开始检测"
+          onPress={() => void handleSubmit()}
+          disabled={!url.trim()}
+          loading={submitting}
+        />
+      }
+    >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <View style={styles.headRow}>
+          <View style={[styles.iconWrap, { backgroundColor: "#FFF7E8" }]}>
+            <MaterialCommunityIcons
+              name="web-check"
+              size={22}
+              color="#D68910"
             />
           </View>
+          <View style={styles.headCopy}>
+            <Text style={styles.headTitle}>网址钓鱼检测</Text>
+            <Text style={styles.headMeta}>单条网址</Text>
+          </View>
+        </View>
 
-          <Pressable
-            style={({ pressed }) => [styles.submitButton, pressed && canSubmit && styles.buttonPressed, !canSubmit && styles.submitDisabled]}
-            onPress={() => void handleSubmit()}
-            disabled={!canSubmit}
-          >
-            {submitting ? (
-              <ActivityIndicator size="small" color={palette.inkInverse} />
-            ) : (
-              <>
-                <Text style={styles.submitButtonText}>开始检测</Text>
-                <MaterialCommunityIcons name="arrow-right" size={16} color={palette.inkInverse} />
-              </>
-            )}
-          </Pressable>
+        <View style={styles.inputWrap}>
+          <TextInput
+            style={styles.input}
+            value={url}
+            onChangeText={setUrl}
+            placeholder="https://example.com"
+            placeholderTextColor={palette.inkSoft}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+        </View>
 
-          {result ? <ResultCard result={result} /> : null}
-        </ScrollView>
-      </SafeAreaView>
-    </View>
+        <View style={styles.resultCard}>
+          <View style={[styles.resultBadge, { backgroundColor: meta.soft }]}>
+            <Text style={[styles.resultBadgeText, { color: meta.tint }]}>
+              {result ? meta.label : "未检测"}
+            </Text>
+          </View>
+
+          <View style={styles.metricRow}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>钓鱼概率</Text>
+              <Text style={styles.metricValue}>
+                {formatPercent(result?.phish_prob)}
+              </Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>可信度</Text>
+              <Text style={styles.metricValue}>
+                {formatPercent(result?.confidence)}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.resultUrl}>
+            {result?.url || "检测后显示网址"}
+          </Text>
+        </View>
+      </ScrollView>
+    </TaskScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: palette.background },
-  safeArea: { flex: 1 },
-  backgroundOrbTop: {
-    position: "absolute",
-    top: -90,
-    left: -34,
-    width: 220,
-    height: 220,
-    borderRadius: 999,
-    backgroundColor: "rgba(117, 167, 255, 0.14)",
+  content: {
+    gap: 16,
+    paddingBottom: 6,
   },
-  backgroundOrbBottom: {
-    position: "absolute",
-    right: -74,
-    bottom: 120,
-    width: 220,
-    height: 220,
-    borderRadius: 999,
-    backgroundColor: "rgba(196, 218, 255, 0.18)",
-  },
-  content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 28, gap: 16 },
-  headerRow: {
+  headRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 12,
   },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  iconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
   },
-  headerSpacer: {
-    width: 38,
-    height: 38,
+  headCopy: {
+    flex: 1,
+    gap: 4,
   },
-  title: {
+  headTitle: {
     color: palette.ink,
-    fontSize: 20,
+    fontSize: 19,
     lineHeight: 24,
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  heroCard: {
-    flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderRadius: radius.xl,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    ...panelShadow,
-  },
-  heroIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
-    backgroundColor: palette.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroCopy: {
-    flex: 1,
-    gap: 8,
-  },
-  heroTitle: {
-    color: palette.ink,
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: "900",
-    fontFamily: fontFamily.display,
-  },
-  heroChip: {
-    alignSelf: "flex-start",
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: palette.surfaceSoft,
-  },
-  heroChipText: {
-    color: palette.accentStrong,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
+  headMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 17,
     fontFamily: fontFamily.body,
   },
-  sectionCard: {
-    borderRadius: radius.lg,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 10,
-    ...panelShadow,
-  },
-  sectionTitle: {
-    color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "800",
-    fontFamily: fontFamily.display,
-  },
-  input: {
-    minHeight: 48,
+  inputWrap: {
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: palette.line,
     backgroundColor: palette.surfaceSoft,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  input: {
     color: palette.ink,
     fontSize: 14,
     lineHeight: 20,
     fontFamily: fontFamily.body,
   },
-  submitButton: {
-    minHeight: 46,
-    borderRadius: radius.pill,
-    backgroundColor: palette.accentStrong,
-    paddingHorizontal: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+  resultCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 14,
   },
-  submitButtonText: {
-    color: palette.inkInverse,
-    fontSize: 13,
-    lineHeight: 18,
+  resultBadge: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  resultBadgeText: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "800",
     fontFamily: fontFamily.body,
   },
-  submitDisabled: { opacity: 0.6 },
-  resultCard: {
-    borderRadius: radius.lg,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.line,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 14,
-    ...panelShadow,
-  },
-  resultHeader: {
+  metricRow: {
     flexDirection: "row",
-    gap: 12,
-    alignItems: "flex-start",
+    gap: 10,
   },
-  resultIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  resultHeaderCopy: { flex: 1, gap: 6 },
-  resultTitle: {
-    color: palette.ink,
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: "900",
-    fontFamily: fontFamily.display,
-  },
-  resultSubtitle: {
-    color: palette.inkSoft,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: fontFamily.body,
-  },
-  metricsRow: { flexDirection: "row", gap: 10 },
   metricCard: {
     flex: 1,
     borderRadius: radius.md,
-    backgroundColor: palette.surfaceSoft,
+    backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 4,
@@ -363,54 +234,20 @@ const styles = StyleSheet.create({
   metricLabel: {
     color: palette.inkSoft,
     fontSize: 11,
-    lineHeight: 14,
+    lineHeight: 15,
     fontFamily: fontFamily.body,
   },
   metricValue: {
     color: palette.ink,
-    fontSize: 16,
+    fontSize: 17,
     lineHeight: 22,
-    fontWeight: "800",
+    fontWeight: "900",
     fontFamily: fontFamily.display,
   },
-  infoCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: palette.surfaceSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 6,
-  },
-  infoLabel: {
-    color: palette.inkSoft,
-    fontSize: 11,
-    lineHeight: 14,
-    fontFamily: fontFamily.body,
-  },
-  infoValue: {
+  resultUrl: {
     color: palette.ink,
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 19,
     fontFamily: fontFamily.body,
   },
-  metaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  metaChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: radius.pill,
-    backgroundColor: palette.accentSoft,
-  },
-  metaChipText: {
-    color: palette.accentStrong,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "700",
-    fontFamily: fontFamily.body,
-  },
-  buttonPressed: { opacity: 0.82 },
 });

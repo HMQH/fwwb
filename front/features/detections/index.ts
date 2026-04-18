@@ -1,6 +1,7 @@
 export { detectionsApi, buildDetectionSubmitFormData } from "./api";
 export { DetectionModeScreen } from "./screens/DetectionModeScreen";
 export { AIFaceCheckScreen } from "./screens/AIFaceCheckScreen";
+export { DirectImageSkillScreen } from "./screens/DirectImageSkillScreen";
 export { SelectUploadedAudioScreen } from "./screens/SelectUploadedAudioScreen";
 export { WebPhishingScreen } from "./screens/WebPhishingScreen";
 export { DetectionResultCard, getRiskMeta, formatConfidence, getVisibleFraudType, getResultHeadline } from "./components/DetectionResultCard";
@@ -27,8 +28,12 @@ export type {
   DetectionEvidence,
   DetectionQrAnalysis,
   DetectionResult,
+  DetectionResultDetail,
   DetectionJob,
   DetectionSubmitAcceptedResponse,
+  DirectImageSkillCheckResponse,
+  DirectSkillEvidence,
+  DirectSkillResult,
   DetectionHistoryItem,
   DetectionSubmissionDetail,
   PickedFile,
