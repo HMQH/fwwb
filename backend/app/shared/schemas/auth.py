@@ -8,9 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.shared.user_roles import UserRole
+
 _PHONE_RE = re.compile(r"^1\d{10}$")
 GuardianRelation = Literal["self", "parent", "spouse", "child", "relative"]
-UserRole = Literal["child", "youth", "elder"]
 PushPlatform = Literal["android", "ios", "web", "unknown"]
 
 

@@ -591,6 +591,8 @@ def get_quiz_set(
         store_quiz_questions(topic.key, questions)
         questions = _slice_questions(questions, count=count)
 
+    _hydrate_quiz_questions_from_cases(questions, topic_cases)
+
     return {
         "topic_key": topic.key,
         "topic_label": topic.label,
@@ -932,6 +934,27 @@ def _slice_questions(questions: list[dict[str, Any]], *, count: int) -> list[dic
     seeded = list(questions)
     random.Random(f"quiz:{count}:{len(questions)}").shuffle(seeded)
     return seeded[:count]
+
+
+def _hydrate_quiz_questions_from_cases(
+    questions: list[dict[str, Any]],
+    cases: list[FraudCase],
+) -> None:
+    """用库中案例补全标题与摘要，避免题干引用案例但客户端只看到截断标题。"""
+    by_id = {str(case.id): case for case in cases}
+    for question in questions:
+        case_id = question.get("source_case_id")
+        if not case_id:
+            continue
+        case = by_id.get(str(case_id))
+        if case is None:
+            continue
+        question["source_case_title"] = case.title
+        summary = (case.summary or "").strip()
+        if summary:
+            question["source_case_summary"] = summary
+        else:
+            question.pop("source_case_summary", None)
 
 
 def _build_simulation_scenario(

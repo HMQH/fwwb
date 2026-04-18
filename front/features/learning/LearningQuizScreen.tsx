@@ -124,10 +124,16 @@ export default function LearningQuizScreen() {
 
         <Text style={styles.questionTitle}>{question.stem}</Text>
 
-        {question.source_case_title ? (
-          <Text style={styles.caseSourceText} numberOfLines={1}>
-            {question.source_case_title}
-          </Text>
+        {question.source_case_title || question.source_case_summary ? (
+          <View style={styles.caseCard}>
+            <Text style={styles.caseCardLabel}>参考案例</Text>
+            {question.source_case_title ? (
+              <Text style={styles.caseCardTitle}>{question.source_case_title}</Text>
+            ) : null}
+            {question.source_case_summary ? (
+              <Text style={styles.caseCardBody}>{question.source_case_summary}</Text>
+            ) : null}
+          </View>
         ) : null}
 
         <View style={styles.optionList}>
@@ -419,10 +425,33 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontFamily: fontFamily.display,
   },
-  caseSourceText: {
+  caseCard: {
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: "#F0F5FB",
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  caseCardLabel: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  caseCardTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  caseCardBody: {
     color: palette.inkSoft,
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 13,
+    lineHeight: 20,
     fontFamily: fontFamily.body,
   },
   optionList: {

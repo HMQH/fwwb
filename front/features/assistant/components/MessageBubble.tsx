@@ -1,14 +1,18 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, radius } from "@/shared/theme";
 
+import { AssistantExecutionBlock } from "./AssistantExecutionBlock";
 import {
+  getAssistantExecution,
   getAssistantMessageAttachments,
   type AssistantAttachment,
+  type AssistantClarifyOption,
   type AssistantMessage,
 } from "../types";
 
@@ -31,52 +35,109 @@ function isImageAttachment(item: AssistantAttachment) {
   return item.upload_type === "image" || item.mime_type?.startsWith("image/") === true;
 }
 
-function AttachmentList({ items, isUser }: { items: AssistantAttachment[]; isUser: boolean }) {
-  const imageItems = items.filter(isImageAttachment);
-  const fileItems = items.filter((item) => !isImageAttachment(item));
+function AttachmentList({
+  items,
+  isUser,
+}: {
+  items: AssistantAttachment[];
+  isUser: boolean;
+}) {
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [previewTitle, setPreviewTitle] = useState<string | null>(null);
+
+  const imageItems = useMemo(() => items.filter(isImageAttachment), [items]);
+  const fileItems = useMemo(() => items.filter((item) => !isImageAttachment(item)), [items]);
 
   return (
-    <View style={styles.attachmentWrap}>
-      {imageItems.length ? (
-        <View style={styles.imageGrid}>
-          {imageItems.map((item) => {
-            const uri = resolveAttachmentUri(item);
-            return (
-              <View key={`${item.file_path}-${item.name}`} style={styles.imageCard}>
-                {uri ? <Image source={{ uri }} style={styles.image} contentFit="cover" /> : null}
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
+    <>
+      <View style={styles.attachmentWrap}>
+        {imageItems.length ? (
+          <View style={styles.imageGrid}>
+            {imageItems.map((item) => {
+              const uri = resolveAttachmentUri(item);
+              return (
+                <Pressable
+                  key={`${item.file_path}-${item.name}-${uri}`}
+                  style={({ pressed }) => [styles.imageCard, pressed && styles.pressed]}
+                  onPress={() => {
+                    if (!uri) {
+                      return;
+                    }
+                    setPreviewUri(uri);
+                    setPreviewTitle(item.name);
+                  }}
+                >
+                  {uri ? <Image source={{ uri }} style={styles.image} contentFit="cover" /> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
-      {fileItems.length ? (
-        <View style={styles.fileList}>
-          {fileItems.map((item) => (
-            <View
-              key={`${item.file_path}-${item.name}`}
-              style={[styles.fileChip, isUser ? styles.userFileChip : styles.assistantFileChip]}
-            >
-              <MaterialCommunityIcons
-                name="file-outline"
-                size={16}
-                color={isUser ? "rgba(255,255,255,0.88)" : palette.accentStrong}
-              />
-              <Text style={[styles.fileChipText, isUser && styles.userFileChipText]} numberOfLines={1}>
-                {item.name}
+        {fileItems.length ? (
+          <View style={styles.fileList}>
+            {fileItems.map((item) => (
+              <Pressable
+                key={`${item.file_path}-${item.name}`}
+                style={({ pressed }) => [
+                  styles.fileChip,
+                  isUser ? styles.userFileChip : styles.assistantFileChip,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => {
+                  const uri = resolveAttachmentUri(item);
+                  if (uri) {
+                    void Linking.openURL(uri);
+                  }
+                }}
+              >
+                <MaterialCommunityIcons
+                  name="file-outline"
+                  size={16}
+                  color={isUser ? "rgba(255,255,255,0.88)" : palette.accentStrong}
+                />
+                <Text style={[styles.fileChipText, isUser && styles.userFileChipText]} numberOfLines={1}>
+                  {item.name}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <Modal visible={Boolean(previewUri)} transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
+        <View style={styles.previewBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setPreviewUri(null)} />
+          <View style={styles.previewCard}>
+            <View style={styles.previewHead}>
+              <Text style={styles.previewTitle} numberOfLines={2}>
+                {previewTitle ?? "图片预览"}
               </Text>
+              <Pressable style={({ pressed }) => [styles.previewClose, pressed && styles.pressed]} onPress={() => setPreviewUri(null)}>
+                <Text style={styles.previewCloseText}>关闭</Text>
+              </Pressable>
             </View>
-          ))}
+            {previewUri ? <Image source={{ uri: previewUri }} style={styles.previewImage} contentFit="contain" /> : null}
+          </View>
         </View>
-      ) : null}
-    </View>
+      </Modal>
+    </>
   );
 }
 
-export default function MessageBubble({ message }: { message: AssistantMessage }) {
+export default function MessageBubble({
+  message,
+  onPressQuickAction,
+  quickActionDisabled,
+}: {
+  message: AssistantMessage;
+  onPressQuickAction?: (option: AssistantClarifyOption) => void;
+  quickActionDisabled?: boolean;
+}) {
   const isUser = message.role === "user";
   const isStreaming = message.client_status === "streaming" || message.client_status === "pending";
   const attachments = getAssistantMessageAttachments(message);
+  const execution = getAssistantExecution(message);
   const showText = Boolean(message.content.trim());
 
   return (
@@ -94,10 +155,18 @@ export default function MessageBubble({ message }: { message: AssistantMessage }
           </View>
         ) : null}
 
+        {!isUser ? (
+          <AssistantExecutionBlock
+            execution={execution}
+            disabled={quickActionDisabled}
+            onPressQuickAction={onPressQuickAction}
+          />
+        ) : null}
+
         {attachments.length ? <AttachmentList items={attachments} isUser={isUser} /> : null}
 
         <Text style={[styles.meta, isUser ? styles.userMeta : styles.assistantMeta]}>
-          {isUser ? "我" : isStreaming ? "生成中" : "助手"} · {formatTime(message.created_at)}
+          {isUser ? "我" : isStreaming ? "执行中" : "助手"} · {formatTime(message.created_at)}
         </Text>
       </View>
     </Animated.View>
@@ -211,5 +280,54 @@ const styles = StyleSheet.create({
   },
   userFileChipText: {
     color: "#234A78",
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(8, 17, 34, 0.78)",
+    paddingHorizontal: 16,
+    paddingVertical: 32,
+    justifyContent: "center",
+  },
+  previewCard: {
+    borderRadius: radius.lg,
+    backgroundColor: "#FFFFFF",
+    padding: 14,
+    gap: 12,
+  },
+  previewHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  previewTitle: {
+    flex: 1,
+    color: "#1F2837",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  previewClose: {
+    borderRadius: radius.pill,
+    backgroundColor: "#F2F5FA",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  previewCloseText: {
+    color: "#5E6E82",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  previewImage: {
+    width: "100%",
+    height: 360,
+    borderRadius: radius.md,
+    backgroundColor: "#EEF3FA",
+  },
+  pressed: {
+    opacity: 0.92,
   },
 });

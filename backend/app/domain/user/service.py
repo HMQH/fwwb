@@ -1,4 +1,4 @@
-"""用户域：注册、登录等业务。"""
+"""用户基础：注册、登录等业务。"""
 from __future__ import annotations
 
 import re
@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.domain.user import repository as user_repository
 from app.domain.user.entity import User, UserPushToken
-from app.shared.core.security import create_access_token, hash_password, verify_password
 from app.shared.core.config import settings
+from app.shared.core.security import create_access_token, hash_password, verify_password
 from app.shared.schemas.auth import (
     LoginRequest,
     PushTokenResponse,
@@ -27,6 +27,7 @@ from app.shared.storage.upload_paths import (
     safe_suffix,
     save_avatar_bytes,
 )
+from app.shared.user_roles import is_minor_role, normalize_user_role
 
 _EXPO_PUSH_TOKEN_RE = re.compile(r"^(Expo|Exponent)PushToken\[[^\]]+\]$")
 
@@ -36,13 +37,13 @@ def _utcnow() -> datetime:
 
 
 def role_from_birth_date(birth: date, today: date | None = None) -> str:
-    """周岁：<18 child；18–60 youth；>60 elder（含边界与开发文档一致）。"""
+    """仅作年龄兜底，不代表完整人群画像。"""
     ref = today or date.today()
     age = ref.year - birth.year - ((ref.month, ref.day) < (birth.month, birth.day))
     if age < 18:
-        return "child"
-    if age <= 60:
-        return "youth"
+        return "minor"
+    if age < 60:
+        return "office_worker"
     return "elder"
 
 
@@ -51,7 +52,7 @@ def _user_public(u: User) -> UserPublic:
         id=u.id,
         phone=u.phone,
         display_name=u.display_name,
-        role=u.role,
+        role=normalize_user_role(u.role) or u.role,
         birth_date=u.birth_date,
         avatar_url=u.avatar_url,
         guardian_relation=u.guardian_relation,
@@ -62,7 +63,7 @@ def _user_public(u: User) -> UserPublic:
 
 
 def _default_guardian_relation(role: str) -> str:
-    if role == "child":
+    if is_minor_role(role):
         return "parent"
     return "self"
 
@@ -74,7 +75,7 @@ def register_user(
     avatar_upload: tuple[bytes, str] | None = None,
     upload_root_cfg: str | None = None,
 ) -> TokenResponse:
-    role = body.role
+    role = normalize_user_role(body.role) or body.role
     user_id = uuid.uuid4()
     avatar_url: str | None = None
 

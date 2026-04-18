@@ -256,7 +256,50 @@ export type DetectionReasoningGraph = {
   [key: string]: unknown;
 };
 
+export type DetectionKagStage = {
+  code: string;
+  label: string;
+  score: number;
+  active?: boolean;
+  tone?: string | null;
+};
+
+export type DetectionKagCurrentStage = {
+  code: string;
+  label: string;
+  score?: number | null;
+  tone?: string | null;
+};
+
+export type DetectionKagEvidenceItem = {
+  id: string;
+  source: string;
+  label: string;
+  text: string;
+  tone: "danger" | "safe" | "warning" | "primary" | string;
+  stage?: string | null;
+};
+
+export type DetectionKagPayload = {
+  enabled: boolean;
+  mode: "deep" | "standard" | string;
+  current_stage?: DetectionKagCurrentStage | null;
+  predicted_next_step?: string | null;
+  trajectory?: string[];
+  stage_scores?: DetectionKagStage[];
+  key_relations?: string[];
+  intervention_focus?: string[];
+  evidence_map?: DetectionKagEvidenceItem[];
+  entity_count?: number | null;
+  relation_count?: number | null;
+  signal_count?: number | null;
+  counter_signal_count?: number | null;
+  reasoning_graph?: DetectionReasoningGraph | null;
+  reasoning_path?: string[];
+};
+
 export type DetectionResultDetail = {
+  analysis_mode?: "deep" | "standard" | string;
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
   used_modules?: string[];
@@ -272,6 +315,7 @@ export type DetectionResultDetail = {
   similar_images?: SimilarImageItem[];
   similar_images_count?: number | null;
   audio_verify_items?: AudioVerifyRecordItem[];
+  kag?: DetectionKagPayload | null;
   [key: string]: unknown;
 };
 
@@ -279,6 +323,8 @@ export type DetectionPipelineProgressDetail = {
   status?: string;
   current_step?: string | null;
   progress_percent?: number | null;
+  analysis_mode?: "deep" | "standard" | string;
+  deep_reasoning?: boolean;
   execution_trace?: DetectionModuleTraceItem[];
   module_trace?: DetectionModuleTraceItem[];
   reasoning_graph?: DetectionReasoningGraph | null;

@@ -22,6 +22,8 @@ import { useAuth } from "@/features/auth";
 import {
   AgentExecutionCard,
   DetectionPipelineCard,
+  KagEvidenceMapCard,
+  KagSummaryCard,
   ReasoningGraphCard,
   SimilarImageGalleryCard,
   detectionsApi,
@@ -644,6 +646,15 @@ export default function RecordDetailScreen() {
   const riskMeta = getRiskMeta(result?.risk_level);
   const headline = getResultHeadline(result);
   const visibleFraudType = getVisibleFraudType(result);
+  const resultDetail = getResultDetail(result);
+  const showDeepReasoning = Boolean(
+    resultDetail?.analysis_mode === "deep"
+    || (
+      isRecord(job?.progress_detail)
+      && String(job?.progress_detail?.analysis_mode ?? "").trim().toLowerCase() === "deep"
+    ),
+  );
+  const deepStageLabel = sanitizeDisplayText(resultDetail?.kag?.current_stage?.label ?? "");
   const audioVerifyItems = getAudioVerifyItems(result);
   const similarImages = getSimilarImages(result);
   const evidenceCardWidth = Math.max(220, Math.min(width - 92, 296));
@@ -723,6 +734,8 @@ export default function RecordDetailScreen() {
           : agentMode
             ? (!result ? <AgentExecutionCard job={job} result={result} title="执行链路" maxVisibleSteps={4} forceVisible /> : null)
             : (job ? <DetectionPipelineCard job={job} result={result} title="检测流程" /> : null)}
+
+        {showDeepReasoning ? <KagSummaryCard result={result} /> : null}
 
 {result ? (
           <PageSurface>
@@ -846,6 +859,7 @@ export default function RecordDetailScreen() {
     riskMeta.soft,
     riskMeta.tone,
     router,
+    showDeepReasoning,
     submission,
     visibleFraudType,
   ]);
@@ -908,6 +922,8 @@ export default function RecordDetailScreen() {
           <SectionLabel>原文</SectionLabel>
           <Text style={styles.rawText}>{submission.text_content?.trim() || "无文本"}</Text>
         </PageSurface>
+
+        {showDeepReasoning ? <KagEvidenceMapCard result={result} /> : null}
 
         {similarImages.length ? (
           <SimilarImageGalleryCard
@@ -977,6 +993,7 @@ export default function RecordDetailScreen() {
     lockPagerScroll,
     openEvidenceSheet,
     result,
+    showDeepReasoning,
     similarImages,
     submission,
     unlockPagerScroll,
@@ -1004,9 +1021,25 @@ export default function RecordDetailScreen() {
             <Pressable style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]} onPress={() => router.replace("/records")}>
               <MaterialCommunityIcons name="chevron-left" size={18} color={palette.accentStrong} />
             </Pressable>
-            <View style={styles.headerTitleWrap}>
+          <View style={styles.headerTitleWrap}>
               <Text style={styles.pageTitle}>检测详情</Text>
               <Text style={styles.pageTime}>{formatDateTime(submission?.created_at ?? job?.created_at)}</Text>
+              {showDeepReasoning ? (
+                <View style={styles.deepModeHeaderRow}>
+                  <View style={styles.deepModeHeaderPill}>
+                    <MaterialCommunityIcons name="graph-outline" size={13} color="#FFFFFF" />
+                    <Text style={styles.deepModeHeaderPillText}>KAG</Text>
+                  </View>
+                  <View style={styles.deepModeHeaderTag}>
+                    <Text style={styles.deepModeHeaderTagText}>深度推理</Text>
+                  </View>
+                  {deepStageLabel ? (
+                    <View style={styles.deepModeStagePill}>
+                      <Text style={styles.deepModeStagePillText}>{deepStageLabel}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -1179,7 +1212,57 @@ const styles = StyleSheet.create({
   },
   headerTitleWrap: {
     flex: 1,
-    gap: 1,
+    gap: 6,
+  },
+  deepModeHeaderRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  deepModeHeaderPill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#2F70E6",
+  },
+  deepModeHeaderPillText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  deepModeHeaderTag: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#EEF5FF",
+  },
+  deepModeHeaderTagText: {
+    color: "#2F70E6",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  deepModeStagePill: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#FFF1E8",
+  },
+  deepModeStagePillText: {
+    color: "#D96A4A",
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
   },
   pageTitle: {
     color: palette.ink,

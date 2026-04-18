@@ -91,7 +91,7 @@ export default function ProfileScreen() {
     return null;
   }
 
-  const selectedGuardian = user.guardian_relation ?? (user.role === "child" ? "parent" : "self");
+  const selectedGuardian = user.guardian_relation ?? (user.role === "minor" ? "parent" : "self");
   const selectedMeta = guardianMeta[selectedGuardian];
 
   const stats = [

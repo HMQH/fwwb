@@ -80,6 +80,7 @@ function buildSingleImageFormData(fieldName: string, imageFile: PickedFile): For
 export function buildDetectionSubmitFormData(input: {
   text_content?: string;
   relation_profile_id?: string | null;
+  deep_reasoning?: boolean;
   text_files?: PickedFile[];
   audio_files?: PickedFile[];
   image_files?: PickedFile[];
@@ -92,6 +93,10 @@ export function buildDetectionSubmitFormData(input: {
   }
   if (input.relation_profile_id) {
     form.append("relation_profile_id", input.relation_profile_id);
+  }
+  if (typeof input.deep_reasoning === "boolean") {
+    form.append("deep_reasoning", String(input.deep_reasoning));
+    form.append("analysis_mode", input.deep_reasoning ? "deep" : "standard");
   }
   appendRnFiles(form, "text_files", input.text_files ?? []);
   appendRnFiles(form, "audio_files", input.audio_files ?? []);

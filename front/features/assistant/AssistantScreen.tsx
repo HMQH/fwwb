@@ -15,16 +15,23 @@ import {
   Text,
   View,
 } from "react-native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
 import { fontFamily, palette, radius } from "@/shared/theme";
 
 import Composer from "./components/Composer";
+import { ContextBudgetBar } from "./components/ContextBudgetBar";
 import HistoryDrawer from "./components/HistoryDrawer";
 import MessageBubble from "./components/MessageBubble";
 import RelationPickerSheet from "./components/RelationPickerSheet";
-import type { AssistantDraftAttachment, AssistantMessage, AssistantAttachmentKind } from "./types";
+import {
+  getAssistantContextBudget,
+  type AssistantDraftAttachment,
+  type AssistantMessage,
+  type AssistantAttachmentKind,
+} from "./types";
 import { useAssistantConversation } from "./useAssistantConversation";
 
 const TEXT_EXT = new Set([".txt", ".md", ".json", ".csv", ".log", ".html", ".htm", ".pdf", ".doc", ".docx"]);
@@ -97,6 +104,7 @@ function AttachmentDraftBar({
 
 export default function AssistantScreen() {
   const insets = useSafeAreaInsets();
+  const tabBarHeight = useBottomTabBarHeight();
   const listRef = useRef<FlatList<AssistantMessage> | null>(null);
   const [draft, setDraft] = useState("");
   const [historyVisible, setHistoryVisible] = useState(false);
@@ -111,6 +119,7 @@ export default function AssistantScreen() {
     relations,
     selectedRelationId,
     messages,
+    latestContextBudget,
     loading,
     sending,
     error,
@@ -119,6 +128,7 @@ export default function AssistantScreen() {
     createNewSession,
     selectRelation,
     sendMessage,
+    sendQuickAction,
   } = useAssistantConversation(token);
 
   const relationNameMap = useMemo(
@@ -133,11 +143,24 @@ export default function AssistantScreen() {
     () => relations.find((item) => item.id === selectedRelationId) ?? null,
     [relations, selectedRelationId]
   );
+  const visibleContextBudget = useMemo(() => {
+    if (latestContextBudget) {
+      return latestContextBudget;
+    }
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const budget = getAssistantContextBudget(messages[index]);
+      if (budget) {
+        return budget;
+      }
+    }
+    return null;
+  }, [latestContextBudget, messages]);
 
   const relationButtonLabel = activeRelation?.name ?? "对象";
-  // Tab 场景已在 Tab 栏之上，勿再叠加 tabBarHeight；键盘弹出时 Tab 隐藏，需留出底部安全区。
-  const composerBottomInset = keyboardVisible ? Math.max(insets.bottom, 8) : 0;
-  const listBottomInset = composerHeight + 8;
+  const composerBottomInset = keyboardVisible
+    ? Math.max(insets.bottom, 8)
+    : Math.max(tabBarHeight - insets.bottom + 8, 12);
+  const listBottomInset = composerHeight + composerBottomInset + 8;
   const scrollToLatest = useCallback((animated: boolean) => {
     requestAnimationFrame(() => {
       listRef.current?.scrollToEnd({ animated });
@@ -324,6 +347,8 @@ export default function AssistantScreen() {
               </View>
             </View>
 
+            <ContextBudgetBar budget={visibleContextBudget} />
+
             <View style={styles.listWrap}>
               {loading && messages.length === 0 ? (
                 <View style={styles.centerState}>
@@ -334,7 +359,13 @@ export default function AssistantScreen() {
                   ref={listRef}
                   data={messages}
                   keyExtractor={(item) => item.id}
-                  renderItem={({ item }) => <MessageBubble message={item} />}
+                  renderItem={({ item }) => (
+                    <MessageBubble
+                      message={item}
+                      quickActionDisabled={sending}
+                      onPressQuickAction={(option) => void sendQuickAction(option.submit_text)}
+                    />
+                  )}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
@@ -454,6 +485,7 @@ const styles = StyleSheet.create({
   },
   listWrap: {
     flex: 1,
+    minHeight: 0,
   },
   listContent: {
     paddingTop: 14,
@@ -465,6 +497,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bottomArea: {
+    position: "relative",
+    zIndex: 20,
+    elevation: 20,
+    flexShrink: 0,
     paddingTop: 4,
     backgroundColor: "#FFFFFF",
   },

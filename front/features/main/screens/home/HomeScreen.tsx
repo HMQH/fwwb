@@ -13,9 +13,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useAuth } from "@/features/auth";
+import { useAuth, type UserRole } from "@/features/auth";
 import type { DetectionMode } from "@/features/detections";
 import { fontFamily, palette, panelShadow } from "@/shared/theme";
+
+import { HomeMascot } from "@/features/home/components/HomeMascot";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
 const detectionEntries: {
@@ -50,11 +52,16 @@ const detectionEntries: {
   },
 ];
 
-function getScore(userRole: "child" | "youth" | "elder", guardianRelation: string | null) {
+function getScore(userRole: UserRole, guardianRelation: string | null) {
   const baseScore = {
-    child: 97,
-    youth: 95,
+    office_worker: 95,
+    student: 96,
+    mother: 95,
+    investor: 94,
+    minor: 97,
+    young_social: 95,
     elder: 93,
+    finance: 94,
   }[userRole];
 
   const relationBonus = guardianRelation && guardianRelation !== "self" ? 2 : 0;
@@ -228,6 +235,10 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Animated.View entering={reduceMotion ? undefined : FadeInDown.duration(420)}>
+            <HomeMascot score={score} />
+          </Animated.View>
+
+          <Animated.View entering={reduceMotion ? undefined : FadeInDown.duration(420).delay(70)}>
             <ScoreBubble score={score} />
           </Animated.View>
 

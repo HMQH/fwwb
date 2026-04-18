@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import mimetypes
+import re
 import uuid
 import urllib.error
 import urllib.request
@@ -17,6 +18,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.domain.assistant_agent import iter_assistant_agent_stream
 from app.domain.assistant import repository as assistant_repository
 from app.domain.assistant.entity import AssistantMessage, AssistantSession
 from app.domain.detection import repository as detection_repository
@@ -25,6 +27,8 @@ from app.domain.detection import rules as detection_rules
 from app.domain.relations import repository as relation_repository
 from app.domain.uploads import service as upload_service
 from app.domain.user import profile_memory as user_profile_memory
+from app.domain.user import repository as user_repository
+from app.domain.assistant.role_prompts import get_role_personalized_prompt
 from app.shared.core.config import settings
 from app.shared.storage.upload_paths import (
     allocate_batch_folder_name,
@@ -34,6 +38,7 @@ from app.shared.storage.upload_paths import (
 )
 
 _DEFAULT_TITLE = "反诈助手"
+_URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
 _RELATION_TYPE_LABELS = {
@@ -529,6 +534,56 @@ def _short_text(value: str | None, *, limit: int = 72) -> str | None:
     return cleaned[:limit].rstrip() + "…"
 
 
+_LOW_INFO_TEXT_MARKERS = (
+    "转账",
+    "验证码",
+    "下载",
+    "app",
+    "链接",
+    "网址",
+    "二维码",
+    "客服",
+    "银行卡",
+    "付款",
+    "充值",
+    "收益",
+    "返利",
+    "投资",
+    "刷单",
+    "兼职",
+    "贷款",
+    "冻结",
+    "裸聊",
+    "恋爱",
+    "网恋",
+    "语音房",
+    "房间",
+    "加微信",
+    "警察",
+    "公安",
+    "法院",
+)
+
+
+def _is_low_information_chat_text(value: str | None) -> bool:
+    normalized = detection_rules.normalize_text(value or "")
+    if not normalized:
+        return True
+    collapsed = normalized.replace(" ", "")
+    if any(marker in collapsed.lower() for marker in _LOW_INFO_TEXT_MARKERS):
+        return False
+    if _URL_RE.search(collapsed):
+        return False
+    if any(char.isdigit() for char in collapsed):
+        return False
+    unique_chars = len(set(collapsed))
+    if len(collapsed) <= 8:
+        return True
+    if len(collapsed) <= 12 and unique_chars <= 4:
+        return True
+    return False
+
+
 def _build_retrieval_context(
     db: Session,
     *,
@@ -536,6 +591,14 @@ def _build_retrieval_context(
 ) -> tuple[dict[str, Any], list[str]]:
     normalized = detection_rules.normalize_text(user_text)
     if not normalized:
+        return {
+            "rule_score": 0,
+            "hit_rules": [],
+            "fraud_type_hints": [],
+            "stage_tags": [],
+            "references": [],
+        }, []
+    if _is_low_information_chat_text(normalized):
         return {
             "rule_score": 0,
             "hit_rules": [],
@@ -632,8 +695,8 @@ def _build_context_blob(
     return "\n\n".join(blocks)
 
 
-def _assistant_system_prompt() -> str:
-    return (
+def _assistant_system_prompt(role_prompt: str | None = None) -> str:
+    base_prompt = (
         "你是移动端反诈助手。"
         "只用简体中文回答。"
         "必须把当前消息、整段会话、附件内容、用户画像、对象记忆一起对照分析。"
@@ -642,13 +705,21 @@ def _assistant_system_prompt() -> str:
         "如果会话绑定了某条记录，必须结合这条记录的全部上下文，不要只看摘要。"
         "输出尽量短，但要有结论。"
         "用户画像、内部风险分、内部记忆仅用于内部推理，不得直接向用户复述。"
-        "对象画像摘要、对象记忆也属于内部工作记忆，不得逐条列出，不得直接说“画像显示”“系统记得”等。"
+        "对象画像摘要、对象记忆也属于内部工作记忆，不得逐条列出，不得直接说“画像显示”“系统记得”。"
         "证据不足时，不要默认判定诈骗。"
         "理由优先引用当前消息、附件、明确事实；用户画像仅作辅助，不直接外显。"
+        "如果用户输入只是短语气词、问候语、无明确交易信息的闲聊，例如“啦啦啦”“哈哈”“你好你是谁”，不要强行映射到诈骗场景。"
+        "这类低信息输入应先正常对话，或简短要求用户提供完整聊天、图片、链接后再判断。"
         "信息不足时，可以只追问 1 个最关键的问题。"
         "不要写营销文案，不要铺垫。"
     )
-
+    if not role_prompt:
+        return base_prompt
+    return (
+        base_prompt
+        + "以下是当前用户所属人群的内部防诈侧重点，仅用于推理，不得逐条向用户复述：\n"
+        + role_prompt.strip()
+    )
 
 def _extract_chat_content(payload: dict[str, Any]) -> str:
     choices = payload.get("choices")
@@ -789,6 +860,9 @@ def _build_fallback_reply(
     retrieval_summary: dict[str, Any],
     relation_name: str | None = None,
 ) -> str:
+    if _is_low_information_chat_text(user_text):
+        return "这句话本身看不出风险。要我判断是否诈骗，请发完整聊天、图片、链接或具体诉求。"
+
     rule_score = int(retrieval_summary.get("rule_score") or 0)
     hit_rules = [str(item) for item in (retrieval_summary.get("hit_rules") or []) if item][:3]
     fraud_hints = [str(item) for item in (retrieval_summary.get("fraud_type_hints") or []) if item][:2]
@@ -978,10 +1052,14 @@ def _prepare_assistant_request(
     *,
     session: AssistantSession,
     messages: list[AssistantMessage],
+    prompt_history_messages: list[AssistantMessage] | None = None,
+    compressed_summary: str | None = None,
     user_text: str,
     relation_profile_id: uuid.UUID | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], str | None]:
     current_uploads = _extract_attachment_items(messages[-1].extra_payload if messages else {})
+    current_user = user_repository.get_by_id(db, session.user_id)
+    role_prompt = get_role_personalized_prompt(current_user.role if current_user else None)
     user_context = _build_user_context(db, user_id=session.user_id)
     relation_name, relation_context, relation_image_items = _build_relation_context(
         db,
@@ -1002,9 +1080,11 @@ def _prepare_assistant_request(
         retrieval_lines=retrieval_lines,
     )
 
-    prompt_messages: list[dict[str, Any]] = [{"role": "system", "content": _assistant_system_prompt()}]
+    prompt_messages: list[dict[str, Any]] = [{"role": "system", "content": _assistant_system_prompt(role_prompt)}]
     if context_blob:
         prompt_messages.append({"role": "system", "content": context_blob})
+    if compressed_summary:
+        prompt_messages.append({"role": "system", "content": f"历史对话压缩摘要：\n{compressed_summary}"})
     if relation_image_items:
         relation_visual_hint = (
             f"系统补充资料：以下图片来自当前选中对象“{relation_name}”的关联图片，仅供内部分析。"
@@ -1024,7 +1104,7 @@ def _prepare_assistant_request(
                 ],
             }
         )
-    for item in messages:
+    for item in prompt_history_messages or messages:
         if item.role not in {"user", "assistant"}:
             continue
         content = _message_prompt_payload(item)
@@ -1296,15 +1376,6 @@ def stream_message(
         extra_payload={"stream_status": "started"},
     )
 
-    prompt_messages, extra_payload, retrieval_summary, relation_name = _prepare_assistant_request(
-        db,
-        session=session,
-        messages=messages,
-        user_text=cleaned_content,
-        relation_profile_id=relation_profile_id,
-    )
-
-    usage: dict[str, Any] | None = None
     parts: list[str] = []
     yield _sse_event(
         "ack",
@@ -1315,49 +1386,73 @@ def stream_message(
         },
     )
 
-    try:
-        for item in _iter_chat_content_stream(prompt_messages):
-            if item.get("type") == "delta":
-                delta = str(item.get("text") or "")
-                if not delta:
-                    continue
-                parts.append(delta)
-                yield _sse_event(
-                    "delta",
-                    {
-                        "assistant_message_id": str(assistant_message.id),
-                        "delta": delta,
-                        "phase": item.get("phase") or "answer",
-                    },
-                )
-            elif item.get("type") == "usage":
-                maybe_usage = item.get("usage")
-                if isinstance(maybe_usage, dict):
-                    usage = maybe_usage
-    except Exception:
-        if not parts:
-            fallback_text = _build_fallback_reply(
-                user_text=cleaned_content,
-                retrieval_summary=retrieval_summary,
-                relation_name=relation_name,
-            )
-            parts.append(fallback_text)
+    final_extra_payload: dict[str, Any] = {"stream_status": "completed"}
+    final_content = ""
+
+    for item in iter_assistant_agent_stream(
+        db,
+        user_id=user_id,
+        relation_profile_id=relation_profile_id,
+        user_text=cleaned_content,
+        messages=messages,
+        assistant_message_id=assistant_message.id,
+        prepare_llm_request=lambda inner_db, **kwargs: _prepare_assistant_request(
+            inner_db,
+            session=session,
+            messages=kwargs["messages"],
+            prompt_history_messages=kwargs.get("prompt_history_messages"),
+            compressed_summary=kwargs.get("compressed_summary"),
+            user_text=kwargs["user_text"],
+            relation_profile_id=kwargs["relation_profile_id"],
+        ),
+        llm_call=_call_assistant_llm,
+        llm_stream=_iter_chat_content_stream,
+        llm_fallback=lambda user_text, retrieval_summary, relation_name: _build_fallback_reply(
+            user_text=user_text,
+            retrieval_summary=retrieval_summary,
+            relation_name=relation_name,
+        ),
+    ):
+        event = str(item.get("event") or "").strip()
+        if event == "delta":
+            delta = str(item.get("text") or "")
+            if not delta:
+                continue
+            parts.append(delta)
             yield _sse_event(
                 "delta",
                 {
                     "assistant_message_id": str(assistant_message.id),
-                    "delta": fallback_text,
-                    "phase": "answer",
+                    "delta": delta,
+                    "phase": item.get("phase") or "answer",
                 },
             )
+            continue
+        if event == "final":
+            final_content = str(item.get("content") or "").strip()
+            maybe_payload = item.get("extra_payload")
+            if isinstance(maybe_payload, dict):
+                final_extra_payload = {**maybe_payload, "stream_status": "completed"}
+            if final_content and not parts:
+                parts.append(final_content)
+                yield _sse_event(
+                    "delta",
+                    {
+                        "assistant_message_id": str(assistant_message.id),
+                        "delta": final_content,
+                        "phase": "answer",
+                    },
+                )
+            continue
+        maybe_payload = item.get("payload")
+        if isinstance(maybe_payload, dict):
+            yield _sse_event(event, maybe_payload)
 
-    final_content = "".join(parts).strip()
+    if not final_content:
+        final_content = "".join(parts).strip()
+
     assistant_message.content = final_content
-    assistant_message.extra_payload = {
-        **extra_payload,
-        "usage": usage or {},
-        "stream_status": "completed",
-    }
+    assistant_message.extra_payload = final_extra_payload
     assistant_message = assistant_repository.save_message(db, assistant_message)
     session = _touch_session(db, session)
     try:

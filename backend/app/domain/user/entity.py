@@ -1,4 +1,4 @@
-"""用户表 ORM（与 PostgreSQL users 及枚举 role 对齐，需已执行建库 SQL）。"""
+"""用户表 ORM（与 PostgreSQL users 及枚举 role 对齐，需已执行建表 SQL）。"""
 from __future__ import annotations
 
 import uuid
@@ -10,14 +10,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Uuid
 
 from app.shared.db.base import Base
+from app.shared.user_roles import USER_ROLES
 
-role_pg = ENUM(
-    "child",
-    "youth",
-    "elder",
-    name="role",
-    create_type=False,
-)
+role_pg = ENUM(*USER_ROLES, name="role", create_type=False)
 
 
 class User(Base):

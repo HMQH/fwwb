@@ -5,6 +5,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from app.shared.user_roles import normalize_user_role, role_matches
+
 RECOMMENDED_CATEGORY_KEY = "recommended"
 
 
@@ -46,7 +48,7 @@ FRAUD_TOPIC_DEFINITIONS: tuple[FraudTopicDefinition, ...] = (
     FraudTopicDefinition(
         key="transaction_fraud",
         label="交易诈骗",
-        description="订单、跑分、银行卡、代购",
+        description="订单、跑分、银行卡、代付",
         simulation_persona="交易客服",
         aliases=("交易", "订单", "退款", "理赔", "代购", "跑分", "银行卡", "两卡", "收款", "押金"),
         fine_types=("洗钱跑分", "两卡帮信"),
@@ -56,7 +58,7 @@ FRAUD_TOPIC_DEFINITIONS: tuple[FraudTopicDefinition, ...] = (
         label="招聘诈骗",
         description="兼职、培训、就业、学费",
         simulation_persona="招聘专员",
-        aliases=("招聘", "兼职", "培训", "学费", "就业", "内推", "实习", "培训贷"),
+        aliases=("招聘", "兼职", "培训", "学费", "就业", "内推", "实习", "培训费"),
         fine_types=("求职培训诈骗",),
     ),
     FraudTopicDefinition(
@@ -85,7 +87,7 @@ _FINE_TYPE_TO_TOPIC = {
 }
 
 _ROLE_TOPIC_PRIORITY: dict[str, dict[str, int]] = {
-    "child": {
+    "minor": {
         "social_fraud": 4,
         "impersonation_fraud": 3,
         "transaction_fraud": 3,
@@ -94,21 +96,66 @@ _ROLE_TOPIC_PRIORITY: dict[str, dict[str, int]] = {
         "livelihood_fraud": 1,
         "other_fraud": 1,
     },
-    "youth": {
+    "student": {
         "job_fraud": 4,
-        "financial_fraud": 4,
+        "transaction_fraud": 4,
         "social_fraud": 3,
-        "transaction_fraud": 3,
+        "financial_fraud": 2,
         "impersonation_fraud": 2,
         "livelihood_fraud": 1,
         "other_fraud": 1,
     },
-    "elder": {
+    "office_worker": {
         "impersonation_fraud": 4,
         "financial_fraud": 4,
+        "transaction_fraud": 3,
+        "social_fraud": 2,
+        "livelihood_fraud": 1,
+        "job_fraud": 1,
+        "other_fraud": 1,
+    },
+    "young_social": {
+        "social_fraud": 4,
+        "financial_fraud": 3,
+        "transaction_fraud": 3,
+        "impersonation_fraud": 2,
+        "job_fraud": 2,
+        "livelihood_fraud": 1,
+        "other_fraud": 1,
+    },
+    "mother": {
+        "transaction_fraud": 4,
+        "impersonation_fraud": 3,
         "livelihood_fraud": 3,
+        "financial_fraud": 2,
+        "social_fraud": 2,
+        "job_fraud": 1,
+        "other_fraud": 1,
+    },
+    "investor": {
+        "financial_fraud": 4,
+        "social_fraud": 3,
+        "impersonation_fraud": 2,
+        "transaction_fraud": 2,
+        "livelihood_fraud": 1,
+        "job_fraud": 1,
+        "other_fraud": 1,
+    },
+    "elder": {
+        "impersonation_fraud": 4,
+        "livelihood_fraud": 4,
+        "financial_fraud": 3,
         "social_fraud": 2,
         "transaction_fraud": 2,
+        "job_fraud": 1,
+        "other_fraud": 1,
+    },
+    "finance": {
+        "impersonation_fraud": 4,
+        "transaction_fraud": 4,
+        "financial_fraud": 3,
+        "social_fraud": 1,
+        "livelihood_fraud": 1,
         "job_fraud": 1,
         "other_fraud": 1,
     },
@@ -161,9 +208,10 @@ def case_matches_learning_topic(case: Any, topic_key: str | None) -> bool:
 
 
 def topic_priority_for_role(topic_key: str, role: str | None) -> int:
-    if not role:
+    normalized_role = normalize_user_role(role)
+    if not normalized_role:
         return 1
-    return _ROLE_TOPIC_PRIORITY.get(role, {}).get(topic_key, 1)
+    return _ROLE_TOPIC_PRIORITY.get(normalized_role, {}).get(topic_key, 1)
 
 
 def recommendation_score(case: Any, role: str | None) -> int:
@@ -177,7 +225,7 @@ def recommendation_score(case: Any, role: str | None) -> int:
     if bool(getattr(case, "is_featured", False)):
         score += 36
     score += topic_priority_for_role(topic.key, role) * 10
-    if role and role in list(getattr(case, "target_roles", []) or []):
+    if role_matches(role, list(getattr(case, "target_roles", []) or [])):
         score += 18
     if getattr(case, "cover_url", None):
         score += 6

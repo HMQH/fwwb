@@ -9,6 +9,8 @@ export { formatRiskScore, getResultRiskScore, localizeFraudType, localizeRiskLev
 export { EvidenceListCard } from "./components/EvidenceListCard";
 export { DetectionPipelineCard } from "./components/DetectionPipelineCard";
 export { ReasoningGraphCard } from "./components/ReasoningGraphCard";
+export { KagSummaryCard } from "./components/KagSummaryCard";
+export { KagEvidenceMapCard } from "./components/KagEvidenceMapCard";
 export { SimilarImageGalleryCard } from "./components/SimilarImageGalleryCard";
 export { AgentExecutionCard, isAgentDetection } from "./components/AgentExecutionCard";
 export type {
@@ -38,6 +40,10 @@ export type {
   DetectionSubmissionDetail,
   PickedFile,
   DetectionReasoningGraph,
+  DetectionKagStage,
+  DetectionKagCurrentStage,
+  DetectionKagEvidenceItem,
+  DetectionKagPayload,
   DetectionModuleTraceItem,
   EvidenceItem,
   KnownDetectionPipelineStep,

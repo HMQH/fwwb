@@ -70,6 +70,25 @@ def _strip(s: str | None) -> str:
     return (s or "").strip()
 
 
+def _analysis_mode_value(*, deep_reasoning: bool) -> str:
+    return "deep" if deep_reasoning else "standard"
+
+
+def _analysis_mode_source(*, requested: bool | None, resolved: bool) -> str:
+    if isinstance(requested, bool):
+        return "request"
+    return "default_text_deep" if resolved else "default_standard"
+
+
+def _job_uses_deep_reasoning(job: DetectionJob | None) -> bool:
+    if job is None:
+        return False
+    progress_detail = dict(job.progress_detail or {})
+    if progress_detail.get("deep_reasoning") is True:
+        return True
+    return str(progress_detail.get("analysis_mode") or "").strip().lower() == "deep"
+
+
 def normalize_history_scope(scope: str | None) -> str:
     normalized = _strip(scope).lower()
     return normalized if normalized in _HISTORY_SCOPES else "month"
@@ -287,17 +306,25 @@ def _set_job_progress(
     return detection_repository.save_job(db, job)
 
 
-def _initialize_job_progress(db: Session, job: DetectionJob) -> DetectionJob:
+def _initialize_job_progress(
+    db: Session,
+    job: DetectionJob,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> DetectionJob:
+    payload = {
+        "input_modality": job.input_modality,
+        "job_type": job.job_type,
+    }
+    if extra:
+        payload.update(extra)
     return _set_job_progress(
         db,
         job,
         status=job.status,
         step=job.current_step or "queued",
         percent=0,
-        extra={
-            "input_modality": job.input_modality,
-            "job_type": job.job_type,
-        },
+        extra=payload,
     )
 
 
@@ -647,6 +674,17 @@ def _job_profile_for_submission(submission: DetectionSubmission) -> tuple[str, s
     if submission.image_paths:
         return "image_fraud", "image", "resnet18-imagebank"
     return "attachment_only", "attachment_only", None
+
+
+def _resolve_requested_deep_reasoning(
+    *,
+    job_type: str,
+    input_modality: str,
+    requested: bool | None,
+) -> bool:
+    if isinstance(requested, bool):
+        return requested
+    return job_type == "text_rag" and input_modality == "text"
 
 
 def _should_process_inline(job: DetectionJob) -> bool:
@@ -1441,6 +1479,7 @@ def submit_detection(
     max_upload_bytes: int,
     text_content: str | None,
     relation_profile_id: uuid.UUID | None,
+    deep_reasoning: bool | None = None,
     file_bundles: dict[UploadKind, list[tuple[bytes, str]]],
 ) -> tuple[DetectionSubmission, DetectionJob]:
     if relation_profile_id is not None:
@@ -1480,6 +1519,11 @@ def submit_detection(
         upload_rows=upload_rows,
     )
     job_type, input_modality, llm_model = _job_profile_for_submission(submission)
+    resolved_deep_reasoning = _resolve_requested_deep_reasoning(
+        job_type=job_type,
+        input_modality=input_modality,
+        requested=deep_reasoning,
+    )
     job = detection_repository.create_job(
         db,
         submission_id=submission.id,
@@ -1487,7 +1531,18 @@ def submit_detection(
         input_modality=input_modality,
         llm_model=llm_model,
     )
-    job = _initialize_job_progress(db, job)
+    job = _initialize_job_progress(
+        db,
+        job,
+        extra={
+            "analysis_mode": _analysis_mode_value(deep_reasoning=resolved_deep_reasoning),
+            "deep_reasoning": resolved_deep_reasoning,
+            "analysis_mode_source": _analysis_mode_source(
+                requested=deep_reasoning,
+                resolved=resolved_deep_reasoning,
+            ),
+        },
+    )
     if _should_process_inline(job):
         job = process_job(db, job.id)
     return submission, job
@@ -1685,6 +1740,26 @@ def get_job_detail(
     return _build_job_snapshot(job, result)
 
 
+def _resolve_submission_deep_reasoning(db: Session, submission: DetectionSubmission) -> bool:
+    latest_result = detection_repository.get_latest_result_for_submission(
+        db,
+        submission_id=submission.id,
+    )
+    if latest_result is not None and isinstance(latest_result.result_detail, dict):
+        result_detail = dict(latest_result.result_detail or {})
+        if str(result_detail.get("analysis_mode") or "").strip().lower() == "deep":
+            return True
+        kag_payload = result_detail.get("kag")
+        if isinstance(kag_payload, dict) and str(kag_payload.get("mode") or "").strip().lower() == "deep":
+            return True
+
+    latest_job = detection_repository.get_latest_job_for_submission(
+        db,
+        submission_id=submission.id,
+    )
+    return _job_uses_deep_reasoning(latest_job)
+
+
 def rerun_submission(
     db: Session,
     *,
@@ -1728,6 +1803,7 @@ def rerun_submission(
         upload_rows=upload_rows,
     )
     job_type, input_modality, llm_model = _job_profile_for_submission(submission)
+    deep_reasoning = _resolve_submission_deep_reasoning(db, submission)
     job = detection_repository.create_job(
         db,
         submission_id=submission.id,
@@ -1735,7 +1811,14 @@ def rerun_submission(
         input_modality=input_modality,
         llm_model=llm_model,
     )
-    job = _initialize_job_progress(db, job)
+    job = _initialize_job_progress(
+        db,
+        job,
+        extra={
+            "analysis_mode": _analysis_mode_value(deep_reasoning=deep_reasoning),
+            "deep_reasoning": deep_reasoning,
+        },
+    )
     if _should_process_inline(job):
         job = process_job(db, job.id)
     return job
@@ -1760,7 +1843,9 @@ def _attachment_only_graph(submission: DetectionSubmission) -> dict[str, Any]:
 
 
 def _build_attachment_only_result(submission: DetectionSubmission, job: DetectionJob) -> DetectionResult:
+    deep_reasoning = _job_uses_deep_reasoning(job)
     detail = {
+        "analysis_mode": _analysis_mode_value(deep_reasoning=deep_reasoning),
         "message": "当前仅上传附件，文本 RAG 尚未获得可直接分析的正文内容。",
         "attachment_counts": {
             "text_files": len(submission.text_paths or []),
@@ -1779,6 +1864,7 @@ def _build_attachment_only_result(submission: DetectionSubmission, job: Detectio
         ],
         "reasoning_graph": _attachment_only_graph(submission),
         "reasoning_path": ["附件", "缺少文本", "人工复核"],
+        "kag": None,
     }
     return DetectionResult(
         submission_id=submission.id,
@@ -2025,6 +2111,7 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
         analysis = analyzer.analyze_text_submission(
             db,
             text=submission.text_content or "",
+            deep_reasoning=_job_uses_deep_reasoning(job),
             progress_callback=progress_callback,
         )
         result_payload = analysis.result_payload
@@ -2071,6 +2158,7 @@ def process_job(db: Session, job_id: uuid.UUID) -> DetectionJob:
                 "module_trace": result_detail.get("module_trace", []),
                 "final_score": result_detail.get("final_score"),
                 "reasoning_graph": result_detail.get("reasoning_graph"),
+                "analysis_mode": result_detail.get("analysis_mode"),
             },
         )
         return job

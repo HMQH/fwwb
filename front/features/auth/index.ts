@@ -8,9 +8,10 @@ export type {
   LoginPayload,
   LocalImageAsset,
   RegisterPayload,
+  RoleMeta,
   UpdateGuardianPayload,
 } from "./types";
-export { guardianMeta, roleMeta } from "./types";
+export { guardianMeta, roleMeta, roleOptions, roleOrder } from "./types";
 export * from "./validation";
 export { AuthShell } from "./components/AuthShell";
 export { AuthBackdrop } from "./components/AuthBackdrop";

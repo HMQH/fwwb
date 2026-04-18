@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AuthBackdrop, useAuth } from "@/features/auth";
+import { AuthBackdrop, useAuth, type UserRole } from "@/features/auth";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 type RecordItem = {
@@ -48,8 +48,8 @@ const recordMeta: Record<
   },
 };
 
-function buildRecords(role: "child" | "youth" | "elder"): RecordItem[] {
-  if (role === "child") {
+function buildRecords(role: UserRole): RecordItem[] {
+  if (role === "minor") {
     return [
       {
         type: "风险消息",

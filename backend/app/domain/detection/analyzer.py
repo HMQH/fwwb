@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.domain.detection import llm, prompts, retrieval, rules, semantic_rules
+from app.domain.detection import kag, llm, prompts, retrieval, rules, semantic_rules
 from app.shared.core.config import settings
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
@@ -698,6 +698,7 @@ def analyze_text_submission(
     db: Session,
     *,
     text: str,
+    deep_reasoning: bool = False,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionAnalysis:
     normalized_text = rules.normalize_text(text)
@@ -928,6 +929,31 @@ def analyze_text_submission(
         final_score=final_score,
         confidence=round(confidence, 4),
     )
+    kag_payload: dict[str, Any] | None = None
+    if deep_reasoning:
+        kag_payload = kag.build_kag_payload(
+            text=normalized_text,
+            rule_analysis=rule_analysis,
+            retrieval_bundle=retrieval_bundle,
+            black_evidence=black_evidence,
+            white_evidence=white_evidence,
+            input_highlights=input_highlights,
+            risk_level=risk_level,
+            fraud_type=fraud_type,
+            final_score=final_score,
+            confidence=round(confidence, 4),
+        )
+        deep_graph = kag_payload.get("reasoning_graph")
+        if isinstance(deep_graph, dict):
+            reasoning_graph = deep_graph
+        deep_path = kag_payload.get("reasoning_path")
+        if isinstance(deep_path, list):
+            stage_tags = _unique_keep_order(
+                [
+                    *stage_tags,
+                    str((kag_payload.get("current_stage") or {}).get("label") or "").strip(),
+                ]
+            )
     module_trace = _build_module_trace(
         llm_used=llm_used,
         semantic_rule_used=semantic_rule_used,
@@ -947,6 +973,7 @@ def analyze_text_submission(
             "fraud_type": fraud_type,
             "used_modules": used_modules,
             "semantic_rule_used": semantic_rule_used,
+            "analysis_mode": "deep" if deep_reasoning else "standard",
         },
     )
 
@@ -967,6 +994,7 @@ def analyze_text_submission(
         "counter_evidence": white_evidence,
         "advice": advice[:4],
         "result_detail": {
+            "analysis_mode": "deep" if deep_reasoning else "standard",
             "rule_analysis": rule_analysis.to_json(),
             "lexical_rule_analysis": lexical_rule_analysis.to_json(),
             "semantic_rule_output": semantic_rule_payload,
@@ -979,12 +1007,17 @@ def analyze_text_submission(
             "negative_evidence": negative_evidence,
             "final_score": final_score,
             "reasoning_graph": reasoning_graph,
-            "reasoning_path": list(reasoning_graph.get("highlighted_labels") or []),
+            "reasoning_path": (
+                list(kag_payload.get("reasoning_path") or [])
+                if isinstance(kag_payload, dict)
+                else list(reasoning_graph.get("highlighted_labels") or [])
+            ),
             "used_modules": used_modules,
             "module_trace": module_trace,
             "semantic_rule_used": semantic_rule_used,
             "semantic_rule_model": semantic_rule_model,
             "llm_used": llm_used,
+            "kag": kag_payload,
         },
     }
 

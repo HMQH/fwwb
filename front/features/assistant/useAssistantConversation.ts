@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Keyboard } from "react-native";
 
 import { relationsApi } from "@/features/relations/api";
@@ -7,10 +7,15 @@ import { ApiError } from "@/shared/api";
 
 import { assistantApi } from "./api";
 import type {
+  AssistantContextBudget,
   AssistantDraftAttachment,
+  AssistantExecution,
+  AssistantExecutionPlanItem,
+  AssistantExecutionStep,
   AssistantMessage,
   AssistantSession,
 } from "./types";
+import { getAssistantContextBudget } from "./types";
 
 function nowIso() {
   return new Date().toISOString();
@@ -62,8 +67,69 @@ function getApiErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) {
     return String(error.message || fallback);
   }
-
   return fallback;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function patchMessagePayload(
+  messages: AssistantMessage[],
+  messageId: string,
+  updater: (message: AssistantMessage) => AssistantMessage
+) {
+  return messages.map((item) => (item.id === messageId ? updater(item) : item));
+}
+
+function nextPlanStatus(plan: AssistantExecutionPlanItem[], step: AssistantExecutionStep) {
+  return plan.map((item) =>
+    item.key === step.capability_key
+      ? { ...item, status: step.status }
+      : item
+  );
+}
+
+function upsertStep(steps: AssistantExecutionStep[], incoming: AssistantExecutionStep) {
+  const index = steps.findIndex((item) => item.id === incoming.id);
+  if (index < 0) {
+    return [...steps, incoming];
+  }
+  const next = [...steps];
+  next[index] = incoming;
+  return next;
+}
+
+function mergeAssistantExecution(
+  message: AssistantMessage,
+  updater: (execution: AssistantExecution) => AssistantExecution
+) {
+  const extraPayload = { ...message.extra_payload };
+  const currentExecution = isObject(extraPayload.assistant_agent)
+    ? (extraPayload.assistant_agent as AssistantExecution)
+    : {};
+  extraPayload.assistant_agent = updater({ ...currentExecution });
+  return { ...message, extra_payload: extraPayload };
+}
+
+function applyContextBudget(message: AssistantMessage, budget: AssistantContextBudget) {
+  return {
+    ...message,
+    extra_payload: {
+      ...message.extra_payload,
+      context_budget: budget,
+    },
+  };
+}
+
+function findLatestContextBudget(messages: AssistantMessage[]): AssistantContextBudget | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const budget = getAssistantContextBudget(messages[index]);
+    if (budget) {
+      return budget;
+    }
+  }
+  return null;
 }
 
 type UseAssistantConversationResult = {
@@ -72,6 +138,7 @@ type UseAssistantConversationResult = {
   relations: RelationProfileSummary[];
   selectedRelationId: string | null;
   messages: AssistantMessage[];
+  latestContextBudget: AssistantContextBudget | null;
   loading: boolean;
   sending: boolean;
   error: string | null;
@@ -80,6 +147,7 @@ type UseAssistantConversationResult = {
   createNewSession: (relationProfileId?: string | null) => Promise<void>;
   selectRelation: (relationProfileId: string | null) => Promise<void>;
   sendMessage: (content: string, attachments?: AssistantDraftAttachment[]) => Promise<boolean>;
+  sendQuickAction: (content: string) => Promise<boolean>;
 };
 
 export function useAssistantConversation(token?: string | null): UseAssistantConversationResult {
@@ -89,6 +157,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
   const [relations, setRelations] = useState<RelationProfileSummary[]>([]);
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const [latestContextBudget, setLatestContextBudget] = useState<AssistantContextBudget | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +171,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
   const applyDraftState = useCallback((relationProfileId?: string | null) => {
     setSession(null);
     setMessages([]);
+    setLatestContextBudget(null);
     setSelectedRelationId(relationProfileId ?? null);
     setError(null);
     setLoading(false);
@@ -116,6 +186,8 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
 
       setLoading(true);
       setError(null);
+      setLatestContextBudget(null);
+      setMessages([]);
       try {
         const detail = await assistantApi.getSession(token, sessionId);
         if (!aliveRef.current) {
@@ -123,6 +195,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
         }
         setSession(detail.session);
         setMessages(detail.messages);
+        setLatestContextBudget(findLatestContextBudget(detail.messages));
         setSessions((prev) => upsertSession(prev, detail.session));
       } catch (err) {
         if (!aliveRef.current) {
@@ -154,6 +227,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
       setSessions([]);
       setRelations([]);
       setMessages([]);
+      setLatestContextBudget(null);
       setSelectedRelationId(null);
       setLoading(false);
       setSending(false);
@@ -187,6 +261,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
         }
         setSession(detail.session);
         setMessages(detail.messages);
+        setLatestContextBudget(findLatestContextBudget(detail.messages));
         setSessions((prev) => upsertSession(prev, detail.session));
       } else {
         applyDraftState(null);
@@ -209,7 +284,6 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
       if (!token || sending || loading) {
         return;
       }
-
       setError(null);
       setSelectedRelationId(relationProfileId);
     },
@@ -229,7 +303,6 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
 
       const optimisticUser = makeTempMessage("user", normalized, attachments);
       const optimisticAssistant = makeTempMessage("assistant", "");
-
       setMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
 
       try {
@@ -237,11 +310,9 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
 
         if (!workingSession) {
           const created = await assistantApi.createSession(token);
-
           if (!aliveRef.current) {
             return false;
           }
-
           workingSession = created.session;
           setSession(created.session);
           setSessions((prev) => upsertSession(prev, created.session));
@@ -283,20 +354,111 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
                 })
               );
             },
+            onContextBudget: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setLatestContextBudget(payload.budget);
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) => applyContextBudget(item, payload.budget))
+              );
+            },
+            onClarify: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => ({
+                    ...execution,
+                    mode: "clarify",
+                    clarify: payload.clarify,
+                  }))
+                )
+              );
+            },
+            onPlan: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => ({
+                    ...execution,
+                    plan: payload.items,
+                  }))
+                )
+              );
+            },
+            onStepStart: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => {
+                    const steps = upsertStep(execution.steps ?? [], payload.step);
+                    return {
+                      ...execution,
+                      steps,
+                      plan: execution.plan ? nextPlanStatus(execution.plan, payload.step) : execution.plan,
+                    };
+                  })
+                )
+              );
+            },
+            onStepUpdate: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => ({
+                    ...execution,
+                    steps: upsertStep(execution.steps ?? [], payload.step),
+                    plan: execution.plan ? nextPlanStatus(execution.plan, payload.step) : execution.plan,
+                  }))
+                )
+              );
+            },
+            onStepDone: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => ({
+                    ...execution,
+                    steps: upsertStep(execution.steps ?? [], payload.step),
+                    plan: execution.plan ? nextPlanStatus(execution.plan, payload.step) : execution.plan,
+                  }))
+                )
+              );
+            },
+            onStepError: (payload) => {
+              if (!aliveRef.current) {
+                return;
+              }
+              setMessages((prev) =>
+                patchMessagePayload(prev, payload.assistant_message_id, (item) =>
+                  mergeAssistantExecution(item, (execution) => ({
+                    ...execution,
+                    steps: upsertStep(execution.steps ?? [], payload.step),
+                    plan: execution.plan ? nextPlanStatus(execution.plan, payload.step) : execution.plan,
+                  }))
+                )
+              );
+            },
             onDelta: (payload) => {
               if (!aliveRef.current) {
                 return;
               }
               setMessages((prev) =>
-                prev.map((item) =>
-                  item.id === payload.assistant_message_id
-                    ? {
-                        ...item,
-                        content: item.content + payload.delta,
-                        client_status: "streaming",
-                      }
-                    : item
-                )
+                patchMessagePayload(prev, payload.assistant_message_id, (item) => ({
+                  ...item,
+                  content: item.content + payload.delta,
+                  client_status: "streaming",
+                }))
               );
             },
             onDone: (payload) => {
@@ -305,6 +467,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
               }
               setSession(payload.session);
               setSessions((prev) => upsertSession(prev, payload.session));
+              setLatestContextBudget(getAssistantContextBudget(payload.assistant_message));
               setMessages((prev) =>
                 prev.map((item) =>
                   item.id === payload.assistant_message.id
@@ -341,12 +504,18 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
     [loading, selectedRelationId, sending, session, token]
   );
 
+  const sendQuickAction = useCallback(
+    async (content: string) => sendMessage(content, []),
+    [sendMessage]
+  );
+
   return {
     session,
     sessions,
     relations,
     selectedRelationId,
     messages,
+    latestContextBudget,
     loading,
     sending,
     error,
@@ -355,5 +524,6 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
     createNewSession,
     selectRelation,
     sendMessage,
+    sendQuickAction,
   };
 }
