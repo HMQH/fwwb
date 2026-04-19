@@ -9,7 +9,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { palette } from "@/shared/theme";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
 import { type MascotVisualState } from "./useMascotState";
@@ -22,66 +21,53 @@ type MascotAuraProps = {
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 function getAuraColors(state: MascotVisualState) {
-  if (state === "grounded") {
+  if (state === "high") {
     return {
-      halo: "rgba(255,206,129,0.22)",
-      ring: "rgba(84,124,245,0.20)",
-      mote: "rgba(255,208,102,0.72)",
+      halo: "rgba(239,98,120,0.24)",
+      ring: "rgba(220,74,95,0.22)",
+      mote: "rgba(255,147,160,0.88)",
+      bottom: "rgba(234,92,109,0.88)",
     };
   }
 
-  if (state === "sleepy") {
+  if (state === "medium") {
     return {
-      halo: "rgba(178,192,224,0.18)",
-      ring: "rgba(102,138,220,0.16)",
-      mote: "rgba(194,204,229,0.78)",
-    };
-  }
-
-  if (state === "guarding") {
-    return {
-      halo: "rgba(122,164,255,0.22)",
-      ring: "rgba(86,128,255,0.18)",
-      mote: "rgba(255,214,111,0.86)",
+      halo: "rgba(255,192,103,0.22)",
+      ring: "rgba(241,164,62,0.18)",
+      mote: "rgba(255,213,132,0.86)",
+      bottom: "rgba(243,176,76,0.86)",
     };
   }
 
   return {
-    halo: "rgba(116,160,255,0.28)",
+    halo: "rgba(116,168,255,0.24)",
     ring: "rgba(93,130,255,0.20)",
-    mote: "rgba(255,209,92,0.92)",
+    mote: "rgba(171,207,255,0.92)",
+    bottom: "rgba(93,130,255,0.82)",
   };
 }
 
 function getMotionRange(state: MascotVisualState) {
-  if (state === "grounded") {
+  if (state === "high") {
     return {
-      duration: 2600,
-      lift: 4,
-      pulse: 0.05,
-    };
-  }
-
-  if (state === "sleepy") {
-    return {
-      duration: 3000,
+      duration: 1950,
       lift: 5,
-      pulse: 0.06,
+      pulse: 0.09,
     };
   }
 
-  if (state === "guarding") {
+  if (state === "medium") {
     return {
-      duration: 2300,
-      lift: 6,
-      pulse: 0.08,
+      duration: 2320,
+      lift: 5,
+      pulse: 0.07,
     };
   }
 
   return {
-    duration: 2100,
-    lift: 7,
-    pulse: 0.1,
+    duration: 2520,
+    lift: 6,
+    pulse: 0.08,
   };
 }
 
@@ -171,7 +157,7 @@ export const MascotAura = memo(function MascotAura({ state, style }: MascotAuraP
       <AnimatedView style={[styles.ring, { borderColor: colors.ring }, ringStyle]} />
       <AnimatedView style={[styles.leftMote, { backgroundColor: colors.mote }, leftMoteStyle]} />
       <AnimatedView style={[styles.rightMote, { backgroundColor: colors.mote }, rightMoteStyle]} />
-      <AnimatedView style={[styles.bottomGlow, { backgroundColor: palette.accentStrong }, bottomGlowStyle]} />
+      <AnimatedView style={[styles.bottomGlow, { backgroundColor: colors.bottom }, bottomGlowStyle]} />
     </View>
   );
 });

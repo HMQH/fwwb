@@ -10,6 +10,8 @@ FRAUD_TYPE_IMPERSONATION = "盗图冒充"
 FRAUD_TYPE_FORGED_DOC = "仿冒公文"
 FRAUD_TYPE_PHISHING_IMAGE = "钓鱼图片"
 FRAUD_TYPE_PII = "敏感信息泄露"
+FRAUD_TYPE_PHISHING_SITE = "钓鱼网站"
+FRAUD_TYPE_VOICE_SCAM_CALL = "语音诈骗来电"
 FRAUD_TYPE_UNKNOWN = "未知"
 
 _LEGACY_CODE_TO_ZH: dict[str, str] = {
@@ -18,6 +20,8 @@ _LEGACY_CODE_TO_ZH: dict[str, str] = {
     "forged_official_document": FRAUD_TYPE_FORGED_DOC,
     "phishing_image": FRAUD_TYPE_PHISHING_IMAGE,
     "sensitive_information_exposure": FRAUD_TYPE_PII,
+    "phishing_site": FRAUD_TYPE_PHISHING_SITE,
+    "voice_scam_call": FRAUD_TYPE_VOICE_SCAM_CALL,
     "unknown": FRAUD_TYPE_UNKNOWN,
 }
 

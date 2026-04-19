@@ -47,7 +47,8 @@ def _base_assess_system_prompt(source_label: str) -> str:
         f"4. 当前事件来源是：{source_label}。\n"
         f"5. memory_bucket 必须从 {', '.join(_MEMORY_BUCKETS)} 中选一个。\n"
         "6. salience_score 取值 0~1，表示这条信息对长期画像的显著性。\n"
-        "7. 只输出 JSON。"
+        "7. urgency_delta 与 safety_score 必须结合当前事件强度动态计算，禁止输出固定占位值（如长期 0 或 95）。\n"
+        "8. 只输出 JSON。"
     )
 
 
@@ -74,6 +75,7 @@ def build_detection_memory_assessment_prompts(
 3. candidate_memory 必须是可以直接写入 MEMORY.md 的中文句子，建议 20~90 字。
 4. query_tags 最多 6 个，优先保留诈骗类型、场景、对象、行为模式。
 5. 如果本次材料主要是附件不足、信息不足、一次性噪声，则应倾向 should_promote=false。
+6. safety_score 要随风险变化：高风险事件应明显下调，低风险且核验行为良好时可小幅回升。
 
 【当前用户】
 {_json_dump(user_context)}
@@ -113,6 +115,7 @@ def build_assistant_memory_assessment_prompts(
 3. candidate_memory 要抽象成画像，不要照抄聊天原文。
 4. memory_bucket 可用于区分风险模式、沟通方式、偏好、防护习惯、关系线索。
 5. 若对话体现“遇到风险会主动求证”这类稳定保护习惯，也可以晋升到 protection。
+6. urgency_delta 与 safety_score 必须根据本轮对话内容动态给值，不能机械固定在 0 / 95。
 
 【当前用户】
 {_json_dump(user_context)}

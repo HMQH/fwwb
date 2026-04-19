@@ -145,6 +145,8 @@ type UseAssistantConversationResult = {
   bootstrap: () => Promise<void>;
   openSession: (sessionId: string) => Promise<void>;
   createNewSession: (relationProfileId?: string | null) => Promise<void>;
+  /** 空白新会话（不保留关联对象），用于底栏进入智能体 */
+  resetToBlankChat: () => Promise<void>;
   selectRelation: (relationProfileId: string | null) => Promise<void>;
   sendMessage: (content: string, attachments?: AssistantDraftAttachment[]) => Promise<boolean>;
   sendQuickAction: (content: string) => Promise<boolean>;
@@ -218,6 +220,10 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
     [applyDraftState, selectedRelationId]
   );
 
+  const resetToBlankChat = useCallback(async () => {
+    applyDraftState(null);
+  }, [applyDraftState]);
+
   const bootstrap = useCallback(async () => {
     if (!token) {
       if (!aliveRef.current) {
@@ -254,18 +260,8 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
       setRelations(initialRelations);
       setSessions(sortSessions(initialSessions));
 
-      if (initialSessions.length > 0) {
-        const detail = await assistantApi.getSession(token, initialSessions[0].id);
-        if (!aliveRef.current) {
-          return;
-        }
-        setSession(detail.session);
-        setMessages(detail.messages);
-        setLatestContextBudget(findLatestContextBudget(detail.messages));
-        setSessions((prev) => upsertSession(prev, detail.session));
-      } else {
-        applyDraftState(null);
-      }
+      // 主界面始终进入新对话草稿；历史会话从抽屉打开，避免底栏进入仍停留在旧对话
+      applyDraftState(null);
     } catch (err) {
       if (!aliveRef.current) {
         return;
@@ -522,6 +518,7 @@ export function useAssistantConversation(token?: string | null): UseAssistantCon
     bootstrap,
     openSession,
     createNewSession,
+    resetToBlankChat,
     selectRelation,
     sendMessage,
     sendQuickAction,

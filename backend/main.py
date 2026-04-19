@@ -14,6 +14,8 @@ from app.api.routes import call_intervention as call_intervention_routes
 from app.api.routes import cases as cases_routes
 from app.api.routes import detections as detections_routes
 from app.api.routes import guardians as guardians_routes
+from app.api.routes import guardian_reports as guardian_reports_routes
+from app.api.routes import home_watering as home_watering_routes
 from app.api.routes import learning as learning_routes
 from app.api.routes import profile_memory as profile_memory_routes
 from app.api.routes import rag as rag_routes
@@ -47,6 +49,8 @@ app.include_router(call_intervention_routes.router)
 app.include_router(cases_routes.router)
 app.include_router(detections_routes.router)
 app.include_router(guardians_routes.router)
+app.include_router(guardian_reports_routes.router)
+app.include_router(home_watering_routes.router)
 app.include_router(learning_routes.router)
 app.include_router(profile_memory_routes.router)
 app.include_router(rag_routes.router)
@@ -60,6 +64,10 @@ app.mount("/uploads", StaticFiles(directory=upload_root), name="uploads")
 reference_root = _resolve_static_dir(settings.image_fraud_reference_dir)
 reference_root.mkdir(parents=True, exist_ok=True)
 app.mount("/reference-images", StaticFiles(directory=reference_root), name="reference-images")
+
+video_ai_outputs_root = _resolve_static_dir(str(Path(settings.video_ai_runtime_root) / "outputs"))
+video_ai_outputs_root.mkdir(parents=True, exist_ok=True)
+app.mount("/video-ai-outputs", StaticFiles(directory=video_ai_outputs_root), name="video-ai-outputs")
 
 
 @app.get("/")

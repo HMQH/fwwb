@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.domain.detection import kag, llm, prompts, retrieval, rules, semantic_rules
+from app.domain.detection import deep_reasoning as deep_reasoning_engine, llm, prompts, retrieval, rules, semantic_rules
 from app.shared.core.config import settings
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
@@ -931,7 +931,8 @@ def analyze_text_submission(
     )
     kag_payload: dict[str, Any] | None = None
     if deep_reasoning:
-        kag_payload = kag.build_kag_payload(
+        kag_payload = deep_reasoning_engine.build_kag_payload(
+            db,
             text=normalized_text,
             rule_analysis=rule_analysis,
             retrieval_bundle=retrieval_bundle,
@@ -942,7 +943,31 @@ def analyze_text_submission(
             fraud_type=fraud_type,
             final_score=final_score,
             confidence=round(confidence, 4),
+            llm_payload=llm_payload,
         )
+        decision = kag_payload.get("decision") if isinstance(kag_payload, dict) else None
+        if isinstance(decision, dict):
+            deep_final_score = _safe_optional_int(decision.get("final_score"))
+            if deep_final_score is not None:
+                final_score = deep_final_score
+            risk_level = _normalize_risk_level(decision.get("risk_level"), final_score)
+            confidence = _safe_float(decision.get("confidence"), confidence)
+            is_fraud = _safe_bool(decision.get("is_fraud"), risk_level in {"medium", "high"})
+            summary = str(decision.get("summary") or "").strip() or summary
+            final_reason = str(decision.get("final_reason") or "").strip() or final_reason
+            advice = _normalize_string_list(decision.get("advice")) or advice
+            need_manual_review = _safe_bool(decision.get("need_manual_review"), need_manual_review)
+            risk_evidence = _normalize_string_list(decision.get("risk_evidence")) or risk_evidence
+            counter_evidence = _normalize_string_list(decision.get("counter_evidence")) or counter_evidence
+
+        merged_black = kag_payload.get("merged_black_evidence") if isinstance(kag_payload, dict) else None
+        if isinstance(merged_black, list):
+            black_evidence = [item for item in merged_black if isinstance(item, dict)]
+
+        merged_white = kag_payload.get("merged_white_evidence") if isinstance(kag_payload, dict) else None
+        if isinstance(merged_white, list):
+            white_evidence = [item for item in merged_white if isinstance(item, dict)]
+
         deep_graph = kag_payload.get("reasoning_graph")
         if isinstance(deep_graph, dict):
             reasoning_graph = deep_graph
@@ -1011,6 +1036,16 @@ def analyze_text_submission(
                 list(kag_payload.get("reasoning_path") or [])
                 if isinstance(kag_payload, dict)
                 else list(reasoning_graph.get("highlighted_labels") or [])
+            ),
+            "stage_retrievals": (
+                list(kag_payload.get("stage_retrievals") or [])
+                if isinstance(kag_payload, dict)
+                else []
+            ),
+            "storage_snapshot": (
+                dict(kag_payload.get("storage_snapshot") or {})
+                if isinstance(kag_payload, dict) and isinstance(kag_payload.get("storage_snapshot"), dict)
+                else {}
             ),
             "used_modules": used_modules,
             "module_trace": module_trace,

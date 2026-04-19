@@ -25,6 +25,9 @@ import { radius } from "@/shared/theme";
 import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
 import { MascotAura } from "./MascotAura";
+import { MascotEyes } from "./MascotEyes";
+import { MascotMouth } from "./MascotMouth";
+import { MascotRiskBadge } from "./MascotRiskBadge";
 import { useMascotState, type MascotVisualState } from "./useMascotState";
 
 type HomeMascotProps = {
@@ -37,8 +40,6 @@ const BODY_IMAGE = require("../../../assets/images/meerkat/body.png");
 const ARM_LEFT_IMAGE = require("../../../assets/images/meerkat/arm-left.png");
 const ARM_RIGHT_IMAGE = require("../../../assets/images/meerkat/arm-right.png");
 const TAIL_IMAGE = require("../../../assets/images/meerkat/tail.png");
-const EYE_OPEN_IMAGE = require("../../../assets/images/meerkat/eye-open.png");
-const EYE_CLOSED_IMAGE = require("../../../assets/images/meerkat/eye-closed.png");
 
 const STAGE_LAYOUT = {
   width: 214,
@@ -56,8 +57,6 @@ const PART_LAYOUT = {
   tail: { left: 130, top: 120, width: 63, height: 30, rotate: 2 },
   body: { left: 67, top: 65, width: 110, height: 120 },
   head: { left: 38, top: 18, width: 155, height: 81 },
-  eyesOpen: { left: 71, top: 30, width: 92, height: 51 },
-  eyesClosed: { left: 73, top: 30, width: 88, height: 39 },
   leftArm: { left: 72, top: 90, width: 41, height: 39, rotate: -10 },
   rightArm: { left: 122, top: 90, width: 40, height: 40, rotate: 10 },
 };
@@ -65,42 +64,32 @@ const PART_LAYOUT = {
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 function getPose(state: MascotVisualState) {
-  if (state === "grounded") {
+  if (state === "high") {
     return {
-      floatLift: 2,
-      bodyScale: 0.985,
+      floatLift: 2.5,
+      bodyScale: 0.992,
       bodyTilt: -2,
       armLift: 2,
-      tailSwing: 4,
+      tailSwing: 4.5,
     };
   }
 
-  if (state === "sleepy") {
+  if (state === "medium") {
     return {
-      floatLift: 3,
-      bodyScale: 0.992,
-      bodyTilt: 2,
+      floatLift: 3.8,
+      bodyScale: 0.998,
+      bodyTilt: -1,
       armLift: 1,
-      tailSwing: 5,
-    };
-  }
-
-  if (state === "guarding") {
-    return {
-      floatLift: 4,
-      bodyScale: 1,
-      bodyTilt: -2,
-      armLift: 0,
-      tailSwing: 7,
+      tailSwing: 6.5,
     };
   }
 
   return {
-    floatLift: 5,
+    floatLift: 5.2,
     bodyScale: 1.01,
     bodyTilt: 0,
     armLift: -1,
-    tailSwing: 9,
+    tailSwing: 8.8,
   };
 }
 
@@ -131,7 +120,7 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
     } else {
       float.value = withRepeat(
         withTiming(1, {
-          duration: mascotState === "sleepy" ? 3000 : mascotState === "grounded" ? 2700 : 2300,
+          duration: mascotState === "high" ? 1950 : mascotState === "medium" ? 2250 : 2650,
           easing: Easing.inOut(Easing.ease),
         }),
         -1,
@@ -140,7 +129,7 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
 
       breathe.value = withRepeat(
         withTiming(1, {
-          duration: mascotState === "bright" ? 2200 : 2450,
+          duration: mascotState === "high" ? 2050 : mascotState === "medium" ? 2320 : 2480,
           easing: Easing.inOut(Easing.ease),
         }),
         -1,
@@ -149,7 +138,7 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
 
       tailLoop.value = withRepeat(
         withTiming(1, {
-          duration: mascotState === "bright" ? 1800 : mascotState === "guarding" ? 2000 : 2280,
+          duration: mascotState === "high" ? 1680 : mascotState === "medium" ? 1920 : 2140,
           easing: Easing.inOut(Easing.ease),
         }),
         -1,
@@ -159,14 +148,14 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
       nodLoop.value = withRepeat(
         withSequence(
           withDelay(
-            mascotState === "sleepy" ? 900 : mascotState === "guarding" ? 1500 : 2200,
+            mascotState === "high" ? 880 : mascotState === "medium" ? 1450 : 2300,
             withTiming(1, {
-              duration: mascotState === "sleepy" ? 240 : 190,
+              duration: mascotState === "high" ? 180 : mascotState === "medium" ? 200 : 170,
               easing: Easing.out(Easing.quad),
             })
           ),
           withTiming(0, {
-            duration: mascotState === "sleepy" ? 320 : 230,
+            duration: mascotState === "high" ? 230 : mascotState === "medium" ? 250 : 210,
             easing: Easing.out(Easing.quad),
           })
         ),
@@ -177,14 +166,14 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
       squatLoop.value = withRepeat(
         withSequence(
           withDelay(
-            mascotState === "grounded" ? 1200 : mascotState === "sleepy" ? 1700 : 2600,
+            mascotState === "high" ? 1180 : mascotState === "medium" ? 1720 : 2540,
             withTiming(1, {
-              duration: mascotState === "grounded" ? 280 : 220,
+              duration: mascotState === "high" ? 260 : mascotState === "medium" ? 230 : 200,
               easing: Easing.out(Easing.quad),
             })
           ),
           withTiming(0, {
-            duration: mascotState === "grounded" ? 340 : 280,
+            duration: mascotState === "high" ? 320 : mascotState === "medium" ? 290 : 250,
             easing: Easing.out(Easing.quad),
           })
         ),
@@ -205,10 +194,9 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
     );
   }, [blink, breathe, float, mascotState, nodLoop, reduceMotion, squatLoop, tailLoop]);
 
-  const squatAmount =
-    mascotState === "grounded" ? 1 : mascotState === "sleepy" ? 0.62 : mascotState === "guarding" ? 0.28 : 0.2;
+  const squatAmount = mascotState === "high" ? 0.94 : mascotState === "medium" ? 0.46 : 0.18;
 
-  const nodAmount = mascotState === "sleepy" ? 1 : mascotState === "guarding" ? 0.5 : 0.35;
+  const nodAmount = mascotState === "high" ? 0.72 : mascotState === "medium" ? 0.48 : 0.26;
 
   const mascotStyle = useAnimatedStyle(() => ({
     transform: [
@@ -425,44 +413,14 @@ export const HomeMascot = memo(function HomeMascot({ score, style }: HomeMascotP
               ]}
             >
               <Image source={HEAD_IMAGE} style={styles.partImage} resizeMode="contain" />
+              <MascotEyes
+                state={mascotState}
+                openStyle={openEyesStyle}
+                closedStyle={closedEyesStyle}
+              />
+              <MascotMouth state={mascotState} />
+              <MascotRiskBadge state={mascotState} />
             </AnimatedView>
-
-            <AnimatedView
-              style={[
-                styles.eyeWrap,
-                {
-                  left: PART_LAYOUT.eyesOpen.left,
-                  top: PART_LAYOUT.eyesOpen.top,
-                  width: PART_LAYOUT.eyesOpen.width,
-                  height: PART_LAYOUT.eyesOpen.height,
-                },
-                openEyesStyle,
-              ]}
-            >
-              <Image source={EYE_OPEN_IMAGE} style={styles.partImage} resizeMode="contain" />
-            </AnimatedView>
-
-            <AnimatedView
-              style={[
-                styles.eyeWrap,
-                {
-                  left: PART_LAYOUT.eyesClosed.left,
-                  top: PART_LAYOUT.eyesClosed.top,
-                  width: PART_LAYOUT.eyesClosed.width,
-                  height: PART_LAYOUT.eyesClosed.height,
-                },
-                closedEyesStyle,
-              ]}
-            >
-              <Image source={EYE_CLOSED_IMAGE} style={styles.partImage} resizeMode="contain" />
-            </AnimatedView>
-
-            {mascotState === "guarding" ? (
-              <View style={styles.thinkSpark}>
-                <View style={styles.sparkDotLarge} />
-                <View style={styles.sparkDotSmall} />
-              </View>
-            ) : null}
           </AnimatedView>
         </View>
       </Pressable>
@@ -512,37 +470,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 3,
   },
-  eyeWrap: {
-    position: "absolute",
-    zIndex: 4,
-  },
   partImage: {
     width: "100%",
     height: "100%",
-  },
-  thinkSpark: {
-    position: "absolute",
-    top: 28,
-    right: 22,
-    width: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 5,
-  },
-  sparkDotLarge: {
-    width: 10,
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: "#F3B83F",
-  },
-  sparkDotSmall: {
-    position: "absolute",
-    top: 2,
-    right: 2,
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: "#9AB3FF",
   },
 });

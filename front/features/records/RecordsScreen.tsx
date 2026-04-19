@@ -1,16 +1,20 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthBackdrop, useAuth } from "@/features/auth";
 import type { RecordHistoryItem, RecordScope, RecordStatistics } from "@/features/records/types";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { useReduceMotionEnabled } from "@/shared/useReduceMotionEnabled";
 
 import { recordsApi } from "./api";
 import AnimatedList from "./components/AnimatedList";
+
+const MEERKAT_ASSISTANT = require("../../assets/images/meerkat_assitant.png");
 
 const PAGE_SIZE = 12;
 const SCOPE_OPTIONS: Array<{ key: RecordScope; label: string }> = [
@@ -70,6 +74,39 @@ function buildFallbackStatistics(scope: RecordScope, items: RecordHistoryItem[])
   );
 
   return stats;
+}
+
+const MASCOT_FLOAT_PX = 5;
+const MASCOT_FLOAT_MS = 1800;
+
+function RecordsSummaryMascot({ imageSource }: { imageSource: number }) {
+  const reduceMotion = useReduceMotionEnabled();
+  const drift = useSharedValue(0);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      drift.value = 0;
+      return;
+    }
+    drift.value = withRepeat(
+      withTiming(-MASCOT_FLOAT_PX, {
+        duration: MASCOT_FLOAT_MS,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+  }, [drift, reduceMotion]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: drift.value }],
+  }));
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.summaryMascot, animatedStyle]}>
+      <Image accessibilityLabel="猫鼬助手" resizeMode="contain" source={imageSource} style={styles.summaryMascotImage} />
+    </Animated.View>
+  );
 }
 
 export default function RecordsScreen() {
@@ -284,40 +321,43 @@ export default function RecordsScreen() {
         </View>
       </View>
 
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryTopRow}>
-          <View style={styles.summaryCopy}>
-            <Text style={styles.summaryTitle}>记录总数</Text>
-            <Text style={styles.summaryHint}>用户全部记录</Text>
+      <View style={styles.summaryCardWrap} pointerEvents="box-none">
+        <RecordsSummaryMascot imageSource={MEERKAT_ASSISTANT} />
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryTopRow}>
+            <View style={styles.summaryCopy}>
+              <Text style={styles.summaryTitle}>记录总数</Text>
+              <Text style={styles.summaryHint}>用户全部记录</Text>
+            </View>
+            <View style={styles.summaryTotalPill}>
+              <Text style={styles.summaryTotalValue}>{summary.total_records}</Text>
+            </View>
           </View>
-          <View style={styles.summaryTotalPill}>
-            <Text style={styles.summaryTotalValue}>{summary.total_records}</Text>
-          </View>
-        </View>
 
-        <View style={styles.metricRow}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>高风险</Text>
-            <Text style={styles.metricValue}>{summary.high_count}</Text>
+          <View style={styles.metricRow}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>高风险</Text>
+              <Text style={styles.metricValue}>{summary.high_count}</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>需核验</Text>
+              <Text style={styles.metricValue}>{summary.medium_count}</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>暂低风险</Text>
+              <Text style={styles.metricValue}>{summary.low_count}</Text>
+            </View>
           </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>需核验</Text>
-            <Text style={styles.metricValue}>{summary.medium_count}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>暂低风险</Text>
-            <Text style={styles.metricValue}>{summary.low_count}</Text>
-          </View>
-        </View>
 
-        <View style={styles.scopeSummaryBar}>
-          <Text style={styles.scopeSummaryText}>
-            {scopeHint(scope)}记录 {summary.filtered_total}
-          </Text>
-          <Pressable style={({ pressed }) => [styles.refreshChip, pressed && styles.buttonPressed]} onPress={() => void reloadScopeData(scope, "reset")}>
-            <MaterialCommunityIcons name="refresh" size={15} color={palette.accentStrong} />
-            <Text style={styles.refreshChipText}>{refreshing ? "刷新中" : "刷新"}</Text>
-          </Pressable>
+          <View style={styles.scopeSummaryBar}>
+            <Text style={styles.scopeSummaryText}>
+              {scopeHint(scope)}记录 {summary.filtered_total}
+            </Text>
+            <Pressable style={({ pressed }) => [styles.refreshChip, pressed && styles.buttonPressed]} onPress={() => void reloadScopeData(scope, "reset")}>
+              <MaterialCommunityIcons name="refresh" size={15} color={palette.accentStrong} />
+              <Text style={styles.refreshChipText}>{refreshing ? "刷新中" : "刷新"}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </>
@@ -455,6 +495,23 @@ const styles = StyleSheet.create({
   },
   scopeChipTextActive: {
     color: palette.accentStrong,
+  },
+  summaryCardWrap: {
+    position: "relative",
+    overflow: "visible",
+    zIndex: 1,
+  },
+  summaryMascot: {
+    position: "absolute",
+    right: 80,
+    top: -42,
+    width: 100,
+    height: 100,
+    zIndex: 2,
+  },
+  summaryMascotImage: {
+    width: "100%",
+    height: "100%",
   },
   summaryCard: {
     borderRadius: radius.xl,

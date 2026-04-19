@@ -1,12 +1,19 @@
-﻿"""检测任务持久化。"""
+"""检测任务持久化。"""
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session
 
-from app.domain.detection.entity import DetectionJob, DetectionResult, DetectionSubmission
+from app.domain.detection.entity import (
+    DetectionJob,
+    DetectionReasoningEdge,
+    DetectionReasoningNode,
+    DetectionReasoningStage,
+    DetectionResult,
+    DetectionSubmission,
+)
 
 
 def _apply_submission_time_range(stmt, *, start_at=None, end_at=None):
@@ -237,3 +244,71 @@ def list_recent_results_for_user(
         .limit(limit)
     )
     return [(result, submission) for result, submission in db.execute(stmt).all()]
+
+
+def replace_reasoning_snapshot(
+    db: Session,
+    *,
+    submission_id: uuid.UUID,
+    result_id: uuid.UUID,
+    snapshot: dict,
+) -> None:
+    db.execute(delete(DetectionReasoningStage).where(DetectionReasoningStage.result_id == result_id))
+    db.execute(delete(DetectionReasoningNode).where(DetectionReasoningNode.result_id == result_id))
+    db.execute(delete(DetectionReasoningEdge).where(DetectionReasoningEdge.result_id == result_id))
+
+    for item in list(snapshot.get("stages") or []):
+        if not isinstance(item, dict):
+            continue
+        db.add(
+            DetectionReasoningStage(
+                submission_id=submission_id,
+                result_id=result_id,
+                stage_code=str(item.get("stage_code") or ""),
+                stage_label=str(item.get("stage_label") or ""),
+                stage_order=int(item.get("stage_order") or 0),
+                score=float(item.get("score") or 0.0),
+                support_score=float(item.get("support_score") or 0.0),
+                is_active=bool(item.get("is_active")),
+                tone=str(item.get("tone") or "") or None,
+                detail=str(item.get("detail") or "") or None,
+            )
+        )
+
+    for item in list(snapshot.get("nodes") or []):
+        if not isinstance(item, dict):
+            continue
+        db.add(
+            DetectionReasoningNode(
+                submission_id=submission_id,
+                result_id=result_id,
+                node_key=str(item.get("node_key") or ""),
+                node_label=str(item.get("node_label") or ""),
+                node_type=str(item.get("node_type") or ""),
+                tone=str(item.get("tone") or "") or None,
+                lane=int(item.get("lane") or 0),
+                sort_order=int(item.get("sort_order") or 0),
+                weight=float(item.get("weight") or 0.0),
+                stage_code=str(item.get("stage_code") or "") or None,
+                detail=str(item.get("detail") or "") or None,
+            )
+        )
+
+    for item in list(snapshot.get("edges") or []):
+        if not isinstance(item, dict):
+            continue
+        db.add(
+            DetectionReasoningEdge(
+                submission_id=submission_id,
+                result_id=result_id,
+                edge_key=str(item.get("edge_key") or ""),
+                source_key=str(item.get("source_key") or ""),
+                target_key=str(item.get("target_key") or ""),
+                relation_type=str(item.get("relation_type") or "") or None,
+                tone=str(item.get("tone") or "") or None,
+                weight=float(item.get("weight") or 0.0),
+                detail=str(item.get("detail") or "") or None,
+            )
+        )
+
+    db.commit()

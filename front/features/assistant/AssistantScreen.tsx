@@ -1,6 +1,7 @@
 ﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,12 +16,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
+import { HomeMascot } from "@/features/home/components/HomeMascot";
 import { fontFamily, palette, radius } from "@/shared/theme";
 
+import { setAssistantFreshChatHandler } from "./assistantFreshChatBus";
 import Composer from "./components/Composer";
 import { ContextBudgetBar } from "./components/ContextBudgetBar";
 import HistoryDrawer from "./components/HistoryDrawer";
@@ -33,6 +35,14 @@ import {
   type AssistantAttachmentKind,
 } from "./types";
 import { useAssistantConversation } from "./useAssistantConversation";
+
+function clampSafetyScore(value: number | null | undefined) {
+  if (!Number.isFinite(value)) {
+    return 95;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(Number(value))));
+}
 
 const TEXT_EXT = new Set([".txt", ".md", ".json", ".csv", ".log", ".html", ".htm", ".pdf", ".doc", ".docx"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".opus", ".amr"]);
@@ -104,15 +114,17 @@ function AttachmentDraftBar({
 
 export default function AssistantScreen() {
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
   const listRef = useRef<FlatList<AssistantMessage> | null>(null);
+  /** 首次进入由 bootstrap 拉列表并处于草稿；之后每次从其他 Tab 切回底栏智能体时再起新对话 */
+  const skipAssistantTabFocusResetRef = useRef(true);
   const [draft, setDraft] = useState("");
   const [historyVisible, setHistoryVisible] = useState(false);
   const [relationPickerVisible, setRelationPickerVisible] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<AssistantDraftAttachment[]>([]);
   const [composerHeight, setComposerHeight] = useState(92);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const mascotScore = useMemo(() => clampSafetyScore(user?.safety_score), [user]);
   const {
     session,
     sessions,
@@ -126,6 +138,7 @@ export default function AssistantScreen() {
     bootstrap,
     openSession,
     createNewSession,
+    resetToBlankChat,
     selectRelation,
     sendMessage,
     sendQuickAction,
@@ -157,9 +170,7 @@ export default function AssistantScreen() {
   }, [latestContextBudget, messages]);
 
   const relationButtonLabel = activeRelation?.name ?? "对象";
-  const composerBottomInset = keyboardVisible
-    ? Math.max(insets.bottom, 8)
-    : Math.max(tabBarHeight - insets.bottom + 8, 12);
+  const composerBottomInset = keyboardVisible ? Math.max(insets.bottom, 8) : 0;
   const listBottomInset = composerHeight + composerBottomInset + 8;
   const scrollToLatest = useCallback((animated: boolean) => {
     requestAnimationFrame(() => {
@@ -170,6 +181,34 @@ export default function AssistantScreen() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  const applyTabBarFreshChat = useCallback(() => {
+    setHistoryVisible(false);
+    setRelationPickerVisible(false);
+    setDraft("");
+    setDraftAttachments([]);
+    void resetToBlankChat();
+  }, [resetToBlankChat]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!token) {
+        return;
+      }
+      if (skipAssistantTabFocusResetRef.current) {
+        skipAssistantTabFocusResetRef.current = false;
+        return;
+      }
+      applyTabBarFreshChat();
+    }, [applyTabBarFreshChat, token])
+  );
+
+  useEffect(() => {
+    setAssistantFreshChatHandler(() => {
+      applyTabBarFreshChat();
+    });
+    return () => setAssistantFreshChatHandler(null);
+  }, [applyTabBarFreshChat]);
 
   useEffect(() => {
     if (!messages.length) {
@@ -366,11 +405,20 @@ export default function AssistantScreen() {
                       onPressQuickAction={(option) => void sendQuickAction(option.submit_text)}
                     />
                   )}
+                  ListEmptyComponent={
+                    <View style={styles.emptyHero}>
+                      <HomeMascot score={mascotScore} />
+                    </View>
+                  }
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                   contentInsetAdjustmentBehavior="automatic"
-                  contentContainerStyle={[styles.listContent, { paddingBottom: listBottomInset }]}
+                  contentContainerStyle={[
+                    styles.listContent,
+                    { paddingBottom: listBottomInset },
+                    messages.length === 0 ? styles.listContentEmpty : null,
+                  ]}
                 />
               )}
             </View>
@@ -491,6 +539,16 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 16,
   },
+  listContentEmpty: {
+    flexGrow: 1,
+  },
+  emptyHero: {
+    flex: 1,
+    minHeight: 280,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 24,
+  },
   centerState: {
     flex: 1,
     alignItems: "center",
@@ -499,7 +557,6 @@ const styles = StyleSheet.create({
   bottomArea: {
     position: "relative",
     zIndex: 20,
-    elevation: 20,
     flexShrink: 0,
     paddingTop: 4,
     backgroundColor: "#FFFFFF",

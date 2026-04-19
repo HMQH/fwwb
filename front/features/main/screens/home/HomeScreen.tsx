@@ -13,7 +13,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useAuth, type UserRole } from "@/features/auth";
+import { useAuth } from "@/features/auth";
 import type { DetectionMode } from "@/features/detections";
 import { fontFamily, palette, panelShadow } from "@/shared/theme";
 
@@ -52,21 +52,12 @@ const detectionEntries: {
   },
 ];
 
-function getScore(userRole: UserRole, guardianRelation: string | null) {
-  const baseScore = {
-    office_worker: 95,
-    student: 96,
-    mother: 95,
-    investor: 94,
-    minor: 97,
-    young_social: 95,
-    elder: 93,
-    finance: 94,
-  }[userRole];
-
-  const relationBonus = guardianRelation && guardianRelation !== "self" ? 2 : 0;
-
-  return Math.min(99, baseScore + relationBonus);
+function normalizeSafetyScore(value: number | null | undefined) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 95;
+  }
+  return Math.max(0, Math.min(100, Math.round(parsed)));
 }
 
 function getScorePalette(score: number) {
@@ -220,7 +211,7 @@ export default function HomeScreen() {
       return 5;
     }
 
-    return getScore(user.role, user.guardian_relation);
+    return normalizeSafetyScore(user.safety_score);
   }, [user]);
 
   if (!user) {

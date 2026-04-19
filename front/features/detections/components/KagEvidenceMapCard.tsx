@@ -72,9 +72,9 @@ export function KagEvidenceMapCard({ result }: { result?: DetectionResult | null
         <View style={styles.headerTop}>
           <View style={styles.kagBadge}>
             <MaterialCommunityIcons name="graph-outline" size={13} color="#2F70E6" />
-            <Text style={styles.kagBadgeText}>KAG</Text>
+            <Text style={styles.kagBadgeText}>三路</Text>
           </View>
-          <Text style={styles.title}>证据映射</Text>
+          <Text style={styles.title}>证据对照</Text>
         </View>
         <View style={styles.counterRow}>
           <View style={styles.counterChip}>

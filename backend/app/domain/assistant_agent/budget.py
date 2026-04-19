@@ -5,6 +5,8 @@ from typing import Any
 from app.domain.assistant.entity import AssistantMessage
 
 SAFE_CONTEXT_LIMIT = 64_000
+# 仅在接近上下文上限时才触发压缩，避免日常对话过早压缩。
+COMPRESSION_TRIGGER_RATIO = 0.98
 
 
 def _estimate_tokens(text: str | None) -> int:
@@ -139,10 +141,10 @@ def compress_messages(
     *,
     usage_ratio: float,
 ) -> tuple[list[AssistantMessage], str | None, dict[str, Any] | None]:
-    if len(messages) <= 8 and usage_ratio < 0.75:
+    if usage_ratio < COMPRESSION_TRIGGER_RATIO:
         return messages, latest_compression_summary(messages), None
 
-    keep_recent = 4 if usage_ratio >= 0.85 else 6
+    keep_recent = 4 if usage_ratio >= 0.995 else 6
     if len(messages) <= keep_recent:
         return messages, latest_compression_summary(messages), None
 

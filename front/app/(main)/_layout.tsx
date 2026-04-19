@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Redirect, Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { requestFreshAssistantChatFromTab } from "@/features/assistant/assistantFreshChatBus";
 import { LoadingScreen, useAuth } from "@/features/auth";
 import { GuardianEventWatcher } from "@/features/guardians";
 import { fontFamily, palette, radius } from "@/shared/theme";
@@ -86,6 +87,14 @@ export default function MainTabsLayout() {
             />
           ),
         }}
+        listeners={({ navigation }) => ({
+          tabPress: (e) => {
+            if (navigation.isFocused()) {
+              e.preventDefault();
+              requestFreshAssistantChatFromTab();
+            }
+          },
+        })}
       />
       <Tabs.Screen
         name="learning/index"
@@ -164,6 +173,14 @@ export default function MainTabsLayout() {
         name="guardians/events/[id]"
         options={{ href: null, title: "联动详情", tabBarStyle: hiddenTabBarStyle }}
       />
+      <Tabs.Screen
+        name="guardians/reports/index"
+        options={{ href: null, title: "安全监测报告", tabBarStyle: hiddenTabBarStyle }}
+      />
+      <Tabs.Screen
+        name="guardians/reports/[id]"
+        options={{ href: null, title: "报告详情", tabBarStyle: hiddenTabBarStyle }}
+      />
       <Tabs.Screen name="submit" options={{ href: null, title: "提交检测" }} />
       <Tabs.Screen
         name="detect-text"
@@ -183,7 +200,14 @@ export default function MainTabsLayout() {
       <Tabs.Screen name="detect-visual" options={{ href: null, title: "图片/视频检测", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-ai-face" options={{ href: null, title: "AI 换脸识别", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-audio" options={{ href: null, title: "音频检测", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="detect-audio-verify" options={{ href: null, title: "AI语音识别", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-audio/select-uploaded" options={{ href: null, title: "已上传音频", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-deep-analysis" options={{ href: null, title: "语音深度分析", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-process-timeline" options={{ href: null, title: "过程演化", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-evidence-segments" options={{ href: null, title: "证据片段", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-insight/analysis" options={{ href: null, title: "语音深度分析", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-insight/timeline" options={{ href: null, title: "过程演化", tabBarStyle: hiddenTabBarStyle }} />
+      <Tabs.Screen name="audio-insight/segments" options={{ href: null, title: "证据片段", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-mixed" options={{ href: null, title: "混合检测", tabBarStyle: hiddenTabBarStyle }} />
       <Tabs.Screen name="detect-web" options={{ href: null, title: "网站检测", tabBarStyle: hiddenTabBarStyle }} />
       </Tabs>

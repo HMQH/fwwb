@@ -16,7 +16,7 @@ CAPABILITY_SPECS: tuple[CapabilitySpec, ...] = (
     CapabilitySpec(
         key="analysis",
         label="综合分析",
-        aliases=("综合", "综合分析", "全部分析", "全检测", "总分析", "图片检测", "图像检测", "分析"),
+        aliases=("综合", "综合分析", "全部分析", "全检测", "总分析", "图片检测", "图像检测"),
         modalities=("text", "image", "audio", "video"),
         submit_text="请对当前材料做综合分析",
     ),
@@ -70,6 +70,23 @@ CAPABILITY_SPECS: tuple[CapabilitySpec, ...] = (
         submit_text="请执行网址钓鱼检测",
     ),
     CapabilitySpec(
+        key="audio_scam_insight",
+        label="语音深度分析",
+        aliases=(
+            "语音深度分析",
+            "语音分析",
+            "音频分析",
+            "过程演化",
+            "阶段轨迹",
+            "关键证据",
+            "雷达图",
+            "语音诈骗分析",
+            "通话分析",
+        ),
+        modalities=("audio",),
+        submit_text="请执行语音深度分析",
+    ),
+    CapabilitySpec(
         key="audio_verify",
         label="AI音频鉴别",
         aliases=("音频", "录音", "声音", "语音", "ai音频", "ai声音", "变声"),
@@ -107,6 +124,7 @@ TEXT_CLARIFY_ORDER = (
     "analysis",
 )
 AUDIO_CLARIFY_ORDER = (
+    "audio_scam_insight",
     "audio_verify",
     "analysis",
 )

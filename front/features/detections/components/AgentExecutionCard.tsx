@@ -26,6 +26,11 @@ type AgentTimelineItem = {
   metrics: Array<{ label: string; value: string | number }>;
 };
 
+type AgentMetric = {
+  label: string;
+  value: string | number;
+};
+
 type NormalizedTraceItem = {
   id: string;
   action: string;
@@ -33,6 +38,10 @@ type NormalizedTraceItem = {
   label: string;
   status: string;
   iteration?: number;
+  summary?: string;
+  detailLine?: string | null;
+  tags?: string[];
+  metrics?: AgentMetric[];
 };
 
 const ACTION_META: Record<
@@ -49,6 +58,42 @@ const ACTION_META: Record<
     icon: "source-branch",
     soft: "#EAF2FF",
     tone: palette.accentStrong,
+  },
+  preprocess: {
+    label: "清洗准备",
+    icon: "tune-variant",
+    soft: "#EEF5FF",
+    tone: palette.accentStrong,
+  },
+  embedding: {
+    label: "向量编码",
+    icon: "barcode-scan",
+    soft: "#EAF2FF",
+    tone: palette.accentStrong,
+  },
+  graph_reasoning: {
+    label: "图谱分析",
+    icon: "graph-outline",
+    soft: "#F3EEFF",
+    tone: "#8A63D2",
+  },
+  finalize: {
+    label: "结果收束",
+    icon: "check-decagram-outline",
+    soft: "#E9FAF4",
+    tone: "#2E9D7F",
+  },
+  video_ai_detection: {
+    label: "AI视频检测",
+    icon: "movie-open-play-outline",
+    soft: "#EEF5FF",
+    tone: palette.accentStrong,
+  },
+  video_physiology_judgement: {
+    label: "人物生理特征判断",
+    icon: "account-heart-outline",
+    soft: "#FFF4E8",
+    tone: "#D96A4A",
   },
   followup_router: {
     label: "继续复核",
@@ -118,6 +163,15 @@ const ACTION_META: Record<
   },
 };
 
+const GENERIC_PIPELINE_ACTIONS = new Set([
+  "preprocess",
+  "embedding",
+  "vector_retrieval",
+  "graph_reasoning",
+  "llm_reasoning",
+  "finalize",
+]);
+
 const BRANCH_KEY_MAP: Record<string, string> = {
   qr_inspector: "qr_result",
   ocr_phishing: "ocr_result",
@@ -154,6 +208,9 @@ function toPercent(value: unknown) {
 function getStatusLabel(status?: string | null) {
   if (status === "completed") {
     return "已完成";
+  }
+  if (status === "skipped") {
+    return "已跳过";
   }
   if (status === "failed") {
     return "失败";
@@ -215,6 +272,135 @@ function getBranch(detail: DetectionResultDetail | null, action: string) {
   const branches = isRecord(detail.branches) ? detail.branches : null;
   const branchValue = branches?.[branchKey];
   return isRecord(branchValue) ? branchValue : null;
+}
+
+function normalizeTraceMetrics(metrics: unknown): AgentMetric[] {
+  if (Array.isArray(metrics)) {
+    return metrics
+      .filter(isRecord)
+      .map((item) => {
+        const label = sanitizeDisplayText(String(item.label ?? "").trim());
+        const value = item.value;
+        if (!label || (typeof value !== "string" && typeof value !== "number")) {
+          return null;
+        }
+        return { label, value };
+      })
+      .filter((item): item is AgentMetric => Boolean(item))
+      .slice(0, 4);
+  }
+
+  if (!isRecord(metrics)) {
+    return [];
+  }
+
+  return Object.entries(metrics)
+    .map(([label, value]) => {
+      const normalizedLabel = sanitizeDisplayText(label.trim());
+      if (!normalizedLabel || (typeof value !== "string" && typeof value !== "number")) {
+        return null;
+      }
+      return { label: normalizedLabel, value };
+    })
+    .filter((item): item is AgentMetric => Boolean(item))
+    .slice(0, 4);
+}
+
+function normalizeTraceTags(tags: unknown) {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  return tags
+    .map((item) => sanitizeDisplayText(String(item ?? "").trim()))
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+function getVideoAiSummary(detail: DetectionResultDetail | null) {
+  return isRecord(detail?.video_ai_summary) ? detail.video_ai_summary : null;
+}
+
+function getVideoPhysiologySummary(detail: DetectionResultDetail | null) {
+  return isRecord(detail?.video_deception_summary) ? detail.video_deception_summary : null;
+}
+
+function getVideoAiLead(detail: DetectionResultDetail | null) {
+  const summary = getVideoAiSummary(detail);
+  if (isRecord(summary?.lead_item)) {
+    return summary.lead_item;
+  }
+  const items = Array.isArray(detail?.video_ai_items) ? detail.video_ai_items.filter(isRecord) : [];
+  return items[0] ?? null;
+}
+
+function getVideoPhysiologyLead(detail: DetectionResultDetail | null) {
+  const summary = getVideoPhysiologySummary(detail);
+  if (isRecord(summary?.lead_item)) {
+    return summary.lead_item;
+  }
+  const items = Array.isArray(detail?.video_deception_items) ? detail.video_deception_items.filter(isRecord) : [];
+  return items[0] ?? null;
+}
+
+function getVideoRiskTag(level?: string | null) {
+  switch (String(level ?? "").trim().toLowerCase()) {
+    case "high":
+      return "高风险";
+    case "medium":
+      return "建议复核";
+    case "low":
+      return "风险较低";
+    default:
+      return null;
+  }
+}
+
+function isLegacyGenericPipelineTrace(trace: NormalizedTraceItem[]) {
+  if (!trace.length) {
+    return false;
+  }
+  return trace.every((item) => GENERIC_PIPELINE_ACTIONS.has(item.action));
+}
+
+function getPreferredTrace(
+  job: DetectionJob | null | undefined,
+  resultDetail: DetectionResultDetail | null,
+  progressDetail: DetectionResultDetail | null,
+) {
+  const resultUsedModules = Array.isArray(resultDetail?.used_modules)
+    ? resultDetail.used_modules.map((item) => String(item))
+    : [];
+  const progressUsedModules = Array.isArray(progressDetail?.used_modules)
+    ? progressDetail.used_modules.map((item) => String(item))
+    : [];
+  const isAgentMode = Boolean(
+    job?.job_type === "agent_multimodal"
+      || resultUsedModules.includes("planner")
+      || progressUsedModules.includes("planner")
+      || Array.isArray(resultDetail?.selected_skills)
+      || Array.isArray(progressDetail?.selected_skills)
+      || typeof resultDetail?.reasoning_goal === "string"
+      || typeof progressDetail?.reasoning_goal === "string",
+  );
+
+  const candidates = [
+    normalizeTraceItems(resultDetail?.execution_trace),
+    normalizeTraceItems(resultDetail?.module_trace),
+    normalizeTraceItems(progressDetail?.execution_trace),
+    normalizeTraceItems(progressDetail?.module_trace),
+  ];
+
+  for (const trace of candidates) {
+    if (!trace.length) {
+      continue;
+    }
+    if (isAgentMode && isLegacyGenericPipelineTrace(trace)) {
+      continue;
+    }
+    return trace;
+  }
+
+  return [];
 }
 
 function summarizePlanner(detail: DetectionResultDetail | null, executedCount: number) {
@@ -351,10 +537,68 @@ function summarizeFinalJudge(result: DetectionResult | null) {
   return "已汇总各步骤输出并生成最终结论。";
 }
 
+function summarizeGenericPipeline(action: string) {
+  switch (action) {
+    case "preprocess":
+      return "已完成输入材料清洗、校验与任务准备。";
+    case "embedding":
+      return "已提取本次检测所需的核心特征表示。";
+    case "graph_reasoning":
+      return "已综合当前线索执行分析与结果融合。";
+    case "finalize":
+      return "已收束本次检测输出并整理展示结果。";
+    default:
+      return "已执行当前步骤。";
+  }
+}
+
+function summarizeVideoAiDetection(detail: DetectionResultDetail | null) {
+  const summary = getVideoAiSummary(detail);
+  const overallSummary = typeof summary?.overall_summary === "string" ? summary.overall_summary.trim() : "";
+  if (overallSummary) {
+    return overallSummary;
+  }
+  const lead = getVideoAiLead(detail);
+  if (isRecord(lead)) {
+    const fileName = sanitizeDisplayText(String(lead.file_name ?? "").trim());
+    const riskLevel = String(lead.risk_level ?? "").trim().toLowerCase();
+    if (fileName && riskLevel === "high") {
+      return `${fileName} 的时序异常明显，疑似 AI 生成或强篡改。`;
+    }
+    if (fileName && riskLevel === "medium") {
+      return `${fileName} 的时序波动偏离真实区间，建议进一步复核。`;
+    }
+  }
+  return "已完成 AI 视频检测。";
+}
+
+function summarizeVideoPhysiologyJudgement(detail: DetectionResultDetail | null) {
+  const summary = getVideoPhysiologySummary(detail);
+  const overallSummary = typeof summary?.overall_summary === "string" ? summary.overall_summary.trim() : "";
+  if (overallSummary) {
+    return overallSummary;
+  }
+  const personDetectedCount = toFiniteNumber(summary?.person_detected_count) ?? 0;
+  const analyzedCount = toFiniteNumber(summary?.analyzed_count) ?? 0;
+  if (personDetectedCount <= 0 && analyzedCount <= 0) {
+    return "未检测到稳定人物，已跳过人物生理特征判断。";
+  }
+  return "已完成人物生理特征判断。";
+}
+
 function buildSummary(action: string, detail: DetectionResultDetail | null, result: DetectionResult | null, branch: Record<string, unknown> | null, executedCount: number) {
   switch (action) {
     case "planner":
       return summarizePlanner(detail, executedCount);
+    case "preprocess":
+    case "embedding":
+    case "graph_reasoning":
+    case "finalize":
+      return summarizeGenericPipeline(action);
+    case "video_ai_detection":
+      return summarizeVideoAiDetection(detail);
+    case "video_physiology_judgement":
+      return summarizeVideoPhysiologyJudgement(detail);
     case "followup_router":
       return summarizeFollowupRouter(detail);
     case "qr_inspector":
@@ -459,6 +703,34 @@ function buildTags(action: string, detail: DetectionResultDetail | null, branch:
       addTag(tags, result?.risk_level ? localizeRiskLevel(result.risk_level) : null);
       addTag(tags, result?.fraud_type ? localizeFraudType(result.fraud_type) : null);
       break;
+    case "preprocess":
+      addTag(tags, "任务初始化");
+      break;
+    case "embedding":
+      addTag(tags, "特征提取");
+      break;
+    case "graph_reasoning":
+      addTag(tags, "结果融合");
+      break;
+    case "finalize":
+      addTag(tags, "输出整理");
+      break;
+    case "video_ai_detection": {
+      const summary = getVideoAiSummary(detail);
+      const lead = getVideoAiLead(detail);
+      addTag(tags, "D3时序");
+      addTag(tags, getVideoRiskTag(String(summary?.overall_risk_level ?? lead?.risk_level ?? "")));
+      addTag(tags, typeof lead?.encoder === "string" ? lead.encoder : null);
+      break;
+    }
+    case "video_physiology_judgement": {
+      const summary = getVideoPhysiologySummary(detail);
+      const personDetectedCount = toFiniteNumber(summary?.person_detected_count) ?? 0;
+      addTag(tags, "人物状态");
+      addTag(tags, personDetectedCount > 0 ? `${personDetectedCount} 个稳定人物` : "未检出稳定人脸");
+      addTag(tags, getVideoRiskTag(String(summary?.overall_risk_level ?? "")));
+      break;
+    }
     default:
       break;
   }
@@ -551,6 +823,39 @@ function buildDetailLine(action: string, detail: DetectionResultDetail | null, b
         ],
         2,
       ) || null;
+    case "embedding":
+      return "正在生成当前材料的检测特征。";
+    case "graph_reasoning":
+      return "正在汇总各模块结果并生成结论。";
+    case "finalize":
+      return "正在整理最终展示内容。";
+    case "video_ai_detection": {
+      const lead = getVideoAiLead(detail);
+      if (!isRecord(lead)) {
+        return null;
+      }
+      const fileName = sanitizeDisplayText(String(lead.file_name ?? "").trim());
+      const std = toFiniteNumber(lead.second_order_std);
+      return getCompactTextList(
+        [
+          fileName || null,
+          std !== null ? `STD ${std.toFixed(3)}` : null,
+        ],
+        2,
+      ) || null;
+    }
+    case "video_physiology_judgement": {
+      const summary = getVideoPhysiologySummary(detail);
+      const personDetectedCount = toFiniteNumber(summary?.person_detected_count);
+      const skippedCount = toFiniteNumber(summary?.skipped_no_face_count);
+      return getCompactTextList(
+        [
+          personDetectedCount !== null ? `检出人物 ${personDetectedCount}` : null,
+          skippedCount !== null ? `跳过 ${skippedCount}` : null,
+        ],
+        2,
+      ) || null;
+    }
     default:
       return null;
   }
@@ -601,6 +906,47 @@ function buildMetrics(action: string, detail: DetectionResultDetail | null, bran
     }
   }
 
+  if (["preprocess", "embedding", "graph_reasoning", "finalize"].includes(action)) {
+    const score = getResultRiskScore(result);
+    if (score !== null && action === "finalize") {
+      metrics.push({ label: "风险评分", value: formatRiskScore(score) });
+    }
+  }
+
+  if (action === "video_ai_detection") {
+    const summary = getVideoAiSummary(detail);
+    const lead = getVideoAiLead(detail);
+    const analyzedCount = toFiniteNumber(summary?.analyzed_count);
+    const suspiciousCount = toFiniteNumber(summary?.suspicious_count);
+    const std = toFiniteNumber(lead?.second_order_std);
+    if (analyzedCount !== null) {
+      metrics.push({ label: "已分析", value: analyzedCount });
+    }
+    if (suspiciousCount !== null) {
+      metrics.push({ label: "异常", value: suspiciousCount });
+    }
+    if (std !== null) {
+      metrics.push({ label: "STD", value: std.toFixed(3) });
+    }
+  }
+
+  if (action === "video_physiology_judgement") {
+    const summary = getVideoPhysiologySummary(detail);
+    const lead = getVideoPhysiologyLead(detail);
+    const analyzedCount = toFiniteNumber(summary?.analyzed_count);
+    const personDetectedCount = toFiniteNumber(summary?.person_detected_count);
+    const overallScore = toFiniteNumber(lead?.overall_score);
+    if (analyzedCount !== null) {
+      metrics.push({ label: "已分析", value: analyzedCount });
+    }
+    if (personDetectedCount !== null) {
+      metrics.push({ label: "人物", value: personDetectedCount });
+    }
+    if (overallScore !== null) {
+      metrics.push({ label: "综合分", value: overallScore.toFixed(2) });
+    }
+  }
+
   return metrics.slice(0, 3);
 }
 
@@ -622,24 +968,135 @@ function normalizeTraceItems(items: unknown): NormalizedTraceItem[] {
       label,
       status: String(item.status ?? "pending"),
       iteration: toFiniteNumber(item.iteration) ?? undefined,
+      summary: typeof item.summary === "string" ? sanitizeDisplayText(item.summary.trim()) : undefined,
+      detailLine:
+        typeof item.detail_line === "string"
+          ? sanitizeDisplayText(item.detail_line.trim())
+          : typeof item.detailLine === "string"
+            ? sanitizeDisplayText(item.detailLine.trim())
+            : undefined,
+      tags: normalizeTraceTags(item.tags),
+      metrics: normalizeTraceMetrics(item.metrics),
     });
     return acc;
   }, []);
 }
 
-function getAgentExecutionItems(job?: DetectionJob | null, result?: DetectionResult | null) {
+function isVideoDetectionContext(
+  job?: DetectionJob | null,
+  resultDetail?: DetectionResultDetail | null,
+  progressDetail?: ReturnType<typeof getProgressDetail> | null,
+) {
+  return Boolean(
+    job?.job_type === "video_ai"
+    || progressDetail?.input_modality === "video"
+    || Array.isArray(resultDetail?.video_ai_items)
+    || Array.isArray(resultDetail?.video_deception_items),
+  );
+}
+
+function mapLegacyVideoTraceToBusinessSteps(trace: NormalizedTraceItem[]): NormalizedTraceItem[] {
+  const statusMap = new Map(trace.map((item) => [item.action, item.status]));
+  const finalizeStatus = statusMap.get("finalize");
+
+  let aiStatus = statusMap.get("embedding") ?? statusMap.get("preprocess") ?? "pending";
+  let physiologyStatus = statusMap.get("graph_reasoning") ?? "pending";
+
+  if (finalizeStatus === "completed") {
+    aiStatus = "completed";
+    physiologyStatus = "completed";
+  } else if (finalizeStatus === "failed" && physiologyStatus === "pending") {
+    physiologyStatus = "failed";
+  }
+
+  return [
+    {
+      id: "video-ai-legacy",
+      action: "video_ai_detection",
+      key: "video_ai_detection",
+      label: ACTION_META.video_ai_detection.label,
+      status: aiStatus,
+      summary: aiStatus === "running" ? "正在分析视频时序连续性与异常波动。" : undefined,
+    } satisfies NormalizedTraceItem,
+    {
+      id: "video-physiology-legacy",
+      action: "video_physiology_judgement",
+      key: "video_physiology_judgement",
+      label: ACTION_META.video_physiology_judgement.label,
+      status: physiologyStatus,
+      summary: physiologyStatus === "running" ? "正在检查人脸稳定性、行为波动与非接触心率信号。" : undefined,
+    } satisfies NormalizedTraceItem,
+    {
+      id: "video-final-legacy",
+      action: "final_judge",
+      key: "final_judge",
+      label: ACTION_META.final_judge.label,
+      status: finalizeStatus ?? "pending",
+      summary:
+        finalizeStatus === "completed"
+          ? "已生成最终判定。"
+          : finalizeStatus === "failed"
+            ? "最终判定生成失败。"
+            : "等待前两步完成后生成最终判定。",
+    } satisfies NormalizedTraceItem,
+  ];
+}
+
+function ensureVideoFinalJudge(
+  trace: NormalizedTraceItem[],
+  job?: DetectionJob | null,
+  result?: DetectionResult | null,
+): NormalizedTraceItem[] {
+  if (trace.some((item) => item.action === "final_judge")) {
+    return trace;
+  }
+
+  const status =
+    job?.status === "failed"
+      ? "failed"
+      : job?.status === "completed" || Boolean(result)
+        ? "completed"
+        : "pending";
+
+  return [
+    ...trace,
+    {
+      id: "video-final-auto",
+      action: "final_judge",
+      key: "final_judge",
+      label: ACTION_META.final_judge.label,
+      status,
+      summary:
+        status === "completed"
+          ? "已生成最终判定。"
+          : status === "failed"
+            ? "最终判定生成失败。"
+            : "等待前两步完成后生成最终判定。",
+    },
+  ];
+}
+
+function getAgentExecutionItems(job?: DetectionJob | null, result?: DetectionResult | null): NormalizedTraceItem[] {
   const resultDetail = getResultDetail(result);
   const progressDetail = getProgressDetail(job);
-  const rawTrace =
-    resultDetail?.execution_trace
-    ?? resultDetail?.module_trace
-    ?? progressDetail?.execution_trace
-    ?? progressDetail?.module_trace;
-  const trace = normalizeTraceItems(rawTrace);
-  const agentTrace = trace.filter((item) => item.action in ACTION_META);
+  const trace = getPreferredTrace(job, resultDetail, progressDetail);
+  const knownTrace = trace.filter((item) => item.action in ACTION_META);
+  const videoContext = isVideoDetectionContext(job, resultDetail, progressDetail);
 
-  if (agentTrace.length) {
-    return agentTrace;
+  if (videoContext) {
+    const hasVideoBusinessTrace = knownTrace.some((item) =>
+      ["video_ai_detection", "video_physiology_judgement"].includes(item.action),
+    );
+    if (hasVideoBusinessTrace) {
+      return ensureVideoFinalJudge(knownTrace, job, result);
+    }
+    if (trace.some((item) => ["preprocess", "embedding", "graph_reasoning", "finalize"].includes(item.action))) {
+      return ensureVideoFinalJudge(mapLegacyVideoTraceToBusinessSteps(trace), job, result);
+    }
+  }
+
+  if (knownTrace.length) {
+    return knownTrace;
   }
 
   const usedModules = Array.isArray(progressDetail?.used_modules)
@@ -652,7 +1109,7 @@ function getAgentExecutionItems(job?: DetectionJob | null, result?: DetectionRes
         action: "planner",
         key: "planner",
         label: ACTION_META.planner.label,
-        status: job.status === "failed" ? "failed" : "completed",
+        status: job.status === "failed" ? "failed" : job.status === "completed" ? "completed" : "running",
       } satisfies NormalizedTraceItem,
     ];
   }
@@ -665,12 +1122,7 @@ export function isAgentDetection(job?: DetectionJob | null, result?: DetectionRe
   const progressDetail = getProgressDetail(job);
   const resultUsedModules = Array.isArray(resultDetail?.used_modules) ? resultDetail.used_modules.map((item) => String(item)) : [];
   const progressUsedModules = Array.isArray(progressDetail?.used_modules) ? progressDetail.used_modules.map((item) => String(item)) : [];
-  const hasAgentTrace = normalizeTraceItems(
-    resultDetail?.execution_trace
-    ?? resultDetail?.module_trace
-    ?? progressDetail?.execution_trace
-    ?? progressDetail?.module_trace,
-  ).some((item) => item.action in ACTION_META);
+  const hasAgentTrace = getPreferredTrace(job, resultDetail, progressDetail).some((item) => item.action in ACTION_META);
 
   return Boolean(
     result?.stage_tags?.includes("agent_orchestrated")
@@ -708,10 +1160,10 @@ export function AgentExecutionCard({
         action: item.action,
         label: ACTION_META[item.action]?.label ?? item.label,
         status: item.status,
-        summary: buildSummary(item.action, resultDetail, result ?? null, branch, executedCount),
-        detailLine: buildDetailLine(item.action, resultDetail, branch, result ?? null),
-        tags: buildTags(item.action, resultDetail, branch, result ?? null),
-        metrics: buildMetrics(item.action, resultDetail, branch, result ?? null),
+        summary: item.summary || buildSummary(item.action, resultDetail, result ?? null, branch, executedCount),
+        detailLine: item.detailLine ?? buildDetailLine(item.action, resultDetail, branch, result ?? null),
+        tags: item.tags?.length ? item.tags : buildTags(item.action, resultDetail, branch, result ?? null),
+        metrics: item.metrics?.length ? item.metrics : buildMetrics(item.action, resultDetail, branch, result ?? null),
       };
     });
   }, [rawItems, result, resultDetail]);

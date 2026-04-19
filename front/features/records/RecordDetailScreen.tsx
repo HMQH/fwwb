@@ -21,6 +21,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/features/auth";
 import {
   AgentExecutionCard,
+  DeepReasoningPendingGraphCard,
+  DeepReasoningPipelineCard,
   DetectionPipelineCard,
   KagEvidenceMapCard,
   KagSummaryCard,
@@ -36,6 +38,7 @@ import {
   localizeFraudType,
   sanitizeDisplayText,
 } from "@/features/detections";
+import { setAudioScamInsight } from "@/features/detections/audioScamInsightStore";
 import { guardiansApi } from "@/features/guardians";
 import type {
   AudioVerifyRecordItem,
@@ -46,12 +49,18 @@ import type {
   DetectionSubmission,
   DetectionSubmissionDetail,
   SimilarImageItem,
+  ScamCallInsight,
+  VideoAIRecordItem,
+  VideoDeceptionAnalysisFinding,
+  VideoDeceptionRecordItem,
+  VideoDeceptionTimelineEvent,
 } from "@/features/detections";
 import { resolveEvidencePreviewUrl } from "@/features/detections/evidencePreview";
-import { ApiError, resolveUploadFileUrl } from "@/shared/api";
+import { ApiError, resolveApiFileUrl, resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
 import { recordsApi } from "./api";
+import { SignalLineChart } from "./components/SignalLineChart";
 
 type DetailPage = {
   key: "overview" | "graph" | "materials";
@@ -72,6 +81,12 @@ const AGENT_DETAIL_PAGES: DetailPage[] = [
 
 const DIRECT_DETAIL_PAGES: DetailPage[] = [
   { key: "overview", label: "结果" },
+  { key: "materials", label: "材料" },
+];
+
+const VIDEO_DIRECT_DETAIL_PAGES: DetailPage[] = [
+  { key: "overview", label: "总览" },
+  { key: "graph", label: "视频分析" },
   { key: "materials", label: "材料" },
 ];
 
@@ -279,6 +294,135 @@ function getAudioVerifyItems(result?: DetectionResult | null) {
   return raw.filter((item): item is AudioVerifyRecordItem => isRecord(item) && typeof item.file_name === "string");
 }
 
+function getVideoAiItems(result?: DetectionResult | null) {
+  const detail = result?.result_detail;
+  if (!isRecord(detail)) {
+    return [];
+  }
+  const raw = detail.video_ai_items;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is VideoAIRecordItem => isRecord(item) && typeof item.file_name === "string");
+}
+
+function getVideoDeceptionItems(result?: DetectionResult | null) {
+  const detail = result?.result_detail;
+  if (!isRecord(detail)) {
+    return [];
+  }
+  const raw = detail.video_deception_items;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is VideoDeceptionRecordItem => isRecord(item) && typeof item.file_name === "string");
+}
+
+function formatVideoFloat(value: unknown, digits = 3) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) {
+    return "--";
+  }
+  return parsed.toFixed(digits);
+}
+
+function getVideoPatternLabel(pattern?: string | null) {
+  switch (pattern) {
+    case "oversmooth_ai":
+      return "过度平滑";
+    case "physical_normal":
+      return "真实区间";
+    case "unstable_review":
+      return "波动偏高";
+    case "temporal_collapse_ai":
+      return "时序崩坏";
+    default:
+      return "未分类";
+  }
+}
+
+function formatVideoTime(value: unknown) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) {
+    return "--";
+  }
+  return `${parsed.toFixed(2)}s`;
+}
+
+const VIDEO_UUID_LIKE_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const VIDEO_HEX_LIKE_RE = /^(?=.*\d)[0-9a-f]{7,64}$/i;
+const FILE_EXTENSION_RE = /\.[a-z0-9]{2,8}$/i;
+
+function normalizeFileLeafName(fileName?: string | null) {
+  const raw = String(fileName ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  const leaf = raw.split(/[\\/]/).pop() ?? raw;
+  try {
+    return decodeURIComponent(leaf).trim();
+  } catch {
+    return leaf.trim();
+  }
+}
+
+function isGeneratedVideoName(fileName: string) {
+  const stem = fileName.replace(FILE_EXTENSION_RE, "");
+  return VIDEO_UUID_LIKE_RE.test(stem) || VIDEO_HEX_LIKE_RE.test(stem);
+}
+
+function getVideoDisplayName(fileName: string | null | undefined, fallbackIndex: number) {
+  const fallback = `视频片段 ${fallbackIndex}`;
+  const leaf = normalizeFileLeafName(fileName);
+  if (!leaf) {
+    return fallback;
+  }
+  if (isGeneratedVideoName(leaf)) {
+    return fallback;
+  }
+  return leaf;
+}
+
+function getVideoAnomalies(item?: VideoAIRecordItem | null) {
+  const raw = item?.explanation?.top_anomalies;
+  if (!Array.isArray(raw) || !raw.length) {
+    return [];
+  }
+  return raw
+    .filter((entry): entry is NonNullable<NonNullable<VideoAIRecordItem["explanation"]>["top_anomalies"]>[number] => isRecord(entry))
+    .map((entry, index) => ({
+      rank: toFiniteNumber(entry.rank) ?? index + 1,
+      keyTimeSec: toFiniteNumber(entry.key_time_sec),
+      peakScore: toFiniteNumber(entry.peak_second_order_score),
+      keyframeUrl: resolveApiFileUrl(typeof entry.paths?.keyframe === "string" ? entry.paths.keyframe : null),
+      flowUrl: resolveApiFileUrl(typeof entry.paths?.second_order_flow === "string" ? entry.paths.second_order_flow : null),
+      overlayUrl: resolveApiFileUrl(typeof entry.paths?.second_order_overlay === "string" ? entry.paths.second_order_overlay : null),
+      summary: typeof entry.summary === "string" ? entry.summary : null,
+    }))
+    .sort((left, right) => (left.rank ?? 99) - (right.rank ?? 99));
+}
+
+function getAudioScamInsight(result?: DetectionResult | null): ScamCallInsight | null {
+  const detail = result?.result_detail;
+  if (!isRecord(detail)) {
+    return null;
+  }
+  const payload = detail.audio_scam_insight;
+  if (!isRecord(payload)) {
+    return null;
+  }
+  if (
+    !isRecord(payload.behavior_profile)
+    || !isRecord(payload.dynamics)
+    || !Array.isArray(payload.evidence_segments)
+    || !isRecord(payload.decision)
+    || !isRecord(payload.modality_contrib)
+  ) {
+    return null;
+  }
+  return payload as unknown as ScamCallInsight;
+}
+
 function InlinePill({
   label,
   soft,
@@ -376,6 +520,423 @@ function PageSurface({
   );
 }
 
+function VideoAIResultSection({ items }: { items: VideoAIRecordItem[] }) {
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <View style={styles.audioVerifySection}>
+      <SectionLabel>AI视频检测</SectionLabel>
+      <View style={styles.audioVerifyList}>
+        {items.map((item, index) => {
+          const riskLevel = String(item.risk_level ?? "").toLowerCase();
+          const failed = item.status === "failed";
+          const highRisk = riskLevel === "high";
+          const mediumRisk = riskLevel === "medium";
+          const title = getVideoDisplayName(item.file_name, index + 1);
+          const anomalyCount = getVideoAnomalies(item).length;
+
+          return (
+            <View key={`${title}-${index}`} style={styles.videoSummaryCard}>
+              <View style={styles.audioVerifyHeader}>
+                <View style={styles.audioVerifyHeaderCopy}>
+                  <Text style={styles.audioVerifyTitle} numberOfLines={1}>
+                    {title}
+                  </Text>
+                  <Text style={styles.audioVerifyMeta}>
+                    {failed
+                      ? "检测失败"
+                      : highRisk
+                        ? "疑似 AI 生成"
+                        : mediumRisk
+                          ? "建议复核"
+                          : "时序落在真实区间"}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.audioVerifyBadge,
+                    failed
+                      ? styles.audioVerifyBadgeMuted
+                      : highRisk
+                        ? styles.audioVerifyBadgeRisk
+                        : mediumRisk
+                          ? styles.videoAiBadgeWarn
+                          : styles.audioVerifyBadgeSafe,
+                  ]}
+                >
+                  <Text style={styles.audioVerifyBadgeText}>
+                    {failed ? "失败" : highRisk ? "高风险" : mediumRisk ? "复核" : "正常"}
+                  </Text>
+                </View>
+              </View>
+
+              {failed ? (
+                <Text style={styles.audioVerifyErrorText}>{sanitizeDisplayText(item.error_message ?? "检测失败")}</Text>
+              ) : (
+                <>
+                  <View style={styles.videoHeadlineRow}>
+                    <Text style={styles.videoHeadlineText}>
+                      {highRisk ? "检测到强异常时序特征" : mediumRisk ? "检测到偏离真实区间的时序波动" : "当前时序波动整体正常"}
+                    </Text>
+                  </View>
+                  <View style={styles.videoMetricGrid}>
+                    <MetricChip label="STD" value={formatVideoFloat(item.second_order_std)} />
+                    <MetricChip label="Mean" value={formatVideoFloat(item.second_order_mean)} />
+                    <MetricChip label="帧数" value={toFiniteNumber(item.frame_count) ?? "--"} />
+                    <MetricChip label="异常时刻" value={String(anomalyCount)} />
+                  </View>
+                  <View style={styles.videoAiMetaRow}>
+                    <InlinePill label={getVideoPatternLabel(item.pattern)} soft="#F3F6FB" tone={palette.inkSoft} icon="chart-timeline-variant" />
+                    <InlinePill label={`异常时刻 ${formatVideoTime(item.explanation?.key_time_sec ?? item.key_time_sec)}`} soft="#FFF4E8" tone="#D96A4A" icon="clock-outline" />
+                    {item.model_name ? (
+                      <InlinePill label={item.model_name} soft="#EEF5FF" tone={palette.accentStrong} icon="cpu-64-bit" />
+                    ) : null}
+                  </View>
+                  {item.explanation?.summary ? (
+                    <Text style={styles.videoAiHintText}>{sanitizeDisplayText(item.explanation.summary)}</Text>
+                  ) : null}
+                  {item.explanation?.error ? (
+                    <Text style={styles.audioVerifyErrorText}>{sanitizeDisplayText(item.explanation.error)}</Text>
+                  ) : null}
+                  <Text style={styles.videoAiReasonText}>
+                    {sanitizeDisplayText(item.final_reason ?? item.summary ?? "已完成视频时序检测")}
+                  </Text>
+                </>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function getVideoBehaviorLabel(level?: string | null) {
+  switch (String(level ?? "").toLowerCase()) {
+    case "high":
+      return "行为/生理波动明显";
+    case "medium":
+      return "行为/生理波动偏高";
+    default:
+      return "行为/生理波动平稳";
+  }
+}
+
+function getVideoAnalysisFindings(item?: VideoDeceptionRecordItem | null) {
+  const raw = item?.analysis?.findings;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is VideoDeceptionAnalysisFinding => isRecord(entry));
+}
+
+function getVideoTimelineEvents(item?: VideoDeceptionRecordItem | null) {
+  const raw = item?.analysis?.timeline_events;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is VideoDeceptionTimelineEvent => isRecord(entry));
+}
+
+function getSignalLevelMeta(level?: string | null) {
+  switch (String(level ?? "").toLowerCase()) {
+    case "high":
+      return { label: "高", soft: "#FFE7E7", tone: "#C34F4F" };
+    case "medium":
+      return { label: "中", soft: "#FFF4E8", tone: "#D96A4A" };
+    default:
+      return { label: "低", soft: "#E8F7ED", tone: "#1E8E5A" };
+  }
+}
+
+function VideoDeceptionResultSection({ items }: { items: VideoDeceptionRecordItem[] }) {
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <View style={styles.audioVerifySection}>
+      <SectionLabel>人物生理特征判断</SectionLabel>
+      <View style={styles.audioVerifyList}>
+        {items.map((item, index) => {
+          const failed = item.status === "failed";
+          const riskLevel = String(item.risk_level ?? "").toLowerCase();
+          const title = getVideoDisplayName(item.file_name, index + 1);
+          const highRisk = riskLevel === "high";
+          const mediumRisk = riskLevel === "medium";
+          const findings = getVideoAnalysisFindings(item);
+          const limitations = Array.isArray(item.analysis?.limitations) ? item.analysis?.limitations.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+          return (
+            <View key={`${title}-${index}`} style={styles.videoSummaryCard}>
+              <View style={styles.audioVerifyHeader}>
+                <View style={styles.audioVerifyHeaderCopy}>
+                  <Text style={styles.audioVerifyTitle} numberOfLines={1}>{title}</Text>
+                  <Text style={styles.audioVerifyMeta}>
+                    {failed
+                      ? "分析失败"
+                      : item.person_detected
+                        ? getVideoBehaviorLabel(riskLevel)
+                        : "未检测到稳定人脸"}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.audioVerifyBadge,
+                    failed
+                      ? styles.audioVerifyBadgeMuted
+                      : highRisk
+                        ? styles.audioVerifyBadgeRisk
+                        : mediumRisk
+                          ? styles.videoAiBadgeWarn
+                          : styles.audioVerifyBadgeSafe,
+                  ]}
+                >
+                  <Text style={styles.audioVerifyBadgeText}>
+                    {failed ? "失败" : highRisk ? "高波动" : mediumRisk ? "复核" : "平稳"}
+                  </Text>
+                </View>
+              </View>
+
+              {failed ? (
+                <Text style={styles.audioVerifyErrorText}>{sanitizeDisplayText(item.error_message ?? "分析失败")}</Text>
+              ) : (
+                <>
+                  <View style={styles.videoHeadlineRow}>
+                    <Text style={styles.videoHeadlineText}>
+                      {item.person_detected
+                        ? sanitizeDisplayText(item.summary ?? "已完成人脸行为与 rPPG 辅助分析")
+                        : "当前片段里没有足够稳定的人脸区域"}
+                    </Text>
+                  </View>
+                  <View style={styles.videoMetricGrid}>
+                    <MetricChip label="行为分" value={formatVideoFloat(item.face_behavior_score, 2)} />
+                    <MetricChip label="生理分" value={formatVideoFloat(item.physiology_score, 2)} />
+                    <MetricChip label="HR均值" value={item.hr_mean_bpm ? `${formatVideoFloat(item.hr_mean_bpm, 1)} bpm` : "--"} />
+                    <MetricChip label="信号质量" value={item.signal_quality ? `${Math.round((item.signal_quality ?? 0) * 100)}%` : "--"} />
+                  </View>
+                  <View style={styles.videoAiMetaRow}>
+                    <InlinePill label={item.person_detected ? "检测到人脸" : "无人脸"} soft="#F3F6FB" tone={palette.inkSoft} icon="face-recognition" />
+                    <InlinePill label={`采样 ${formatVideoFloat(item.sampled_fps, 1)} fps`} soft="#EEF5FF" tone={palette.accentStrong} icon="video-outline" />
+                    <InlinePill label={`眨眼 ${formatVideoFloat(item.blink_rate_per_min, 1)}/min`} soft="#FFF8E8" tone="#C48A29" icon="eye-outline" />
+                  </View>
+                  <Text style={styles.videoAiReasonText}>
+                    {sanitizeDisplayText(item.final_reason ?? item.summary ?? "已完成视频行为/生理分析")}
+                  </Text>
+                  {item.analysis?.overview ? (
+                    <View style={styles.videoInsightBlock}>
+                      <Text style={styles.videoInsightTitle}>分析解读</Text>
+                      <Text style={styles.videoInsightText}>{sanitizeDisplayText(item.analysis.overview)}</Text>
+                    </View>
+                  ) : null}
+                  {findings.length ? (
+                    <View style={styles.videoFindingList}>
+                      {findings.map((finding, findingIndex) => {
+                        const meta = getSignalLevelMeta(finding.level);
+                        return (
+                          <View key={`${title}-finding-${findingIndex}`} style={styles.videoFindingCard}>
+                            <View style={styles.videoFindingHeader}>
+                              <Text style={styles.videoFindingTitle}>{sanitizeDisplayText(finding.title ?? "辅助信号")}</Text>
+                              <InlinePill label={`${meta.label}关注`} soft={meta.soft} tone={meta.tone} />
+                            </View>
+                            <Text style={styles.videoFindingText}>
+                              {sanitizeDisplayText(finding.description ?? "当前片段存在可供人工复核的行为/生理辅助线索。")}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                  {item.analysis?.confidence_note ? (
+                    <View style={styles.videoConfidenceBox}>
+                      <Text style={styles.videoConfidenceTitle}>结果置信说明</Text>
+                      <Text style={styles.videoConfidenceText}>{sanitizeDisplayText(item.analysis.confidence_note)}</Text>
+                    </View>
+                  ) : null}
+                  {limitations.length ? (
+                    <View style={styles.videoLimitationsBlock}>
+                      <Text style={styles.videoLimitationsTitle}>使用边界</Text>
+                      {limitations.map((entry, limitationIndex) => (
+                        <View key={`${title}-limitation-${limitationIndex}`} style={styles.adviceRow}>
+                          <View style={styles.videoLimitDot} />
+                          <Text style={styles.videoLimitationsText}>{sanitizeDisplayText(entry)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function VideoDeceptionChartsSection({ items }: { items: VideoDeceptionRecordItem[] }) {
+  const primary = items.find((item) => item.status === "completed" && item.person_detected) ?? items.find((item) => item.status === "completed");
+  if (!primary || !primary.series) {
+    return null;
+  }
+  const timelineEvents = getVideoTimelineEvents(primary);
+
+  return (
+    <View style={styles.videoAnalysisSection}>
+      <PageSurface soft>
+        <SectionLabel>行为与心率可视化</SectionLabel>
+        <Text style={styles.videoSectionHint}>这里展示眼神、头姿与非接触心率的时间序列，用于辅助人工理解视频中的真人状态。</Text>
+      </PageSurface>
+      <View style={styles.videoSignalGrid}>
+        <SignalLineChart title="眼神水平变化" subtitle="gaze x" color="#4E7CF7" series={primary.series.gaze_x} />
+        <SignalLineChart title="头部偏航变化" subtitle="yaw" color="#D96A4A" series={primary.series.head_yaw} />
+        <SignalLineChart title="头部俯仰变化" subtitle="pitch" color="#8A63D2" series={primary.series.head_pitch} />
+        <SignalLineChart title="心率曲线" subtitle="BPM" color="#1E8E5A" series={primary.series.hr_bpm} emptyLabel="需要更长、更稳定的人脸片段才能得到 HR 曲线" />
+      </View>
+      <PageSurface>
+        <SectionLabel>辅助说明</SectionLabel>
+        <View style={styles.videoBehaviorLegend}>
+          <Text style={styles.videoBehaviorLegendText}>行为分：{formatVideoFloat(primary.face_behavior_score, 2)}，由眼神、头动、眨眼、嘴部/眉部代理特征综合得出。</Text>
+          <Text style={styles.videoBehaviorLegendText}>生理分：{formatVideoFloat(primary.physiology_score, 2)}，基于 rPPG/CHROM 估计的心率波动生成。</Text>
+          <Text style={styles.videoBehaviorLegendText}>提示：这一路只用于辅助研判真人状态，不直接等价于“说谎判定”。</Text>
+        </View>
+      </PageSurface>
+      {timelineEvents.length ? (
+        <PageSurface>
+          <SectionLabel>关键时刻</SectionLabel>
+          <View style={styles.videoEventList}>
+            {timelineEvents.map((event, index) => {
+              const meta = getSignalLevelMeta(event.severity);
+              return (
+                <View key={`timeline-${index}`} style={styles.videoEventCard}>
+                  <View style={styles.videoEventHeader}>
+                    <View style={styles.videoEventHeaderCopy}>
+                      <Text style={styles.videoEventTitle}>{sanitizeDisplayText(event.title ?? "关键波动")}</Text>
+                      <Text style={styles.videoEventMeta}>
+                        {typeof event.time_sec === "number" ? `${formatVideoTime(event.time_sec)} 附近` : "关键时刻"}
+                      </Text>
+                    </View>
+                    <InlinePill label={`${meta.label}关注`} soft={meta.soft} tone={meta.tone} icon="timeline-clock-outline" />
+                  </View>
+                  <Text style={styles.videoEventText}>
+                    {sanitizeDisplayText(event.description ?? "该时刻的行为/心率变化值得人工复核。")}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        </PageSurface>
+      ) : null}
+    </View>
+  );
+}
+
+function VideoKeyframesSection({ items }: { items: VideoAIRecordItem[] }) {
+  const cards = items.flatMap((item, itemIndex) =>
+    getVideoAnomalies(item).map((entry, index) => ({
+      key: `${item.file_name}-${index}-${entry.rank}`,
+      displayName: getVideoDisplayName(item.file_name, itemIndex + 1),
+      time: entry.keyTimeSec,
+      peakScore: entry.peakScore,
+      keyframeUrl: entry.keyframeUrl,
+    })),
+  ).filter((entry) => Boolean(entry.keyframeUrl));
+
+  if (!cards.length) {
+    return null;
+  }
+
+  return (
+    <PageSurface soft>
+      <SectionLabel>关键帧材料</SectionLabel>
+      <Text style={styles.videoSectionHint}>已自动挑选最异常的 3 个时刻，方便回看原始画面内容。</Text>
+      <View style={styles.videoKeyframeGrid}>
+        {cards.map((entry) => (
+          <View key={entry.key} style={styles.videoKeyframeCard}>
+            <Image source={{ uri: entry.keyframeUrl! }} style={styles.videoKeyframeImage} contentFit="cover" transition={160} cachePolicy="memory-disk" />
+            <View style={styles.videoKeyframeMeta}>
+              <Text style={styles.videoKeyframeTitle} numberOfLines={1}>{entry.displayName}</Text>
+              <Text style={styles.videoKeyframeInfo}>异常时刻 {formatVideoTime(entry.time)}</Text>
+              <Text style={styles.videoKeyframeInfo}>峰值 {formatVideoFloat(entry.peakScore, 4)}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </PageSurface>
+  );
+}
+
+function VideoAnalysisSection({
+  items,
+  onOpenImage,
+}: {
+  items: VideoAIRecordItem[];
+  onOpenImage: (uri: string, title: string) => void;
+}) {
+  const cards = items.flatMap((item, itemIndex) =>
+    getVideoAnomalies(item).map((entry, index) => ({
+      key: `${item.file_name}-${index}-${entry.rank}`,
+      rank: entry.rank,
+      displayName: getVideoDisplayName(item.file_name, itemIndex + 1),
+      time: entry.keyTimeSec,
+      peakScore: entry.peakScore,
+      summary: entry.summary,
+      flowUrl: entry.flowUrl,
+      overlayUrl: entry.overlayUrl,
+    })),
+  ).filter((entry) => Boolean(entry.flowUrl || entry.overlayUrl));
+
+  if (!cards.length) {
+    return null;
+  }
+
+  return (
+    <View style={styles.videoAnalysisSection}>
+      <PageSurface soft>
+        <SectionLabel>异常时刻解析</SectionLabel>
+        <Text style={styles.videoSectionHint}>二阶光流用于观察时间连续性变化，异常叠加用于突出局部时序异常区域。</Text>
+      </PageSurface>
+      {cards.map((entry) => (
+        <PageSurface key={entry.key}>
+          <View style={styles.videoAnalysisHeader}>
+            <View style={styles.videoAnalysisHeaderCopy}>
+              <Text style={styles.videoAnalysisTitle} numberOfLines={1}>{entry.displayName}</Text>
+              <Text style={styles.videoAnalysisMeta}>异常时刻 {formatVideoTime(entry.time)} · 峰值 {formatVideoFloat(entry.peakScore, 4)}</Text>
+            </View>
+            <View style={styles.videoAnalysisRankBadge}>
+              <Text style={styles.videoAnalysisRankText}>TOP {entry.rank ?? "--"}</Text>
+            </View>
+          </View>
+          <View style={styles.videoAnalysisImageRow}>
+            {entry.flowUrl ? (
+              <Pressable
+                style={({ pressed }) => [styles.videoAnalysisImageCard, pressed && styles.buttonPressed]}
+                onPress={() => onOpenImage(entry.flowUrl!, `${entry.displayName} · 二阶光流`)}
+              >
+                <Image source={{ uri: entry.flowUrl }} style={styles.videoAnalysisImage} contentFit="contain" transition={160} cachePolicy="memory-disk" />
+                <Text style={styles.videoAnalysisImageLabel}>二阶光流</Text>
+              </Pressable>
+            ) : null}
+            {entry.overlayUrl ? (
+              <Pressable
+                style={({ pressed }) => [styles.videoAnalysisImageCard, pressed && styles.buttonPressed]}
+                onPress={() => onOpenImage(entry.overlayUrl!, `${entry.displayName} · 异常叠加`)}
+              >
+                <Image source={{ uri: entry.overlayUrl }} style={styles.videoAnalysisImage} contentFit="cover" transition={160} cachePolicy="memory-disk" />
+                <Text style={styles.videoAnalysisImageLabel}>异常叠加</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {entry.summary ? (
+            <Text style={styles.videoAnalysisSummary}>{sanitizeDisplayText(entry.summary)}</Text>
+          ) : null}
+        </PageSurface>
+      ))}
+    </View>
+  );
+}
+
 function SectionLabel({ children }: { children: ReactNode }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
 }
@@ -445,6 +1006,11 @@ type EvidenceSheetState = {
   item: DetectionEvidence;
   title: string;
   tone: EvidenceTone;
+} | null;
+
+type VideoImagePreviewState = {
+  uri: string;
+  title: string;
 } | null;
 
 function EvidenceCarouselSection({
@@ -553,6 +1119,7 @@ export default function RecordDetailScreen() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
   const [evidenceSheet, setEvidenceSheet] = useState<EvidenceSheetState>(null);
+  const [videoImagePreview, setVideoImagePreview] = useState<VideoImagePreviewState>(null);
   const evidenceSheetScale = useRef(new Animated.Value(0.92)).current;
   const evidenceSheetOpacity = useRef(new Animated.Value(0)).current;
 
@@ -621,13 +1188,21 @@ export default function RecordDetailScreen() {
   const result = detail?.latest_result;
   const job = detail?.latest_job;
   const guardianEventSummary = detail?.guardian_event_summary;
+  const rawVideoOnly =
+    Boolean(submission?.video_paths.length)
+    && !Boolean(submission?.image_paths.length)
+    && !Boolean(submission?.audio_paths.length)
+    && !Boolean(submission?.text_paths.length)
+    && !Boolean(submission?.text_content?.trim());
   const directMode = shouldUseDirectResultView(job, result);
   const agentMode = !directMode && shouldUseAgentExecutionView(submission, job, result);
-  const detailPages = directMode
-    ? DIRECT_DETAIL_PAGES
-    : agentMode
-      ? AGENT_DETAIL_PAGES
-      : DEFAULT_DETAIL_PAGES;
+  const detailPages = rawVideoOnly
+    ? VIDEO_DIRECT_DETAIL_PAGES
+    : directMode
+      ? DIRECT_DETAIL_PAGES
+      : agentMode
+        ? AGENT_DETAIL_PAGES
+        : DEFAULT_DETAIL_PAGES;
 
   useEffect(() => {
     if (!token || !id) {
@@ -654,8 +1229,18 @@ export default function RecordDetailScreen() {
       && String(job?.progress_detail?.analysis_mode ?? "").trim().toLowerCase() === "deep"
     ),
   );
-  const deepStageLabel = sanitizeDisplayText(resultDetail?.kag?.current_stage?.label ?? "");
   const audioVerifyItems = getAudioVerifyItems(result);
+  const audioScamInsight = getAudioScamInsight(result);
+  const videoAiItems = getVideoAiItems(result);
+  const videoDeceptionItems = getVideoDeceptionItems(result);
+  const videoFocusedView = rawVideoOnly && (videoAiItems.length > 0 || videoDeceptionItems.length > 0);
+  const sourceAudioPath = submission?.audio_paths?.[0] ?? null;
+  const sourceAudioUri = sourceAudioPath ? resolveUploadFileUrl(sourceAudioPath) : null;
+  const sourceFilenameFromResult =
+    resultDetail && typeof resultDetail.source_label === "string"
+      ? resultDetail.source_label.trim()
+      : "";
+  const sourceFilename = sourceFilenameFromResult || (sourceAudioPath ? sourceAudioPath.split("/").pop() : null) || null;
   const similarImages = getSimilarImages(result);
   const evidenceCardWidth = Math.max(220, Math.min(width - 92, 296));
   const evidenceSheetImageUrl = evidenceSheet ? resolveEvidencePreviewUrl(evidenceSheet.item) : null;
@@ -710,6 +1295,14 @@ export default function RecordDetailScreen() {
     });
   }, [evidenceSheetOpacity, evidenceSheetScale]);
 
+  const openVideoImagePreview = useCallback((uri: string, title: string) => {
+    setVideoImagePreview({ uri, title });
+  }, []);
+
+  const closeVideoImagePreview = useCallback(() => {
+    setVideoImagePreview(null);
+  }, []);
+
   const lockPagerScroll = useCallback(() => {
     setPagerScrollEnabled(false);
   }, []);
@@ -717,6 +1310,29 @@ export default function RecordDetailScreen() {
   const unlockPagerScroll = useCallback(() => {
     setPagerScrollEnabled(true);
   }, []);
+
+   const openAudioInsightPage = useCallback((target: "analysis" | "timeline" | "segments") => {
+    if (!audioScamInsight) {
+      return;
+    }
+    const recordParam = Array.isArray(id) ? id[0] : id;
+    const returnHref = recordParam ? `/records/${recordParam}` : null;
+    setAudioScamInsight(audioScamInsight, {
+      sourceFilename,
+      sourceAudioUri,
+      sourceAudioMimeType: "audio/mpeg",
+      returnHref,
+    });
+    if (target === "timeline") {
+      router.push("/audio-process-timeline" as never);
+      return;
+    }
+    if (target === "segments") {
+      router.push("/audio-evidence-segments" as never);
+      return;
+    }
+    router.push("/audio-deep-analysis" as never);
+  }, [audioScamInsight, id, router, sourceAudioUri, sourceFilename]);
 
   const renderOverviewPage = useCallback(() => {
     if (!detail || !submission) {
@@ -733,7 +1349,9 @@ export default function RecordDetailScreen() {
           ? null
           : agentMode
             ? (!result ? <AgentExecutionCard job={job} result={result} title="执行链路" maxVisibleSteps={4} forceVisible /> : null)
-            : (job ? <DetectionPipelineCard job={job} result={result} title="检测流程" /> : null)}
+            : showDeepReasoning
+              ? (job ? <DeepReasoningPipelineCard job={job} result={result} title="深度链路" /> : null)
+              : (job ? <DetectionPipelineCard job={job} result={result} title="检测流程" /> : null)}
 
         {showDeepReasoning ? <KagSummaryCard result={result} /> : null}
 
@@ -774,6 +1392,42 @@ export default function RecordDetailScreen() {
             ) : null}
 
             {audioVerifyItems.length ? <AudioVerifyResultSection items={audioVerifyItems} /> : null}
+            {videoAiItems.length ? <VideoAIResultSection items={videoAiItems} /> : null}
+            {videoDeceptionItems.length ? <VideoDeceptionResultSection items={videoDeceptionItems} /> : null}
+
+            {audioScamInsight ? (
+              <View style={styles.audioInsightSection}>
+                <SectionLabel>语音深度分析</SectionLabel>
+                <View style={styles.audioInsightMetricRow}>
+                  <MetricChip label="通话风险" value={formatAudioPercent(audioScamInsight.decision.call_risk_score)} />
+                  <MetricChip label="关键证据" value={audioScamInsight.evidence_segments.length} />
+                  <MetricChip label="阶段轨迹" value={audioScamInsight.dynamics.stage_sequence.length} />
+                </View>
+                <View style={styles.audioInsightActionRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.audioInsightAction, pressed && styles.buttonPressed]}
+                    onPress={() => openAudioInsightPage("analysis")}
+                  >
+                    <MaterialCommunityIcons name="radar" size={15} color={palette.accentStrong} />
+                    <Text style={styles.audioInsightActionText}>雷达画像</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.audioInsightAction, pressed && styles.buttonPressed]}
+                    onPress={() => openAudioInsightPage("timeline")}
+                  >
+                    <MaterialCommunityIcons name="chart-line-variant" size={15} color={palette.accentStrong} />
+                    <Text style={styles.audioInsightActionText}>过程演化</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.audioInsightAction, pressed && styles.buttonPressed]}
+                    onPress={() => openAudioInsightPage("segments")}
+                  >
+                    <MaterialCommunityIcons name="file-document-multiple-outline" size={15} color={palette.accentStrong} />
+                    <Text style={styles.audioInsightActionText}>关键证据</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
 
             {guardianEventSummary ? (
               <View style={styles.guardianCard}>
@@ -845,14 +1499,19 @@ export default function RecordDetailScreen() {
     );
   }, [
     agentMode,
+    audioScamInsight,
     audioVerifyItems,
     detail,
+    videoAiItems,
+    videoDeceptionItems,
+    directMode,
     guardianEventSummary,
     handleNotifyGuardian,
     handleRerun,
     headline,
     job,
     notifyingGuardian,
+    openAudioInsightPage,
     result,
     riskMeta.icon,
     riskMeta.label,
@@ -865,6 +1524,23 @@ export default function RecordDetailScreen() {
   ]);
 
   const renderGraphPage = useCallback(() => {
+    if (rawVideoOnly) {
+      return (
+        <ScrollView
+          style={styles.pageScroll}
+          contentContainerStyle={styles.pageContent}
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
+        >
+          {job ? <AgentExecutionCard job={job} result={result} title="视频分析流程" forceVisible /> : null}
+          {videoAiItems.length ? <VideoAnalysisSection items={videoAiItems} onOpenImage={openVideoImagePreview} /> : null}
+          {videoDeceptionItems.length ? <VideoDeceptionChartsSection items={videoDeceptionItems} /> : null}
+          {!videoAiItems.length && !videoDeceptionItems.length ? (
+            <EmptyState title="暂无视频分析结果" description="当前视频没有生成异常时刻图或行为曲线，可能是未检测到稳定人脸，或视频信号不足。" />
+          ) : null}
+        </ScrollView>
+      );
+    }
     if (agentMode) {
       return (
         <ScrollView
@@ -874,6 +1550,8 @@ export default function RecordDetailScreen() {
           nestedScrollEnabled
         >
           <AgentExecutionCard job={job} result={result} title="执行详情" forceVisible />
+          {videoAiItems.length ? <VideoAnalysisSection items={videoAiItems} onOpenImage={openVideoImagePreview} /> : null}
+          {videoDeceptionItems.length ? <VideoDeceptionChartsSection items={videoDeceptionItems} /> : null}
         </ScrollView>
       );
     }
@@ -885,8 +1563,10 @@ export default function RecordDetailScreen() {
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
-          {job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null}
-          <EmptyState title="暂无图谱" description="结果生成后可左右切换查看" />
+          {showDeepReasoning
+            ? <DeepReasoningPendingGraphCard job={job} title="阶段链路" />
+            : (job ? <DetectionPipelineCard job={job} result={result} title="检测链路" /> : null)}
+          {!showDeepReasoning ? <EmptyState title="暂无图谱" description="结果生成后可左右切换查看" /> : null}
         </ScrollView>
       );
     }
@@ -900,7 +1580,7 @@ export default function RecordDetailScreen() {
         <ReasoningGraphCard result={result} showHeader={false} showPath={false} graphHeight={320} />
       </ScrollView>
     );
-  }, [agentMode, job, result]);
+  }, [agentMode, job, openVideoImagePreview, rawVideoOnly, result, showDeepReasoning, videoAiItems, videoDeceptionItems]);
 
   const renderMaterialsPage = useCallback(() => {
     if (!detail || !submission) {
@@ -924,6 +1604,8 @@ export default function RecordDetailScreen() {
         </PageSurface>
 
         {showDeepReasoning ? <KagEvidenceMapCard result={result} /> : null}
+
+        {videoFocusedView ? <VideoKeyframesSection items={videoAiItems} /> : null}
 
         {similarImages.length ? (
           <SimilarImageGalleryCard
@@ -997,6 +1679,8 @@ export default function RecordDetailScreen() {
     similarImages,
     submission,
     unlockPagerScroll,
+    videoAiItems,
+    videoFocusedView,
   ]);
 
   const renderPage = useCallback(({ item }: { item: DetailPage }) => {
@@ -1024,22 +1708,6 @@ export default function RecordDetailScreen() {
           <View style={styles.headerTitleWrap}>
               <Text style={styles.pageTitle}>检测详情</Text>
               <Text style={styles.pageTime}>{formatDateTime(submission?.created_at ?? job?.created_at)}</Text>
-              {showDeepReasoning ? (
-                <View style={styles.deepModeHeaderRow}>
-                  <View style={styles.deepModeHeaderPill}>
-                    <MaterialCommunityIcons name="graph-outline" size={13} color="#FFFFFF" />
-                    <Text style={styles.deepModeHeaderPillText}>KAG</Text>
-                  </View>
-                  <View style={styles.deepModeHeaderTag}>
-                    <Text style={styles.deepModeHeaderTagText}>深度推理</Text>
-                  </View>
-                  {deepStageLabel ? (
-                    <View style={styles.deepModeStagePill}>
-                      <Text style={styles.deepModeStagePillText}>{deepStageLabel}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
             </View>
           </View>
 
@@ -1160,6 +1828,39 @@ export default function RecordDetailScreen() {
           ) : null}
         </View>
       </Modal>
+
+      <Modal
+        visible={Boolean(videoImagePreview)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeVideoImagePreview}
+      >
+        <View style={styles.videoImageModalOverlay}>
+          <Pressable style={styles.videoImageModalBackdrop} onPress={closeVideoImagePreview} />
+          {videoImagePreview ? (
+            <View style={styles.videoImageModalCard}>
+              <View style={styles.videoImageModalHeader}>
+                <Text style={styles.videoImageModalTitle} numberOfLines={1}>
+                  {videoImagePreview.title}
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [styles.videoImageModalCloseButton, pressed && styles.buttonPressed]}
+                  onPress={closeVideoImagePreview}
+                >
+                  <MaterialCommunityIcons name="close" size={18} color="#EAF2FF" />
+                </Pressable>
+              </View>
+              <Image
+                source={{ uri: videoImagePreview.uri }}
+                style={styles.videoImageModalImage}
+                contentFit="contain"
+                transition={120}
+                cachePolicy="memory-disk"
+              />
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1213,56 +1914,6 @@ const styles = StyleSheet.create({
   headerTitleWrap: {
     flex: 1,
     gap: 6,
-  },
-  deepModeHeaderRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  deepModeHeaderPill: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    backgroundColor: "#2F70E6",
-  },
-  deepModeHeaderPillText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  deepModeHeaderTag: {
-    alignSelf: "flex-start",
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#EEF5FF",
-  },
-  deepModeHeaderTagText: {
-    color: "#2F70E6",
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
-  },
-  deepModeStagePill: {
-    alignSelf: "flex-start",
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#FFF1E8",
-  },
-  deepModeStagePillText: {
-    color: "#D96A4A",
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: "800",
-    fontFamily: fontFamily.body,
   },
   pageTitle: {
     color: palette.ink,
@@ -1685,6 +2336,37 @@ const styles = StyleSheet.create({
   audioVerifySection: {
     gap: 10,
   },
+  audioInsightSection: {
+    gap: 10,
+  },
+  audioInsightMetricRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  audioInsightActionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  audioInsightAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  audioInsightActionText: {
+    color: palette.accentStrong,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
   audioVerifyList: {
     gap: 10,
   },
@@ -1913,10 +2595,372 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: fontFamily.body,
   },
+  videoImageModalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 24,
+  },
+  videoImageModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(11, 18, 33, 0.75)",
+  },
+  videoImageModalCard: {
+    width: "100%",
+    maxWidth: 460,
+    maxHeight: "82%",
+    borderRadius: 20,
+    backgroundColor: "#0E172B",
+    borderWidth: 1,
+    borderColor: "rgba(234, 242, 255, 0.14)",
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  videoImageModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  videoImageModalTitle: {
+    flex: 1,
+    color: "#EAF2FF",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  videoImageModalCloseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(234, 242, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoImageModalImage: {
+    width: "100%",
+    flex: 1,
+    minHeight: 280,
+    borderRadius: radius.lg,
+    backgroundColor: "#111D34",
+  },
   buttonPressed: {
     transform: [{ scale: 0.98 }],
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+
+  videoAiBadgeWarn: {
+    backgroundColor: "#FFF4E8",
+  },
+  videoAiMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  videoAiHintText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoSummaryCard: {
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: "#DCE8FA",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+    ...panelShadow,
+  },
+  videoHeadlineRow: {
+    borderRadius: radius.lg,
+    backgroundColor: "#F6FAFF",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  videoHeadlineText: {
+    color: palette.accentStrong,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  videoMetricGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  videoSectionHint: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoKeyframeGrid: {
+    gap: 12,
+  },
+  videoKeyframeCard: {
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  videoKeyframeImage: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+    backgroundColor: palette.backgroundDeep,
+  },
+  videoKeyframeMeta: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  videoKeyframeTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  videoKeyframeInfo: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisSection: {
+    gap: 12,
+  },
+  videoSignalGrid: {
+    gap: 12,
+  },
+  videoBehaviorLegend: {
+    gap: 8,
+  },
+  videoBehaviorLegendText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  videoAnalysisHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  videoAnalysisTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisRankBadge: {
+    borderRadius: radius.pill,
+    backgroundColor: "#EEF5FF",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  videoAnalysisRankText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisImageRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  videoAnalysisImageCard: {
+    flex: 1,
+    gap: 8,
+  },
+  videoAnalysisImage: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: radius.lg,
+    backgroundColor: palette.backgroundDeep,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  videoAnalysisImageLabel: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    textAlign: "center",
+    fontFamily: fontFamily.body,
+  },
+  videoAnalysisSummary: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: fontFamily.body,
+  },
+  videoAiReasonText: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: fontFamily.body,
+  },
+  videoInsightBlock: {
+    borderRadius: radius.lg,
+    backgroundColor: "#F7FAFF",
+    borderWidth: 1,
+    borderColor: "#DCE8FA",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  videoInsightTitle: {
+    color: palette.accentStrong,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoInsightText: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: fontFamily.body,
+  },
+  videoFindingList: {
+    gap: 10,
+  },
+  videoFindingCard: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  videoFindingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  videoFindingTitle: {
+    flex: 1,
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoFindingText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoConfidenceBox: {
+    borderRadius: radius.lg,
+    backgroundColor: "#FFF8E8",
+    borderWidth: 1,
+    borderColor: "#F2DEAC",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  videoConfidenceTitle: {
+    color: "#9A6B1C",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoConfidenceText: {
+    color: palette.ink,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoLimitationsBlock: {
+    gap: 8,
+  },
+  videoLimitationsTitle: {
+    color: palette.ink,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoLimitDot: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.pill,
+    backgroundColor: "#D96A4A",
+    marginTop: 6,
+  },
+  videoLimitationsText: {
+    flex: 1,
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
+  },
+  videoEventList: {
+    gap: 10,
+  },
+  videoEventCard: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  videoEventHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  videoEventHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  videoEventTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  videoEventMeta: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
+  },
+  videoEventText: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fontFamily.body,
   },
 });

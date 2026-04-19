@@ -5,6 +5,8 @@ import type { DetectionMode } from "../types";
 export type DetectionFeatureKey =
   | "text"
   | "image"
+  | "video-ai"
+  | "video-physiology"
   | "ocr"
   | "official-document"
   | "pii"
@@ -40,6 +42,24 @@ const presets: Record<DetectionFeatureKey, DetectionFeaturePreset> = {
     tint: "#6C63FF",
     soft: "#F2EEFF",
     buttonLabel: "开始检测",
+  },
+  "video-ai": {
+    key: "video-ai",
+    mode: "visual",
+    title: "AI视频检测",
+    icon: "movie-open-play-outline",
+    tint: "#476CFF",
+    soft: "#EEF2FF",
+    buttonLabel: "开始检测",
+  },
+  "video-physiology": {
+    key: "video-physiology",
+    mode: "visual",
+    title: "人物生理特征判断",
+    icon: "account-heart-outline",
+    tint: "#E06E55",
+    soft: "#FFF0EA",
+    buttonLabel: "开始判断",
   },
   ocr: {
     key: "ocr",
@@ -89,11 +109,11 @@ const presets: Record<DetectionFeatureKey, DetectionFeaturePreset> = {
   audio: {
     key: "audio",
     mode: "audio",
-    title: "AI仿造音频鉴别",
+    title: "语音检测",
     icon: "waveform",
     tint: "#169C8C",
     soft: "#EAF9F6",
-    buttonLabel: "开始鉴别",
+    buttonLabel: "开始分析",
   },
 };
 

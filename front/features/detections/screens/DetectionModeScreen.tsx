@@ -3,11 +3,15 @@ import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import { VideoView, useVideoPlayer } from "expo-video";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -24,45 +28,22 @@ import { ApiError } from "@/shared/api";
 import { fontFamily, palette, radius } from "@/shared/theme";
 import { TaskPrimaryButton, TaskScreen } from "@/shared/ui/TaskScreen";
 
-import { consumeSelectedUploadedAudioDraft } from "../audio-selection-session";
+import {
+  consumeSelectedUploadedAudioDraft,
+  type SelectedUploadedAudio,
+} from "../audio-selection-session";
+import { clearAudioScamInsight, setAudioScamInsight } from "../audioScamInsightStore";
 import { buildDetectionSubmitFormData, detectionsApi } from "../api";
 import { resolveDetectionFeaturePreset } from "../config/presets";
-import type { AudioVerifyResponse, DetectionMode, PickedFile } from "../types";
+import type { DetectionMode, PickedFile } from "../types";
 
-type PreviewFile = PickedFile & { key: string };
+type PreviewFile = PickedFile & {
+  key: string;
+  thumbnailUri?: string | null;
+};
 
 function nextKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function formatPercent(value?: number | null) {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "--";
-  }
-  return `${Math.round(value * 100)}%`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForDetectionJob(token: string, jobId: string) {
-  let latest = await detectionsApi.getJob(token, jobId);
-  const startedAt = Date.now();
-
-  while (
-    (latest.status === "pending" || latest.status === "running")
-    && Date.now() - startedAt < 90_000
-  ) {
-    await sleep(1200);
-    latest = await detectionsApi.getJob(token, jobId);
-  }
-
-  if (latest.status === "failed") {
-    throw new ApiError(500, latest.error_message || "检测任务失败", null);
-  }
-
-  return latest;
 }
 
 function ActionChip({
@@ -120,9 +101,13 @@ function FileBadge({
 function PreviewGrid({
   files,
   onRemove,
+  emptyLabel,
+  emptyIcon,
 }: {
   files: PreviewFile[];
   onRemove: (key: string) => void;
+  emptyLabel: string;
+  emptyIcon: keyof typeof MaterialCommunityIcons.glyphMap;
 }) {
   const visibleFiles = files.slice(0, 4);
 
@@ -130,11 +115,11 @@ function PreviewGrid({
     return (
       <View style={styles.previewEmpty}>
         <MaterialCommunityIcons
-          name="image-outline"
+          name={emptyIcon}
           size={28}
           color={palette.inkSoft}
         />
-        <Text style={styles.previewEmptyText}>图片预览</Text>
+        <Text style={styles.previewEmptyText}>{emptyLabel}</Text>
       </View>
     );
   }
@@ -164,43 +149,175 @@ function PreviewGrid({
   );
 }
 
-function AudioResultBlock({ result }: { result: AudioVerifyResponse }) {
-  const isFake = String(result.label).toLowerCase() === "fake";
+function VideoPreviewGrid({
+  files,
+  onRemove,
+  onOpen,
+}: {
+  files: PreviewFile[];
+  onRemove: (key: string) => void;
+  onOpen: (file: PreviewFile) => void;
+}) {
+  const visibleFiles = files.slice(0, 4);
+
+  if (!visibleFiles.length) {
+    return (
+      <View style={styles.previewEmpty}>
+        <MaterialCommunityIcons
+          name="movie-open-play-outline"
+          size={30}
+          color={palette.inkSoft}
+        />
+        <Text style={styles.previewEmptyText}>视频预览</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.resultBlock}>
-      <View
-        style={[
-          styles.resultBadge,
-          { backgroundColor: isFake ? "#FFF0F0" : "#EDF8F1" },
-        ]}
-      >
-        <Text
-          style={[
-            styles.resultBadgeText,
-            { color: isFake ? "#D9485F" : "#1E8E5A" },
+    <View style={styles.previewGrid}>
+      {visibleFiles.map((file, index) => (
+        <Pressable
+          key={file.key}
+          style={({ pressed }) => [
+            styles.previewTile,
+            pressed && styles.chipPressed,
           ]}
+          onPress={() => onOpen(file)}
         >
-          {isFake ? "疑似AI音频" : "真人音频"}
-        </Text>
-      </View>
-
-      <View style={styles.resultMetrics}>
-        <View style={styles.resultMetric}>
-          <Text style={styles.resultMetricLabel}>伪造概率</Text>
-          <Text style={styles.resultMetricValue}>
-            {formatPercent(result.fake_prob)}
-          </Text>
-        </View>
-        <View style={styles.resultMetric}>
-          <Text style={styles.resultMetricLabel}>真实概率</Text>
-          <Text style={styles.resultMetricValue}>
-            {formatPercent(result.genuine_prob)}
-          </Text>
-        </View>
-      </View>
+          {file.thumbnailUri ? (
+            <Image
+              source={{ uri: file.thumbnailUri }}
+              style={styles.previewImage}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={styles.videoTileFallback}>
+              <MaterialCommunityIcons
+                name="movie-open-play-outline"
+                size={30}
+                color="#FFFFFF"
+              />
+            </View>
+          )}
+          <View style={styles.videoTileOverlay}>
+            <View style={styles.videoTilePlay}>
+              <MaterialCommunityIcons
+                name="play"
+                size={16}
+                color="#FFFFFF"
+              />
+            </View>
+          </View>
+          <View style={styles.videoNameBar}>
+            <Text style={styles.videoNameText} numberOfLines={1}>
+              {file.name}
+            </Text>
+          </View>
+          {index === 3 && files.length > 4 ? (
+            <View style={styles.previewMoreMask}>
+              <Text style={styles.previewMoreText}>+{files.length - 4}</Text>
+            </View>
+          ) : null}
+          <Pressable
+            style={({ pressed }) => [
+              styles.previewRemove,
+              pressed && styles.chipPressed,
+            ]}
+            onPress={() => onRemove(file.key)}
+          >
+            <MaterialCommunityIcons name="close" size={13} color={palette.ink} />
+          </Pressable>
+        </Pressable>
+      ))}
     </View>
   );
+}
+
+function VideoPreviewModal({
+  visible,
+  file,
+  onClose,
+}: {
+  visible: boolean;
+  file: PreviewFile | null;
+  onClose: () => void;
+}) {
+  const player = useVideoPlayer(
+    file ? { uri: file.uri } : null,
+    (videoPlayer) => {
+      videoPlayer.loop = true;
+    },
+  );
+
+  useEffect(() => {
+    if (visible && file) {
+      player.currentTime = 0;
+      player.play();
+      return;
+    }
+    player.pause();
+  }, [file, player, visible]);
+
+  return (
+    <Modal
+      transparent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.videoModalBackdrop}>
+        <View style={styles.videoModalCard}>
+          <View style={styles.videoModalHeader}>
+            <Text style={styles.videoModalTitle} numberOfLines={1}>
+              {file?.name ?? "视频预览"}
+            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.videoModalClose,
+                pressed && styles.chipPressed,
+              ]}
+              onPress={onClose}
+            >
+              <MaterialCommunityIcons
+                name="close"
+                size={18}
+                color={palette.ink}
+              />
+            </Pressable>
+          </View>
+          <View style={styles.videoModalPlayerWrap}>
+            {file ? (
+              <VideoView
+                player={player}
+                nativeControls
+                contentFit="contain"
+                style={styles.videoModalPlayer}
+              />
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+async function buildVideoPreviewFile(file: PickedFile): Promise<PreviewFile> {
+  let thumbnailUri: string | null = null;
+  try {
+    const thumbnail = await VideoThumbnails.getThumbnailAsync(file.uri, {
+      time: 1000,
+      quality: 0.7,
+    });
+    thumbnailUri = thumbnail.uri;
+  } catch {
+    thumbnailUri = null;
+  }
+
+  return {
+    ...file,
+    key: nextKey(),
+    thumbnailUri,
+  };
 }
 
 function ReasoningModeSwitch({
@@ -288,118 +405,41 @@ function MetaChip({
   );
 }
 
-function TextModeHero({
-  deepReasoning,
-  textFileCount,
-  hasTextContent,
-}: {
-  deepReasoning: boolean;
-  textFileCount: number;
-  hasTextContent: boolean;
-}) {
+function TextModeFlowStrip({ deepReasoning }: { deepReasoning: boolean }) {
   const flow = deepReasoning
-    ? ["原文", "关系", "证据", "判定"]
+    ? ["原文", "阶段", "反证", "判定"]
     : ["原文", "规则", "检索", "结果"];
-  const tags = deepReasoning
-    ? ["KAG", "风险链", "反证", "图谱"]
-    : ["FAST", "规则", "相似", "结果"];
-  const title = deepReasoning ? "关系图谱" : "规则检索";
-  const countLabel = `${textFileCount}${hasTextContent ? "+1" : ""}`;
-
-  if (deepReasoning) {
-    return (
-      <LinearGradient
-        colors={["#163A70", "#2859A8", "#6B98F7"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.modeHeroDeep}
-      >
-        <View style={styles.modeHeroTop}>
-          <View style={styles.modeHeroBadge}>
-            <Text style={styles.modeHeroBadgeText}>KAG</Text>
-          </View>
-          <View style={styles.modeHeroCount}>
-            <MaterialCommunityIcons name="file-document-multiple-outline" size={14} color="#F3F7FF" />
-            <Text style={styles.modeHeroCountText}>{countLabel}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.modeHeroTitle}>{title}</Text>
-
-        <View style={styles.modeHeroFlowRow}>
-          {flow.map((item, index) => (
-            <View key={item} style={styles.modeHeroFlowItem}>
-              <View
-                style={[
-                  styles.modeHeroFlowChip,
-                  index === flow.length - 1 && styles.modeHeroFlowChipActive,
-                ]}
-              >
-                <Text style={styles.modeHeroFlowText}>{item}</Text>
-              </View>
-              {index < flow.length - 1 ? (
-                <MaterialCommunityIcons name="arrow-right" size={14} color="rgba(243,247,255,0.76)" />
-              ) : null}
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.modeHeroTagRow}>
-          {tags.map((item) => (
-            <View key={item} style={styles.modeHeroTag}>
-              <Text style={styles.modeHeroTagText}>{item}</Text>
-            </View>
-          ))}
-        </View>
-      </LinearGradient>
-    );
-  }
+  const tone = deepReasoning
+    ? { soft: "#FFF7EF", edge: "#F2D9C2", ink: "#D47C3A" }
+    : { soft: "#F7FBFF", edge: "#D7E6FC", ink: "#2F70E6" };
 
   return (
-    <View style={styles.modeHeroStandard}>
-      <View style={styles.modeHeroTop}>
-        <View style={styles.modeHeroBadgeStandard}>
-          <Text style={styles.modeHeroBadgeStandardText}>FAST</Text>
-        </View>
-        <View style={styles.modeHeroCountStandard}>
-          <MaterialCommunityIcons name="file-document-multiple-outline" size={14} color="#2F70E6" />
-          <Text style={styles.modeHeroCountStandardText}>{countLabel}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.modeHeroTitleStandard}>{title}</Text>
-
-      <View style={styles.modeHeroFlowRowStandard}>
-        {flow.map((item, index) => (
-          <View key={item} style={styles.modeHeroFlowItem}>
-            <View
-              style={[
-                styles.modeHeroFlowChipStandard,
-                index === flow.length - 1 && styles.modeHeroFlowChipStandardActive,
-              ]}
-            >
-              <Text
+    <View style={[styles.modeFlowStrip, { backgroundColor: tone.soft, borderColor: tone.edge }]}>
+      <View style={styles.modeFlowRail} />
+      <View style={styles.modeFlowRow}>
+        {flow.map((item, index) => {
+          const active = index === flow.length - 1;
+          return (
+            <View key={item} style={styles.modeFlowSlot}>
+              <View
                 style={[
-                  styles.modeHeroFlowTextStandard,
-                  index === flow.length - 1 && styles.modeHeroFlowTextStandardActive,
+                  styles.modeFlowNode,
+                  {
+                    borderColor: tone.edge,
+                    backgroundColor: active ? tone.ink : "#FFFFFF",
+                  },
                 ]}
               >
-                {item}
-              </Text>
+                {active ? (
+                  <MaterialCommunityIcons name="check" size={13} color="#FFFFFF" />
+                ) : (
+                  <View style={[styles.modeFlowCore, { backgroundColor: tone.ink }]} />
+                )}
+              </View>
+              <Text style={[styles.modeFlowLabel, active && { color: tone.ink }]}>{item}</Text>
             </View>
-            {index < flow.length - 1 ? (
-              <MaterialCommunityIcons name="arrow-right" size={14} color="#8DA7D3" />
-            ) : null}
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.modeHeroTagRowStandard}>
-        {tags.map((item) => (
-          <View key={item} style={styles.modeHeroTagStandard}>
-            <Text style={styles.modeHeroTagStandardText}>{item}</Text>
-          </View>
-        ))}
+          );
+        })}
       </View>
     </View>
   );
@@ -410,25 +450,37 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
   const { feature } = useLocalSearchParams<{ feature?: string }>();
   const { token } = useAuth();
   const preset = resolveDetectionFeaturePreset(mode, feature);
+  const videoAnalysisTarget =
+    preset.key === "video-ai"
+      ? "ai"
+      : preset.key === "video-physiology"
+      ? "physiology"
+      : undefined;
+  const isImageFeature = preset.key === "image";
+  const isVideoFeature = Boolean(videoAnalysisTarget);
 
   const [textContent, setTextContent] = useState("");
   const [textFiles, setTextFiles] = useState<PreviewFile[]>([]);
   const [imageFiles, setImageFiles] = useState<PreviewFile[]>([]);
+  const [videoFiles, setVideoFiles] = useState<PreviewFile[]>([]);
+  const [previewingVideo, setPreviewingVideo] = useState<PreviewFile | null>(null);
   const [audioFile, setAudioFile] = useState<PreviewFile | null>(null);
-  const [audioResult, setAudioResult] = useState<AudioVerifyResponse | null>(null);
+  const [uploadedAudio, setUploadedAudio] = useState<SelectedUploadedAudio | null>(null);
   const [deepReasoning, setDeepReasoning] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [analyzingInsight, setAnalyzingInsight] = useState(false);
 
   const isTextMode = mode === "text";
   const isVisualMode = mode === "visual";
   const isAudioMode = mode === "audio";
 
   const hasTextPayload = Boolean(textContent.trim()) || textFiles.length > 0;
-  const hasVisualPayload = imageFiles.length > 0;
+  const hasVisualPayload = isVideoFeature ? videoFiles.length > 0 : imageFiles.length > 0;
+  const hasAudioSource = Boolean(audioFile || uploadedAudio);
   const canSubmit =
     (isTextMode && hasTextPayload) ||
     (isVisualMode && hasVisualPayload) ||
-    (isAudioMode && Boolean(audioFile));
+    (isAudioMode && hasAudioSource);
 
   const mergeVisualFile = useCallback((file: PickedFile) => {
     setImageFiles((prev) => {
@@ -439,9 +491,31 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     });
   }, []);
 
+  const mergeVideoFile = useCallback((file: PreviewFile) => {
+    setVideoFiles((prev) => {
+      if (prev.some((item) => item.uri === file.uri)) {
+        return prev;
+      }
+      return [...prev, file];
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isImageFeature) {
+      setVideoFiles([]);
+      setPreviewingVideo(null);
+      return;
+    }
+    if (isVideoFeature) {
+      setImageFiles([]);
+      return;
+    }
+    setPreviewingVideo(null);
+  }, [isImageFeature, isVideoFeature]);
+
   useFocusEffect(
     useCallback(() => {
-      if (!isVisualMode) {
+      if (!isVisualMode || !isImageFeature) {
         return;
       }
 
@@ -457,7 +531,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         }
         mergeVisualFile(captured);
       });
-    }, [isVisualMode, mergeVisualFile]),
+    }, [isImageFeature, isVisualMode, mergeVisualFile]),
   );
 
   useFocusEffect(
@@ -476,27 +550,33 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         return;
       }
 
-      setSubmitting(true);
+      const target = draft.items[0];
+      setUploadedAudio(target);
+      setAudioFile(null);
+      clearAudioScamInsight();
+
+      setAnalyzingInsight(true);
       void detectionsApi
-        .submitAudioVerifyRecordFromUploads(token, {
-          audio_paths: draft.items.map((item) => item.file_path),
+        .analyzeAudioScamInsightFromUploads(token, {
+          audio_path: target.file_path,
+          filename: target.file_name,
         })
-        .then(async (response) => {
-          await waitForDetectionJob(token, response.job.id);
-          setAudioFile(null);
-          setAudioResult(null);
-          router.replace({
-            pathname: "/records/[id]",
-            params: { id: response.submission.id },
+        .then((insight) => {
+          setAudioScamInsight(insight, {
+            sourceFilename: target.file_name,
+            sourceAudioUri: target.file_url,
+            sourceAudioMimeType: "audio/mpeg",
+            returnHref: "/detect-audio",
           });
+          router.push("/audio-deep-analysis" as never);
         })
         .catch((error) => {
           const message =
-            error instanceof ApiError ? error.message : "音频记录提交失败";
-          Alert.alert("提交失败", message);
+            error instanceof ApiError ? error.message : "语音深度分析失败";
+          Alert.alert("分析失败", message);
         })
         .finally(() => {
-          setSubmitting(false);
+          setAnalyzingInsight(false);
         });
     }, [isAudioMode, router, token]),
   );
@@ -520,6 +600,37 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       })),
     ]);
   }, []);
+
+  const pickVideos = useCallback(async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("需要相册权限", "请先允许访问相册");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["videos"],
+      allowsMultipleSelection: true,
+      selectionLimit: 9,
+    });
+
+    if (result.canceled) {
+      return;
+    }
+
+    const previewFiles = await Promise.all(
+      result.assets.map((asset) =>
+        buildVideoPreviewFile({
+          uri: asset.uri,
+          name: asset.fileName ?? `video-${Date.now()}.mp4`,
+          type: asset.mimeType ?? "video/mp4",
+        }),
+      ),
+    );
+    previewFiles.forEach((file) => {
+      mergeVideoFile(file);
+    });
+  }, [mergeVideoFile]);
 
   const pickImages = useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -586,7 +697,8 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     }
 
     const asset = result.assets[0];
-    setAudioResult(null);
+    setUploadedAudio(null);
+    clearAudioScamInsight();
     setAudioFile({
       uri: asset.uri,
       name: asset.name,
@@ -603,6 +715,45 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     setImageFiles((prev) => prev.filter((item) => item.key !== key));
   }, []);
 
+  const removeVideoFile = useCallback((key: string) => {
+    setVideoFiles((prev) => prev.filter((item) => item.key !== key));
+    setPreviewingVideo((prev) => (prev?.key === key ? null : prev));
+  }, []);
+
+  const handleOpenInsight = useCallback(async () => {
+    if (!token) {
+      Alert.alert("未登录", "请先登录");
+      return;
+    }
+    if (!audioFile && !uploadedAudio) {
+      void pickAudio();
+      return;
+    }
+
+    setAnalyzingInsight(true);
+    try {
+      const insight = audioFile
+        ? await detectionsApi.analyzeAudioScamInsight(token, audioFile)
+        : await detectionsApi.analyzeAudioScamInsightFromUploads(token, {
+          audio_path: uploadedAudio!.file_path,
+          filename: uploadedAudio!.file_name,
+        });
+      setAudioScamInsight(insight, {
+        sourceFilename: audioFile?.name ?? uploadedAudio?.file_name,
+        sourceAudioUri: audioFile?.uri ?? uploadedAudio?.file_url,
+        sourceAudioMimeType: audioFile?.type ?? "audio/mpeg",
+        returnHref: "/detect-audio",
+      });
+      router.push("/audio-deep-analysis" as never);
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : "语音深度分析失败";
+      Alert.alert("分析失败", message);
+    } finally {
+      setAnalyzingInsight(false);
+    }
+  }, [audioFile, pickAudio, router, token, uploadedAudio]);
+
   const handleSubmit = useCallback(async () => {
     if (!token) {
       Alert.alert("未登录", "请先登录");
@@ -610,30 +761,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     }
 
     if (isAudioMode) {
-      if (!audioFile) {
-        void pickAudio();
-        return;
-      }
-      setSubmitting(true);
-      try {
-        const formData = buildDetectionSubmitFormData({
-          audio_files: [audioFile],
-        });
-        const response = await detectionsApi.submit(token, formData);
-        await waitForDetectionJob(token, response.job.id);
-        setAudioFile(null);
-        setAudioResult(null);
-        router.replace({
-          pathname: "/records/[id]",
-          params: { id: response.submission.id },
-        });
-      } catch (error) {
-        const message =
-          error instanceof ApiError ? error.message : "音频鉴别失败";
-        Alert.alert("识别失败", message);
-      } finally {
-        setSubmitting(false);
-      }
+      await handleOpenInsight();
       return;
     }
 
@@ -645,8 +773,10 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     const formData = buildDetectionSubmitFormData({
       text_content: textContent,
       deep_reasoning: deepReasoning,
+      video_analysis_target: videoAnalysisTarget,
       text_files: textFiles,
       image_files: imageFiles,
+      video_files: videoFiles,
     });
 
     setSubmitting(true);
@@ -655,6 +785,8 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       setTextContent("");
       setTextFiles([]);
       setImageFiles([]);
+      setVideoFiles([]);
+      setPreviewingVideo(null);
       router.replace({
         pathname: "/records/[id]",
         params: { id: response.submission.id },
@@ -665,31 +797,31 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
     } finally {
       setSubmitting(false);
     }
-  }, [audioFile, canSubmit, deepReasoning, imageFiles, isAudioMode, pickAudio, router, textContent, textFiles, token]);
+  }, [canSubmit, deepReasoning, handleOpenInsight, imageFiles, isAudioMode, router, textContent, textFiles, token, videoAnalysisTarget, videoFiles]);
 
   const primaryLabel = useMemo(() => {
     if (isAudioMode) {
-      if (!audioFile) {
+      if (!hasAudioSource) {
         return "上传音频";
       }
-      return audioResult ? "重新上传" : preset.buttonLabel;
+      return preset.buttonLabel;
     }
     if (isTextMode && deepReasoning) {
-      return "开始KAG";
+      return "开始检测";
     }
     if (isTextMode) {
       return "开始检测";
     }
     return preset.buttonLabel;
-  }, [audioFile, audioResult, deepReasoning, isAudioMode, isTextMode, preset.buttonLabel]);
+  }, [deepReasoning, hasAudioSource, isAudioMode, isTextMode, preset.buttonLabel]);
 
   const handlePrimaryPress = useCallback(() => {
-    if (isAudioMode && (!audioFile || audioResult)) {
+    if (isAudioMode && !hasAudioSource) {
       void pickAudio();
       return;
     }
     void handleSubmit();
-  }, [audioFile, audioResult, handleSubmit, isAudioMode, pickAudio]);
+  }, [handleSubmit, hasAudioSource, isAudioMode, pickAudio]);
 
   return (
     <TaskScreen
@@ -699,8 +831,8 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
         <TaskPrimaryButton
           label={primaryLabel}
           onPress={handlePrimaryPress}
-          disabled={!isAudioMode && !canSubmit}
-          loading={submitting}
+          disabled={(!isAudioMode && !canSubmit) || analyzingInsight}
+          loading={submitting || analyzingInsight}
         />
       }
     >
@@ -720,7 +852,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 <>
                   <MetaChip
                     icon={deepReasoning ? "graph-outline" : "radar"}
-                    label={deepReasoning ? "KAG" : "普通"}
+                    label={deepReasoning ? "深度" : "普通"}
                     tone={deepReasoning ? "orange" : "blue"}
                   />
                   <MetaChip icon="file-document-outline" label={`${textFiles.length} 附件`} tone="slate" />
@@ -732,10 +864,21 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 </>
               ) : isVisualMode ? (
                 <>
-                  <MetaChip icon="image-multiple-outline" label={`${imageFiles.length} 图片`} tone="blue" />
+                  {isVideoFeature ? (
+                    <>
+                      <MetaChip icon="filmstrip-box-multiple" label={`${videoFiles.length} 视频`} tone="blue" />
+                      <MetaChip
+                        icon={videoAnalysisTarget === "ai" ? "movie-open-play-outline" : "account-heart-outline"}
+                        label={videoAnalysisTarget === "ai" ? "AI视频" : "生理特征"}
+                        tone="orange"
+                      />
+                    </>
+                  ) : (
+                    <MetaChip icon="image-multiple-outline" label={`${imageFiles.length} 图片`} tone="blue" />
+                  )}
                   <MetaChip
-                    icon={imageFiles.length ? "check-circle-outline" : "image-off-outline"}
-                    label={imageFiles.length ? "已选择" : "未选择"}
+                    icon={hasVisualPayload ? "check-circle-outline" : isVideoFeature ? "video-off-outline" : "image-off-outline"}
+                    label={hasVisualPayload ? "已选择" : "未选择"}
                     tone="slate"
                   />
                 </>
@@ -753,11 +896,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
           <>
             <ReasoningModeSwitch value={deepReasoning} onChange={setDeepReasoning} />
 
-            <TextModeHero
-              deepReasoning={deepReasoning}
-              textFileCount={textFiles.length}
-              hasTextContent={Boolean(textContent.trim())}
-            />
+            <TextModeFlowStrip deepReasoning={deepReasoning} />
 
             <View style={[styles.inputWrap, deepReasoning && styles.inputWrapDeep]}>
               <TextInput
@@ -797,25 +936,50 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
 
         {isVisualMode ? (
           <>
-            <PreviewGrid files={imageFiles} onRemove={removeImageFile} />
+            {isVideoFeature ? (
+              <>
+                <VideoPreviewGrid
+                  files={videoFiles}
+                  onRemove={removeVideoFile}
+                  onOpen={setPreviewingVideo}
+                />
 
-            <View style={styles.actionRow}>
-              <ActionChip
-                icon="image-outline"
-                label="相册"
-                onPress={() => void pickImages()}
-              />
-              <ActionChip
-                icon="camera-outline"
-                label="拍照"
-                onPress={() => void takePhoto()}
-              />
-              <ActionChip
-                icon="gesture-tap-button"
-                label="悬浮截图"
-                onPress={openFloatingCapture}
-              />
-            </View>
+                <View style={styles.actionRow}>
+                  <ActionChip
+                    icon="video-outline"
+                    label="相册"
+                    onPress={() => void pickVideos()}
+                  />
+                </View>
+              </>
+            ) : (
+              <>
+                <PreviewGrid
+                  files={imageFiles}
+                  onRemove={removeImageFile}
+                  emptyLabel="图片预览"
+                  emptyIcon="image-outline"
+                />
+
+                <View style={styles.actionRow}>
+                  <ActionChip
+                    icon="image-outline"
+                    label="相册"
+                    onPress={() => void pickImages()}
+                  />
+                  <ActionChip
+                    icon="camera-outline"
+                    label="拍照"
+                    onPress={() => void takePhoto()}
+                  />
+                  <ActionChip
+                    icon="gesture-tap-button"
+                    label="悬浮截图"
+                    onPress={openFloatingCapture}
+                  />
+                </View>
+              </>
+            )}
           </>
         ) : null}
 
@@ -828,7 +992,7 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
                 color={preset.tint}
               />
               <Text style={styles.audioFileName} numberOfLines={2}>
-                {audioFile?.name ?? "未上传音频"}
+                {audioFile?.name ?? uploadedAudio?.file_name ?? "未上传音频"}
               </Text>
             </View>
 
@@ -845,13 +1009,53 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
               />
             </View>
 
-            {audioResult ? <AudioResultBlock result={audioResult} /> : null}
+            <Pressable
+              style={({ pressed }) => [
+                styles.audioInsightButton,
+                pressed && styles.chipPressed,
+                (!hasAudioSource || analyzingInsight) && styles.audioInsightButtonDisabled,
+              ]}
+              disabled={!hasAudioSource || analyzingInsight}
+              onPress={() => void handleOpenInsight()}
+            >
+              <View style={styles.audioInsightCopy}>
+                <Text style={styles.audioInsightTitle}>语音深度分析</Text>
+                <Text style={styles.audioInsightMeta}>雷达画像 · 过程演化 · 证据分段</Text>
+              </View>
+              {analyzingInsight ? (
+                <ActivityIndicator size="small" color={palette.accentStrong} />
+              ) : (
+                <MaterialCommunityIcons
+                  name="chevron-right"
+                  size={18}
+                  color={palette.accentStrong}
+                />
+              )}
+            </Pressable>
 
-            {!audioResult ? (
-              <Text style={styles.placeholderLine}>本地鉴别</Text>
-            ) : null}
+            <View style={styles.audioInsightPreview}>
+              <View style={styles.audioInsightPreviewBadge}>
+                <Text style={styles.audioInsightPreviewBadgeText}>分析输出</Text>
+              </View>
+              <View style={styles.audioInsightPreviewRow}>
+                <Text style={styles.audioInsightPreviewItem}>行为画像</Text>
+                <Text style={styles.audioInsightPreviewDivider}>·</Text>
+                <Text style={styles.audioInsightPreviewItem}>阶段轨迹</Text>
+                <Text style={styles.audioInsightPreviewDivider}>·</Text>
+                <Text style={styles.audioInsightPreviewItem}>关键证据</Text>
+              </View>
+              <Text style={styles.placeholderLine}>
+                上传后直接进入语音诈骗深度分析，不再展示 AI 合成音频鉴别页。
+              </Text>
+            </View>
           </>
         ) : null}
+
+        <VideoPreviewModal
+          visible={Boolean(previewingVideo)}
+          file={previewingVideo}
+          onClose={() => setPreviewingVideo(null)}
+        />
       </View>
     </TaskScreen>
   );
@@ -907,6 +1111,55 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: "800",
     fontFamily: fontFamily.body,
+  },
+  modeFlowStrip: {
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    overflow: "hidden",
+  },
+  modeFlowRail: {
+    position: "absolute",
+    left: 34,
+    right: 34,
+    top: 30,
+    height: 3,
+    borderRadius: radius.pill,
+    backgroundColor: "#DDE7F7",
+  },
+  modeFlowRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  modeFlowSlot: {
+    flex: 1,
+    alignItems: "center",
+    gap: 8,
+  },
+  modeFlowNode: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  modeFlowCore: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  modeFlowLabel: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+    textAlign: "center",
   },
   modeHeroDeep: {
     borderRadius: radius.xl,
@@ -1265,6 +1518,41 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
+  videoTileFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#6B78A8",
+  },
+  videoTileOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoTilePlay: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(22, 34, 58, 0.48)",
+  },
+  videoNameBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "rgba(18, 24, 38, 0.56)",
+  },
+  videoNameText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
   previewRemove: {
     position: "absolute",
     top: 8,
@@ -1289,6 +1577,56 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
+  videoModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(8, 12, 20, 0.62)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  videoModalCard: {
+    width: "100%",
+    maxWidth: 460,
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    backgroundColor: "#0F1728",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  videoModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  videoModalTitle: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  videoModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  videoModalPlayerWrap: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+    backgroundColor: "#000000",
+  },
+  videoModalPlayer: {
+    width: "100%",
+    height: "100%",
+  },
   audioPanel: {
     flex: 1,
     minHeight: 180,
@@ -1307,6 +1645,81 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: "center",
     fontWeight: "700",
+    fontFamily: fontFamily.body,
+  },
+  audioInsightButton: {
+    minHeight: 54,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  audioInsightButtonDisabled: {
+    opacity: 0.5,
+  },
+  audioInsightCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  audioInsightTitle: {
+    color: palette.ink,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+    fontFamily: fontFamily.display,
+  },
+  audioInsightMeta: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
+  },
+  audioInsightPreview: {
+    gap: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.surfaceSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  audioInsightPreviewBadge: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  audioInsightPreviewBadgeText: {
+    color: palette.accentStrong,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  audioInsightPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  audioInsightPreviewItem: {
+    color: palette.ink,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    fontFamily: fontFamily.body,
+  },
+  audioInsightPreviewDivider: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
     fontFamily: fontFamily.body,
   },
   resultBlock: {

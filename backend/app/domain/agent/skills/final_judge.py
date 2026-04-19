@@ -31,6 +31,27 @@ def _level_rank(level: str | None) -> int:
     return {"info": 0, "low": 1, "medium": 2, "high": 3}.get(str(level or "").lower(), 0)
 
 
+def _video_risk_rank(level: str | None) -> int:
+    return {"low": 1, "medium": 2, "high": 3}.get(str(level or "").strip().lower(), 0)
+
+
+def _soft_video_behavior_risk(level: str | None) -> str:
+    normalized = str(level or "").strip().lower()
+    if normalized == "high":
+        return "medium"
+    if normalized == "medium":
+        return "medium"
+    return "low"
+
+
+def _video_behavior_rule_name(level: str | None) -> str:
+    return {
+        "high": "人物行为 / 生理异常明显",
+        "medium": "人物行为 / 生理波动偏高",
+        "low": "人物行为 / 生理波动平稳",
+    }.get(str(level or "").strip().lower(), "人物行为分析")
+
+
 def _pick_image_fraud_type(labels: list[str]) -> str | None:
     if any(label.startswith("impersonation_") or label.startswith("image_similarity_") for label in labels):
         return FRAUD_TYPE_IMPERSONATION
@@ -58,7 +79,9 @@ def _merge_unique_strings(*groups: list[str]) -> list[str]:
     return merged
 
 
-def _collect_skill_payloads(state: AgentState) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+def _collect_skill_payloads(
+    state: AgentState,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, list[dict[str, Any]]]:
     image_keys = (
         "qr_result",
         "ocr_result",
@@ -78,6 +101,12 @@ def _collect_skill_payloads(state: AgentState) -> tuple[list[dict[str, Any]], li
     if not isinstance(text_skill, dict) or text_skill.get("status") == "skipped":
         text_skill = None
 
+    video_skills: list[dict[str, Any]] = []
+    for key in ("video_ai_result", "video_deception_result"):
+        payload = state.get(key)
+        if isinstance(payload, dict) and payload and payload.get("status") != "skipped":
+            video_skills.append(payload)
+
     other_skills: list[dict[str, Any]] = []
     for key in ("conflict_resolution_result",):
         payload = state.get(key)
@@ -87,8 +116,9 @@ def _collect_skill_payloads(state: AgentState) -> tuple[list[dict[str, Any]], li
     all_skills = list(image_skills)
     if text_skill:
         all_skills.append(text_skill)
+    all_skills.extend(video_skills)
     all_skills.extend(other_skills)
-    return all_skills, image_skills, text_skill
+    return all_skills, image_skills, text_skill, video_skills
 
 
 def _collect_labels(skills: list[dict[str, Any]]) -> list[str]:
@@ -207,7 +237,12 @@ def _build_module_trace(execution_trace: list[dict[str, Any]]) -> list[dict[str,
     return normalized
 
 
-def _build_reasoning_graph(execution_trace: list[dict[str, Any]], risk_level: str, final_score: float, evidence_count: int) -> dict[str, Any]:
+def _build_reasoning_graph(
+    execution_trace: list[dict[str, Any]],
+    risk_level: str,
+    final_score: float,
+    evidence_count: int,
+) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = [
         {
             "id": "submission",
@@ -273,6 +308,7 @@ def _build_reasoning_graph(execution_trace: list[dict[str, Any]], risk_level: st
             "step_count": len(execution_trace),
             "evidence_count": evidence_count,
             "final_score": round(final_score * 100),
+            "risk_level": risk_level,
         },
     }
 
@@ -280,9 +316,9 @@ def _build_reasoning_graph(execution_trace: list[dict[str, Any]], risk_level: st
 def _build_image_only_final_reason(evidence: list[dict[str, Any]], unsupported: list[str]) -> str:
     if evidence:
         titles = _merge_unique_strings([str(item.get("title") or "").strip() for item in evidence[:3]])
-        base = f"图像分支命中了 {len(evidence)} 条证据。"
+        base = f"图像分支命中 {len(evidence)} 条证据。"
         if titles:
-            base += f" 关键线索包括：{'、'.join(titles)}。"
+            base += f" 关键线索包括：{'；'.join(titles)}。"
     else:
         base = "当前没有命中高置信度图像风险证据。"
     if unsupported:
@@ -338,7 +374,7 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
     if host:
         destination_text = f"{destination_text}（{host}）"
 
-    summary = f"已识别二维码，指向{destination_text}。"
+    summary = f"已识别二维码，指向 {destination_text}。"
     reason_parts: list[str] = []
     if payload:
         reason_parts.append(f"二维码内容：{payload}")
@@ -346,20 +382,20 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
         reason_parts.append(f"规范化链接：{normalized_url}")
 
     if local_risk_level == "high":
-        summary = f"已识别二维码，指向{destination_text}，本地网址模型判定为高风险。"
+        summary = f"已识别二维码，指向 {destination_text}，本地网址模型判定为高风险。"
     elif local_risk_level == "medium":
-        summary = f"已识别二维码，指向{destination_text}，本地网址模型判定为中风险，建议不要直接打开。"
+        summary = f"已识别二维码，指向 {destination_text}，本地网址模型判定为中风险，建议不要直接打开。"
     elif local_risk_level == "suspicious":
-        summary = f"已识别二维码，指向{destination_text}，本地网址模型提示可疑，需要进一步核验。"
+        summary = f"已识别二维码，指向 {destination_text}，本地网址模型提示可疑，需进一步核验。"
     elif qr_score >= 0.5:
-        summary = f"已识别二维码，指向{destination_text}，包含较强风险线索，建议先核验再操作。"
+        summary = f"已识别二维码，指向 {destination_text}，包含较强风险线索，建议先核验再操作。"
     elif qr_score >= 0.3:
-        summary = f"已识别二维码，指向{destination_text}，当前存在一定诱导或跳转风险，需要核验。"
+        summary = f"已识别二维码，指向 {destination_text}，当前存在一定诱导或跳转风险，需要核验。"
 
     if phish_prob is not None:
         reason_parts.append(f"本地模型钓鱼概率：{round(phish_prob * 100)}%")
     if local_clues:
-        reason_parts.append(f"命中线索：{'、'.join(local_clues[:4])}")
+        reason_parts.append(f"命中线索：{'；'.join(local_clues[:4])}")
     if local_model_name:
         reason_parts.append("检测模型：本地网址模型")
 
@@ -380,6 +416,91 @@ def _build_qr_analysis(state: AgentState) -> dict[str, Any] | None:
     }
 
 
+def _build_video_analysis_modules(
+    *,
+    video_ai_summary: dict[str, Any],
+    video_deception_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    behavior_analyzed_count = int(video_deception_summary.get("analyzed_count") or 0)
+    return [
+        {
+            "key": "d3_temporal",
+            "label": "D3 Temporal",
+            "status": "completed",
+            "metrics": {
+                "analyzed_count": int(video_ai_summary.get("analyzed_count") or 0),
+                "suspicious_count": int(video_ai_summary.get("suspicious_count") or 0),
+                "overall_risk_level": str(video_ai_summary.get("overall_risk_level") or "low"),
+            },
+        },
+        {
+            "key": "behavior_rppg",
+            "label": "BehaviorRPPG",
+            "status": "completed" if behavior_analyzed_count > 0 else "skipped",
+            "metrics": {
+                "analyzed_count": behavior_analyzed_count,
+                "person_detected_count": int(video_deception_summary.get("person_detected_count") or 0),
+                "skipped_no_face_count": int(video_deception_summary.get("skipped_no_face_count") or 0),
+                "overall_risk_level": str(video_deception_summary.get("overall_risk_level") or "low"),
+            },
+        },
+    ]
+
+
+def _extract_video_branch(state: AgentState) -> dict[str, Any]:
+    video_ai_payload = state.get("video_ai_result") or {}
+    video_deception_payload = state.get("video_deception_result") or {}
+
+    video_ai_raw = (
+        video_ai_payload.get("raw")
+        if isinstance(video_ai_payload, dict) and isinstance(video_ai_payload.get("raw"), dict)
+        else {}
+    )
+    video_ai_batch = dict(video_ai_raw.get("batch_result") or {}) if isinstance(video_ai_raw, dict) else {}
+    video_ai_summary = dict(video_ai_batch.get("summary") or (video_ai_raw.get("summary") or {}))
+    video_ai_items = list(video_ai_batch.get("items") or (video_ai_raw.get("items") or []))
+    video_ai_failed_items = list(video_ai_batch.get("failed_items") or (video_ai_raw.get("failed_items") or []))
+    video_ai_lead = (
+        video_ai_summary.get("lead_item")
+        if isinstance(video_ai_summary.get("lead_item"), dict)
+        else (video_ai_items[0] if video_ai_items else None)
+    )
+
+    video_deception_raw = (
+        video_deception_payload.get("raw")
+        if isinstance(video_deception_payload, dict) and isinstance(video_deception_payload.get("raw"), dict)
+        else {}
+    )
+    video_deception_batch = (
+        dict(video_deception_raw.get("behavior_result") or {})
+        if isinstance(video_deception_raw, dict)
+        else {}
+    )
+    video_deception_summary = dict(
+        video_deception_batch.get("summary") or (video_deception_raw.get("summary") or {})
+    )
+    video_deception_items = list(video_deception_batch.get("items") or (video_deception_raw.get("items") or []))
+    video_deception_failed_items = list(
+        video_deception_batch.get("failed_items") or (video_deception_raw.get("failed_items") or [])
+    )
+    video_deception_lead = (
+        video_deception_summary.get("lead_item")
+        if isinstance(video_deception_summary.get("lead_item"), dict)
+        else (video_deception_items[0] if video_deception_items else None)
+    )
+
+    return {
+        "video_ai_summary": video_ai_summary,
+        "video_ai_items": video_ai_items,
+        "video_ai_failed_items": video_ai_failed_items,
+        "video_ai_lead": video_ai_lead,
+        "video_deception_summary": video_deception_summary,
+        "video_deception_items": video_deception_items,
+        "video_deception_failed_items": video_deception_failed_items,
+        "video_deception_lead": video_deception_lead,
+    }
+
+
 def _needs_conflict_resolution(text_skill: dict[str, Any] | None, image_max_score: float) -> bool:
     if not isinstance(text_skill, dict):
         return False
@@ -392,7 +513,11 @@ def _needs_conflict_resolution(text_skill: dict[str, Any] | None, image_max_scor
     return level_gap >= 2 or (text_score <= 0.24 and image_max_score >= 0.56) or (text_score >= 0.72 and image_max_score <= 0.18)
 
 
-def _infer_followup_actions(state: AgentState, image_skills: list[dict[str, Any]], text_skill: dict[str, Any] | None) -> tuple[list[str], str]:
+def _infer_followup_actions(
+    state: AgentState,
+    image_skills: list[dict[str, Any]],
+    text_skill: dict[str, Any] | None,
+) -> tuple[list[str], str]:
     actions: list[str] = []
 
     impersonation = state.get("impersonation_result") or {}
@@ -429,10 +554,11 @@ def _infer_followup_actions(state: AgentState, image_skills: list[dict[str, Any]
 
 @traceable(name="agent.skill.final_judge", run_type="chain")
 def run_final_judge(state: AgentState) -> dict[str, object]:
-    skills, image_skills, text_skill = _collect_skill_payloads(state)
+    skills, image_skills, text_skill, video_skills = _collect_skill_payloads(state)
     labels = _collect_labels(skills)
     evidence = _collect_evidence(skills)
     unsupported = list(state.get("unsupported_modalities") or [])
+    has_video = bool(state.get("video_paths"))
 
     image_max_score = max((float(skill.get("risk_score") or 0.0) for skill in image_skills), default=0.0)
     image_fraud_type = _pick_image_fraud_type(labels)
@@ -465,10 +591,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
         if image_skills:
             final_reason = ((final_reason + " " if final_reason else "") + _build_image_only_final_reason(evidence, unsupported)).strip()
 
-        stage_tags = _merge_unique_strings(
-            list(text_payload.get("stage_tags") or []),
-            ["agent_orchestrated", "planner_loop"],
-        )
+        stage_tags = _merge_unique_strings(list(text_payload.get("stage_tags") or []), ["agent_orchestrated", "planner_loop"])
         hit_rules = list(text_payload.get("hit_rules") or [])
         rule_hits = list(text_payload.get("rule_hits") or [])
         extracted_entities = dict(text_payload.get("extracted_entities") or {})
@@ -477,33 +600,34 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
         counter_evidence = list(text_payload.get("counter_evidence") or [])
         need_manual_review = bool(text_payload.get("need_manual_review")) or bool(unsupported)
         llm_model = None
-        if isinstance(text_skill, dict):
-            raw_payload = text_skill.get("raw")
-            if isinstance(raw_payload, dict):
-                llm_model = raw_payload.get("llm_model")
+        raw_payload = text_skill.get("raw") if isinstance(text_skill, dict) else {}
+        if isinstance(raw_payload, dict):
+            llm_model = raw_payload.get("llm_model")
         confidence = max(text_score, image_max_score)
     else:
         risk_level = _risk_level_from_score(final_score)
         fraud_type = normalize_fraud_type_display(image_fraud_type)
-        summary = (
-            f"图像分支完成了 {len(image_skills)} 个专项检查，命中了 {len(evidence)} 条证据。"
-            if evidence
-            else "当前没有直接文本输入，系统按图像分支完成了首轮检测。"
-        )
+        if image_skills:
+            summary = f"图像分支完成了 {len(image_skills)} 个专项检查，命中了 {len(evidence)} 条证据。" if evidence else "图像分支已完成首轮检测。"
+            final_reason = _build_image_only_final_reason(evidence, unsupported)
+            stage_tags = ["agent_orchestrated", "image_branch", "planner_loop"]
+        elif has_video:
+            summary = "已完成视频分支检测，正在汇总 AI 时序与人物生理特征结果。"
+            final_reason = "系统已完成视频检测流程，并汇总视频时序与人物生理特征线索。"
+            stage_tags = ["agent_orchestrated", "video_branch", "planner_loop"]
+        else:
+            summary = "当前没有足够的直接文本或图像证据。"
+            final_reason = "当前没有足够的直接文本或图像证据。"
+            stage_tags = ["agent_orchestrated", "planner_loop"]
         if unsupported:
             summary += " 部分上传模态暂未分析。"
-        final_reason = _build_image_only_final_reason(evidence, unsupported)
-        stage_tags = ["agent_orchestrated", "image_branch", "planner_loop"]
         hit_rules = []
         rule_hits = []
         pii_payload = state.get("pii_result") or {}
         pii_raw = pii_payload.get("raw") if isinstance(pii_payload, dict) else None
         extracted_entities = {"pii_hits": list((pii_raw or {}).get("hits") or [])} if isinstance(pii_raw, dict) else {}
         input_highlights = [
-            {
-                "text": str(item.get("detail") or ""),
-                "reason": str(item.get("title") or "图像风险线索"),
-            }
+            {"text": str(item.get("detail") or ""), "reason": str(item.get("title") or "风险线索")}
             for item in evidence[:4]
             if str(item.get("detail") or "").strip()
         ]
@@ -525,6 +649,111 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
             qr_reason = str(qr_analysis.get("final_reason") or "").strip()
             if qr_reason:
                 final_reason = ((final_reason + " " if final_reason else "") + qr_reason).strip()
+
+    video_branch = _extract_video_branch(state)
+    video_ai_summary = dict(video_branch.get("video_ai_summary") or {})
+    video_ai_items = list(video_branch.get("video_ai_items") or [])
+    video_ai_failed_items = list(video_branch.get("video_ai_failed_items") or [])
+    video_ai_lead = video_branch.get("video_ai_lead") if isinstance(video_branch.get("video_ai_lead"), dict) else None
+    video_deception_summary = dict(video_branch.get("video_deception_summary") or {})
+    video_deception_items = list(video_branch.get("video_deception_items") or [])
+    video_deception_failed_items = list(video_branch.get("video_deception_failed_items") or [])
+    video_deception_lead = (
+        video_branch.get("video_deception_lead") if isinstance(video_branch.get("video_deception_lead"), dict) else None
+    )
+
+    if video_ai_summary or video_deception_summary:
+        stage_tags = _merge_unique_strings(stage_tags, ["视频检测", "D3时序检测", "人脸行为分析"])
+
+        if video_ai_summary:
+            lead_file_name = str((video_ai_lead or {}).get("file_name") or "未命名视频").strip()
+            lead_std = float((video_ai_lead or {}).get("second_order_std") or 0.0)
+            lead_confidence = float((video_ai_lead or {}).get("confidence") or 0.0)
+            overall_risk = str(video_ai_summary.get("overall_risk_level") or "low").strip().lower() or "low"
+            lead_summary = str((video_ai_lead or {}).get("summary") or video_ai_summary.get("overall_summary") or "").strip()
+            lead_reason = str((video_ai_lead or {}).get("final_reason") or "").strip()
+
+            if lead_file_name:
+                input_highlights.append({"text": lead_file_name, "reason": f"视频 STD {lead_std:.3f}"})
+                extracted_entities["video_ai"] = {
+                    "video_count": int(video_ai_summary.get("analyzed_count") or len(video_ai_items)),
+                    "suspicious_count": int(video_ai_summary.get("suspicious_count") or 0),
+                    "top_video": lead_file_name,
+                    "second_order_std": lead_std,
+                    "overall_risk_level": overall_risk,
+                }
+
+            confidence = max(confidence, lead_confidence)
+            final_score = max(final_score, lead_confidence)
+
+            if overall_risk in {"medium", "high"} and lead_file_name:
+                hit_rules = _merge_unique_strings(hit_rules, ["AI视频时序异常"])
+                rule_hits.append(
+                    {
+                        "name": "视频时序异常",
+                        "category": "video_ai",
+                        "risk_points": round(lead_confidence * 100),
+                        "explanation": "视频时序特征明显异常，疑似存在 AI 生成或强篡改痕迹。",
+                        "matched_texts": [lead_file_name],
+                        "stage_tag": "D3时序检测",
+                        "fraud_type_hint": "AI生成视频",
+                    }
+                )
+                need_manual_review = True
+                if _video_risk_rank(overall_risk) > _level_rank(risk_level):
+                    risk_level = overall_risk
+                    fraud_type = "AI生成视频"
+                    summary = lead_summary or summary
+                    final_reason = lead_reason or final_reason
+                else:
+                    if lead_summary and lead_summary not in summary:
+                        summary = f"{summary}；补充视频时序检测异常。" if summary else lead_summary
+                    if lead_reason and lead_reason not in final_reason:
+                        final_reason = f"{final_reason}；补充：{lead_reason}" if final_reason else lead_reason
+
+        if video_deception_summary:
+            behavior_risk = _soft_video_behavior_risk(video_deception_summary.get("overall_risk_level"))
+            behavior_confidence = float((video_deception_lead or {}).get("confidence") or 0.0)
+            behavior_summary_text = str(
+                video_deception_summary.get("overall_summary") or (video_deception_lead or {}).get("summary") or ""
+            ).strip()
+            confidence = max(confidence, behavior_confidence * 0.88)
+            final_score = max(final_score, behavior_confidence * 0.88)
+
+            if video_deception_lead:
+                extracted_entities["video_deception"] = {
+                    "overall_risk_level": str(video_deception_summary.get("overall_risk_level") or "low"),
+                    "person_detected_count": int(video_deception_summary.get("person_detected_count") or 0),
+                    "top_video": str(video_deception_lead.get("file_name") or "未命名视频").strip(),
+                    "face_behavior_score": float(video_deception_lead.get("face_behavior_score") or 0.0),
+                    "physiology_score": float(video_deception_lead.get("physiology_score") or 0.0),
+                    "signal_quality": float(video_deception_lead.get("signal_quality") or 0.0),
+                }
+
+            if video_deception_lead and _video_risk_rank(behavior_risk) >= 2:
+                hit_rules = _merge_unique_strings(hit_rules, ["人物行为/生理异常"])
+                rule_hits.append(
+                    {
+                        "name": _video_behavior_rule_name(behavior_risk),
+                        "category": "video_behavior",
+                        "risk_points": round(behavior_confidence * 100),
+                        "explanation": "检测到一定的人脸行为或生理波动，可作为辅助风险线索。",
+                        "matched_texts": [str(video_deception_lead.get("file_name") or "未命名视频").strip()],
+                        "stage_tag": "人脸行为分析",
+                        "fraud_type_hint": "真人状态异常",
+                    }
+                )
+                need_manual_review = True
+                if behavior_summary_text and behavior_summary_text not in summary:
+                    summary = f"{summary}；{behavior_summary_text}" if summary else behavior_summary_text
+                if behavior_summary_text and behavior_summary_text not in final_reason:
+                    final_reason = f"{final_reason}；补充：{behavior_summary_text}" if final_reason else behavior_summary_text
+                if _video_risk_rank(behavior_risk) > _level_rank(risk_level):
+                    risk_level = behavior_risk
+                    fraud_type = fraud_type or "真人状态异常"
+
+        if not fraud_type and has_video:
+            fraud_type = "视频风险较低"
 
     followup_actions, followup_stop_reason = _infer_followup_actions(state, image_skills, text_skill)
     advice_bundle = build_final_advice(
@@ -568,7 +797,11 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
     result_detail = {
         "reasoning_graph": reasoning_graph,
         "reasoning_path": list(reasoning_graph.get("highlighted_labels") or []),
-        "used_modules": [str(item.get("action") or item.get("key") or "") for item in module_trace if str(item.get("action") or item.get("key") or "").strip()],
+        "used_modules": [
+            str(item.get("action") or item.get("key") or "")
+            for item in module_trace
+            if str(item.get("action") or item.get("key") or "").strip()
+        ],
         "module_trace": module_trace,
         "final_score": round(final_score * 100),
         "llm_used": bool(text_payload),
@@ -577,9 +810,7 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
             and ((text_skill or {}).get("raw") or {}).get("semantic_rule_used")
         ),
         "semantic_rule_model": (
-            (((text_skill or {}).get("raw") or {}).get("result_payload") or {})
-            .get("result_detail", {})
-            .get("semantic_rule_model")
+            (((text_skill or {}).get("raw") or {}).get("result_payload") or {}).get("result_detail", {}).get("semantic_rule_model")
             if text_payload
             else None
         ),
@@ -620,11 +851,35 @@ def run_final_judge(state: AgentState) -> dict[str, object]:
             "image_similarity_result": state.get("image_similarity_result"),
             "document_review_result": state.get("document_review_result"),
             "conflict_resolution_result": state.get("conflict_resolution_result"),
+            "video_ai_result": state.get("video_ai_result"),
+            "video_deception_result": state.get("video_deception_result"),
         },
     }
 
+    if video_ai_summary or video_deception_summary:
+        result_detail["video_ai_items"] = video_ai_items + video_ai_failed_items
+        result_detail["video_ai_summary"] = video_ai_summary
+        result_detail["video_deception_items"] = video_deception_items + video_deception_failed_items
+        result_detail["video_deception_summary"] = video_deception_summary
+        result_detail["video_analysis_modules"] = _build_video_analysis_modules(
+            video_ai_summary=video_ai_summary,
+            video_deception_summary=video_deception_summary,
+        )
+
     return {
         "_trace_action_name": trace_action_name,
+        "_trace_summary": summary,
+        "_trace_detail_line": final_reason,
+        "_trace_tags": [
+            risk_level,
+            fraud_type or "最终判定",
+            *([f"{round(final_score * 100)} 分"] if final_score > 0 else []),
+        ],
+        "_trace_metrics": [
+            {"label": "风险评分", "value": round(final_score * 100)},
+            {"label": "线索", "value": len(evidence)},
+            *([{"label": "建议", "value": len(advice)}] if advice else []),
+        ],
         "summary_result": {
             "status": "completed",
             "risk_level": risk_level,

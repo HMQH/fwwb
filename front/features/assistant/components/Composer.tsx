@@ -80,11 +80,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 10,
     paddingVertical: 8,
-    shadowColor: "#BFD3F4",
-    shadowOpacity: 0.2,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
   },
   iconButton: {
     width: 38,

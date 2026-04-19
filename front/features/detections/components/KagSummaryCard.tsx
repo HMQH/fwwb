@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
@@ -24,6 +23,44 @@ function clampPercent(value?: number | null) {
   return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
+function buildVisibleStageRows(kag: DetectionKagPayload) {
+  const currentCode = String(kag.current_stage?.code ?? "").trim();
+  const rawRows = (
+    kag.stage_rows?.length
+      ? kag.stage_rows
+      : (kag.stage_scores ?? []).map((item) => ({
+          code: item.code,
+          label: item.label,
+          score: item.score,
+          support_score: item.score,
+          active: item.active,
+          tone: item.tone,
+          black_count: 0,
+          white_count: 0,
+        }))
+  );
+
+  const rows = rawRows.filter((item) => {
+    const support = clampPercent(item.support_score ?? item.score);
+    const score = clampPercent(item.score);
+    const black = Number(item.black_count ?? 0);
+    const white = Number(item.white_count ?? 0);
+    const active = Boolean(item.active || item.code === currentCode);
+    return active || support > 0 || score >= 18 || black > 0 || white > 0;
+  });
+
+  if (rows.length) {
+    return rows.slice(0, 5);
+  }
+
+  const currentRow = rawRows.find((item) => item.code === currentCode);
+  if (currentRow) {
+    return [currentRow];
+  }
+
+  return rawRows.slice(0, 5);
+}
+
 export function KagSummaryCard({ result }: { result?: DetectionResult | null }) {
   const kag = getKagPayload(result);
   if (!result || !kag?.enabled) {
@@ -32,26 +69,21 @@ export function KagSummaryCard({ result }: { result?: DetectionResult | null }) 
 
   const currentStage = sanitizeDisplayText(kag.current_stage?.label ?? "待判定");
   const nextStep = sanitizeDisplayText(kag.predicted_next_step ?? "继续核验");
-  const trajectory = (kag.reasoning_path?.length ? kag.reasoning_path : kag.trajectory ?? [])
+  const trajectory = (kag.trajectory?.length ? kag.trajectory : kag.reasoning_path ?? [])
     .map((item) => sanitizeDisplayText(String(item)))
     .filter(Boolean)
     .slice(0, 5);
-  const stageScores = (kag.stage_scores ?? []).slice(0, 5);
+  const stageRows = buildVisibleStageRows(kag);
   const relations = (kag.key_relations ?? []).map((item) => sanitizeDisplayText(item)).filter(Boolean).slice(0, 4);
   const focus = (kag.intervention_focus ?? []).map((item) => sanitizeDisplayText(item)).filter(Boolean).slice(0, 4);
 
   return (
     <View style={styles.card}>
-      <LinearGradient
-        colors={["#244C86", "#2F70E6", "#6F9EFF"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.hero}
-      >
+      <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View style={styles.modePill}>
-            <MaterialCommunityIcons name="graph-outline" size={14} color="#F5F8FF" />
-            <Text style={styles.modePillText}>KAG</Text>
+            <MaterialCommunityIcons name="graph-outline" size={14} color="#2F70E6" />
+            <Text style={styles.modePillText}>推进链</Text>
           </View>
           <View style={styles.scorePill}>
             <Text style={styles.scorePillLabel}>评分</Text>
@@ -59,7 +91,7 @@ export function KagSummaryCard({ result }: { result?: DetectionResult | null }) 
           </View>
         </View>
 
-        <Text style={styles.heroLabel}>当前阶段</Text>
+        <Text style={styles.heroLabel}>当前停留</Text>
         <Text style={styles.heroTitle}>{currentStage}</Text>
 
         {trajectory.length ? (
@@ -71,7 +103,7 @@ export function KagSummaryCard({ result }: { result?: DetectionResult | null }) 
             ))}
           </View>
         ) : null}
-      </LinearGradient>
+      </View>
 
       <View style={styles.body}>
         <View style={styles.nextCard}>
@@ -81,32 +113,42 @@ export function KagSummaryCard({ result }: { result?: DetectionResult | null }) 
 
         <View style={styles.metricRow}>
           <View style={styles.metricChip}>
-            <Text style={styles.metricLabel}>实体</Text>
-            <Text style={styles.metricValue}>{kag.entity_count ?? 0}</Text>
+            <Text style={styles.metricLabel}>链路</Text>
+            <Text style={styles.metricValue}>{kag.metrics?.chain_score ?? 0}</Text>
           </View>
           <View style={styles.metricChip}>
-            <Text style={styles.metricLabel}>关系</Text>
-            <Text style={styles.metricValue}>{kag.relation_count ?? 0}</Text>
+            <Text style={styles.metricLabel}>动作</Text>
+            <Text style={styles.metricValue}>{kag.metrics?.action_score ?? 0}</Text>
           </View>
           <View style={styles.metricChip}>
             <Text style={styles.metricLabel}>反证</Text>
-            <Text style={styles.metricValue}>{kag.counter_signal_count ?? 0}</Text>
+            <Text style={styles.metricValue}>{kag.metrics?.contradiction_score ?? 0}</Text>
+          </View>
+          <View style={styles.metricChip}>
+            <Text style={styles.metricLabel}>支撑</Text>
+            <Text style={styles.metricValue}>{kag.metrics?.support_score ?? 0}</Text>
           </View>
         </View>
 
-        {stageScores.length ? (
+        {stageRows.length ? (
           <View style={styles.stageBoard}>
-            {stageScores.map((item) => {
-              const width = `${Math.max(12, clampPercent(item.score))}%` as const;
+            {stageRows.map((item) => {
+              const width = `${Math.max(12, clampPercent(item.support_score ?? item.score))}%` as const;
               return (
                 <View key={item.code} style={[styles.stageRow, item.active && styles.stageRowActive]}>
                   <View style={styles.stageRowTop}>
                     <Text style={styles.stageName}>{sanitizeDisplayText(item.label)}</Text>
-                    <Text style={styles.stageScore}>{clampPercent(item.score)}</Text>
+                    <Text style={styles.stageScore}>{clampPercent(item.support_score ?? item.score)}</Text>
                   </View>
                   <View style={styles.stageTrack}>
                     <View style={[styles.stageFill, { width }, item.active && styles.stageFillActive]} />
                   </View>
+                  {"black_count" in item || "white_count" in item ? (
+                    <View style={styles.stageMetaRow}>
+                      <Text style={styles.stageMetaText}>风险 {item.black_count ?? 0}</Text>
+                      <Text style={styles.stageMetaText}>安全 {item.white_count ?? 0}</Text>
+                    </View>
+                  ) : null}
                 </View>
               );
             })}
@@ -153,6 +195,9 @@ const styles = StyleSheet.create({
     ...panelShadow,
   },
   hero: {
+    backgroundColor: "#F7FBFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#DFEAF8",
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 16,
@@ -171,10 +216,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.pill,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D8E6FC",
   },
   modePillText: {
-    color: "#F5F8FF",
+    color: "#2F70E6",
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "900",
@@ -185,32 +232,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.md,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D8E6FC",
     alignItems: "flex-end",
     gap: 2,
   },
   scorePillLabel: {
-    color: "rgba(255,255,255,0.82)",
+    color: palette.inkSoft,
     fontSize: 10,
     lineHeight: 12,
     fontFamily: fontFamily.body,
   },
   scorePillValue: {
-    color: "#FFFFFF",
+    color: palette.ink,
     fontSize: 16,
     lineHeight: 18,
     fontWeight: "900",
     fontFamily: fontFamily.display,
   },
   heroLabel: {
-    color: "rgba(255,255,255,0.76)",
+    color: palette.inkSoft,
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "700",
     fontFamily: fontFamily.body,
   },
   heroTitle: {
-    color: "#FFFFFF",
+    color: palette.ink,
     fontSize: 26,
     lineHeight: 32,
     fontWeight: "900",
@@ -225,10 +274,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D8E6FC",
   },
   trajectoryChipText: {
-    color: "#F4F7FF",
+    color: "#244C86",
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "800",
@@ -265,10 +316,11 @@ const styles = StyleSheet.create({
   },
   metricRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   metricChip: {
-    flex: 1,
+    width: "48.4%",
     borderRadius: radius.md,
     backgroundColor: "#FAFCFF",
     borderWidth: 1,
@@ -331,6 +383,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: "#E3ECFA",
     overflow: "hidden",
+  },
+  stageMetaRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  stageMetaText: {
+    color: palette.inkSoft,
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: fontFamily.body,
   },
   stageFill: {
     height: "100%",

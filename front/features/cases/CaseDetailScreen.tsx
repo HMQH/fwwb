@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -13,6 +13,8 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/features/auth";
+import { homeApi } from "@/features/home/api";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -69,6 +71,7 @@ function buildParagraphs(detail: FraudCaseDetail | null) {
 export default function CaseDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const caseId = Array.isArray(params.id) ? params.id[0] : params.id;
 
@@ -76,6 +79,7 @@ export default function CaseDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openingSource, setOpeningSource] = useState(false);
+  const rewardedCaseIdRef = useRef<string | null>(null);
 
   const imageUrls = useMemo(() => collectImageUrls(detail), [detail]);
   const heroImage = imageUrls[0] ?? null;
@@ -94,12 +98,23 @@ export default function CaseDetailScreen() {
     try {
       const response = await casesApi.detail(caseId);
       setDetail(response);
+      if (token && response.id && rewardedCaseIdRef.current !== response.id) {
+        void homeApi.grantWateringReward(
+          {
+            source: "case",
+            units: 1,
+            dedupe_key: `case:${response.id}`,
+          },
+          token
+        );
+        rewardedCaseIdRef.current = response.id;
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "案例详情加载失败");
     } finally {
       setLoading(false);
     }
-  }, [caseId]);
+  }, [caseId, token]);
 
   useEffect(() => {
     void loadDetail();

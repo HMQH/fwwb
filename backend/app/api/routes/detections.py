@@ -1,6 +1,7 @@
 """检测路由：提交、轮询任务、历史记录、详情。"""
 from __future__ import annotations
 
+import logging
 import tempfile
 import uuid
 from pathlib import Path
@@ -30,10 +31,25 @@ from app.domain.detection.audio_detector import (
     process_job as process_audio_verify_job,
     write_upload_to_temp,
 )
+from app.domain.detection.audio_scam_insight import (
+    AudioScamInsightInputError,
+    AudioScamInsightNotReadyError,
+    AudioScamInsightUpstreamError,
+    analyze_file as analyze_audio_scam_insight_file,
+    create_job as create_audio_scam_insight_job,
+    ensure_job_owner as ensure_audio_scam_insight_job_owner,
+    process_job as process_audio_scam_insight_job,
+)
 from app.domain.detection.kinds import UploadKind
 from app.domain.user.entity import User
 from app.shared.core.config import settings
-from app.shared.db.session import get_db
+from app.shared.db.session import SessionLocal, get_db
+from app.shared.schemas.audio_scam_insight import (
+    AudioScamInsightJobResponse,
+    AudioScamInsightJobSubmitResponse,
+    AudioScamInsightResponse,
+    AudioScamInsightUploadRequest,
+)
 from app.shared.schemas.audio_verify import (
     AudioVerifyBatchJobResponse,
     AudioVerifyBatchJobSubmitResponse,
@@ -54,6 +70,7 @@ from app.shared.schemas.detections import (
 )
 
 router = APIRouter(prefix="/api/detections", tags=["detections"])
+logger = logging.getLogger(__name__)
 
 
 async def _collect_uploads(form: object, key: str, *, max_bytes: int) -> list[tuple[bytes, str]]:
@@ -113,6 +130,18 @@ def _form_analysis_mode(value: object | None) -> str | None:
     if lowered in {"deep", "standard"}:
         return lowered
     return None
+
+
+def _form_video_analysis_target(value: object | None) -> str | None:
+    normalized = _form_str(value)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered in {"ai", "video-ai"}:
+        return "ai"
+    if lowered in {"physiology", "video-physiology"}:
+        return "physiology"
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="视频检测目标参数无效")
 
 
 def _read_audio_upload(audio_file: UploadFile) -> tuple[str, str]:
@@ -244,6 +273,43 @@ async def _run_direct_image_skill(
                 pass
 
 
+def _process_audio_scam_insight_job_with_persistence(
+    *,
+    job_id: uuid.UUID,
+    tmp_path: str,
+    user_id: uuid.UUID,
+    audio_bytes: bytes,
+    filename: str | None,
+    language_hint: str,
+) -> None:
+    process_audio_scam_insight_job(
+        job_id,
+        tmp_path,
+        filename=filename,
+        language_hint=language_hint,
+    )
+    job = ensure_audio_scam_insight_job_owner(job_id, user_id)
+    if not job or job.get("status") != "completed":
+        return
+    result = job.get("result")
+    if not isinstance(result, dict):
+        return
+
+    db = SessionLocal()
+    try:
+        detection_service.persist_audio_scam_insight_from_bytes(
+            db,
+            user_id=user_id,
+            audio_bytes=audio_bytes,
+            filename=filename,
+            insight_payload=result,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Persist audio scam insight from async job failed: job_id=%s", job_id)
+    finally:
+        db.close()
+
+
 @router.post(
     "/submit",
     response_model=DetectionSubmitAcceptedResponse,
@@ -261,6 +327,7 @@ async def submit_detection(
     text_content = _form_str(form.get("text_content"))
     relation_profile_id = _form_uuid(form.get("relation_profile_id"))
     requested_analysis_mode = _form_analysis_mode(form.get("analysis_mode"))
+    video_analysis_target = _form_video_analysis_target(form.get("video_analysis_target"))
     deep_reasoning = _form_bool(form.get("deep_reasoning"))
     if requested_analysis_mode is not None:
         deep_reasoning = requested_analysis_mode == "deep"
@@ -279,6 +346,7 @@ async def submit_detection(
         text_content=text_content,
         relation_profile_id=relation_profile_id,
         deep_reasoning=deep_reasoning,
+        video_analysis_target=video_analysis_target,
         file_bundles=bundles,
     )
     if settings.detection_background_on_submit and job.status == "pending":
@@ -499,6 +567,134 @@ def get_audio_verify_batch_job(
     if batch_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该批量音频鉴伪任务")
     return AudioVerifyBatchJobResponse.model_validate(batch_job)
+
+
+@router.post("/audio/scam-insight", response_model=AudioScamInsightResponse)
+async def analyze_audio_scam_insight(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    audio_file: UploadFile = File(...),
+    language_hint: str = Form(default="zh"),
+) -> AudioScamInsightResponse:
+    filename, suffix = _read_audio_upload(audio_file)
+    data = await audio_file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="空音频文件")
+    max_b = min(settings.max_upload_bytes, settings.audio_scam_insight_max_file_bytes)
+    if len(data) > max_b:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"音频文件过大，超过 {max_b} 字节限制",
+        )
+
+    tmp_path = write_upload_to_temp(data, suffix)
+    try:
+        try:
+            result = analyze_audio_scam_insight_file(
+                tmp_path,
+                filename=filename or None,
+                language_hint=language_hint,
+            )
+        except AudioScamInsightInputError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except AudioScamInsightNotReadyError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        except AudioScamInsightUpstreamError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        detection_service.persist_audio_scam_insight_from_bytes(
+            db,
+            user_id=current.id,
+            audio_bytes=data,
+            filename=filename or None,
+            insight_payload=result,
+        )
+        return AudioScamInsightResponse.model_validate(result)
+    finally:
+        try:
+            if Path(tmp_path).exists():
+                Path(tmp_path).unlink()
+        except OSError:
+            pass
+
+
+@router.post("/audio/scam-insight/from-uploads", response_model=AudioScamInsightResponse)
+def analyze_audio_scam_insight_from_uploads(
+    body: AudioScamInsightUploadRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> AudioScamInsightResponse:
+    full_path = detection_service.resolve_owned_audio_upload_file(
+        db,
+        user_id=current.id,
+        audio_path=body.audio_path,
+    )
+    try:
+        result = analyze_audio_scam_insight_file(
+            str(full_path),
+            filename=body.filename or full_path.name,
+            language_hint=body.language_hint,
+        )
+    except AudioScamInsightInputError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except AudioScamInsightNotReadyError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except AudioScamInsightUpstreamError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    detection_service.persist_audio_scam_insight_from_upload_path(
+        db,
+        user_id=current.id,
+        audio_path=body.audio_path,
+        filename=body.filename or full_path.name,
+        insight_payload=result,
+    )
+    return AudioScamInsightResponse.model_validate(result)
+
+
+@router.post(
+    "/audio/scam-insight/submit",
+    response_model=AudioScamInsightJobSubmitResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_audio_scam_insight(
+    background_tasks: BackgroundTasks,
+    current: User = Depends(get_current_user),
+    audio_file: UploadFile = File(...),
+    language_hint: str = Form(default="zh"),
+) -> AudioScamInsightJobSubmitResponse:
+    filename, suffix = _read_audio_upload(audio_file)
+    data = await audio_file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="空音频文件")
+    max_b = min(settings.max_upload_bytes, settings.audio_scam_insight_max_file_bytes)
+    if len(data) > max_b:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"音频文件过大，超过 {max_b} 字节限制",
+        )
+
+    tmp_path = write_upload_to_temp(data, suffix)
+    job = create_audio_scam_insight_job(user_id=current.id, filename=filename or None)
+    background_tasks.add_task(
+        _process_audio_scam_insight_job_with_persistence,
+        job_id=job["job_id"],
+        tmp_path=tmp_path,
+        user_id=current.id,
+        audio_bytes=data,
+        filename=filename or None,
+        language_hint=language_hint,
+    )
+    return AudioScamInsightJobSubmitResponse.model_validate(job)
+
+
+@router.get("/audio/scam-insight/jobs/{job_id}", response_model=AudioScamInsightJobResponse)
+def get_audio_scam_insight_job(
+    job_id: uuid.UUID,
+    current: User = Depends(get_current_user),
+) -> AudioScamInsightJobResponse:
+    job = ensure_audio_scam_insight_job_owner(job_id, current.id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到该语音深度分析任务")
+    return AudioScamInsightJobResponse.model_validate(job)
 
 
 @router.post(

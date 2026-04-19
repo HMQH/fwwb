@@ -7,6 +7,7 @@ const FRAUD_TYPE_LABEL_MAP: Record<string, string> = {
   forged_official_document: "仿冒公文",
   phishing_image: "钓鱼图片",
   phishing_site: "钓鱼网站",
+  voice_scam_call: "语音诈骗来电",
   unknown: "未知类型",
 };
 

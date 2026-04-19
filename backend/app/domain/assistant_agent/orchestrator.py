@@ -18,6 +18,12 @@ from app.domain.agent.tools.ocr_tool import extract_texts
 from app.domain.ai_face import service as ai_face_service
 from app.domain.assistant.entity import AssistantMessage
 from app.domain.detection import service as detection_service
+from app.domain.detection.audio_scam_insight import (
+    AudioScamInsightInputError,
+    AudioScamInsightNotReadyError,
+    AudioScamInsightUpstreamError,
+    analyze_file as analyze_audio_scam_insight_file,
+)
 from app.shared.core.config import settings
 from app.shared.storage.upload_paths import resolved_upload_root
 
@@ -48,13 +54,135 @@ _PREVIOUS_ATTACHMENT_HINTS = (
     "上一条图片",
     "前面那张",
 )
+_ANTIFRAUD_INTENT_MARKERS = (
+    "诈骗",
+    "骗",
+    "被骗",
+    "风险",
+    "可疑",
+    "真假",
+    "真伪",
+    "钓鱼",
+    "验证码",
+    "转账",
+    "汇款",
+    "收款",
+    "打款",
+    "银行卡",
+    "身份证",
+    "二维码",
+    "链接",
+    "网址",
+    "域名",
+    "网图",
+    "以图识图",
+    "ocr",
+    "公章",
+    "敏感信息",
+    "换脸",
+    "deepfake",
+    "录音鉴别",
+    "音频鉴别",
+    "语音分析",
+    "语音深度分析",
+    "过程演化",
+    "阶段轨迹",
+    "关键证据",
+    "雷达图",
+    "语音诈骗分析",
+    "网址钓鱼",
+    "短信检测",
+    "话术检测",
+)
+_GENERAL_TASK_MARKERS = (
+    "python",
+    "代码",
+    "脚本",
+    "函数",
+    "接口",
+    "报错",
+    "bug",
+    "爬虫",
+    "爬取",
+    "网站数据",
+    "前端",
+    "后端",
+    "sql",
+    "翻译",
+    "总结",
+    "改写",
+    "润色",
+    "解释",
+    "怎么写",
+    "怎么做",
+    "示例",
+    "demo",
+    "算法",
+    "prompt",
+    "提示词",
+)
+_DIRECT_CAPABILITY_HINTS = (
+    "ocr",
+    "网图",
+    "以图识图",
+    "二维码",
+    "公章",
+    "敏感信息",
+    "换脸",
+    "录音鉴别",
+    "音频鉴别",
+    "语音分析",
+    "语音深度分析",
+    "过程演化",
+    "关键证据",
+    "阶段轨迹",
+    "雷达图",
+    "网址钓鱼",
+    "web_phishing",
+    "text_detection",
+    "ai_face",
+)
+_AUDIO_SCAM_INSIGHT_HINTS = (
+    "语音分析",
+    "语音深度分析",
+    "音频分析",
+    "过程演化",
+    "阶段轨迹",
+    "关键证据",
+    "雷达图",
+    "诈骗分析",
+    "风险演化",
+)
+_AUDIO_VERIFY_HINTS = (
+    "ai音频",
+    "ai语音",
+    "录音鉴别",
+    "音频鉴别",
+    "ai声音",
+    "变声",
+    "合成音",
+    "是否ai",
+    "是不是ai",
+)
+_IMAGE_RISK_QUERY_HINTS = (
+    "诈骗",
+    "骗",
+    "风险",
+    "可疑",
+    "真假",
+    "钓鱼",
+    "安全吗",
+    "是不是",
+    "有没有问题",
+    "scam",
+    "fraud",
+)
 _PLANNER_SYSTEM_PROMPT = """你是反诈助手的任务规划器。你只负责判断这一轮应该：
-1. clarify：追问用户选择哪种能力
-2. execute：直接执行一个或多个能力
-3. chat：普通对话，不执行检测
+1. clarify：追问用户要跑哪种检测
+2. execute：直接执行一个或多个检测能力
+3. chat：普通对话 / 普通助手回答，不执行检测
 
-必须只输出 JSON，不要输出任何解释，不要使用 Markdown。
-
+必须只输出 JSON，不要输出解释，不要使用 Markdown。
 输出结构：
 {
   "action": "clarify|execute|chat",
@@ -62,20 +190,29 @@ _PLANNER_SYSTEM_PROMPT = """你是反诈助手的任务规划器。你只负责�
   "use_previous_attachments": false,
   "capabilities": ["analysis"],
   "clarify_title": "要做哪一种？",
-  "clarify_prompt": "可串行多个功能"
+  "clarify_prompt": "可串行跑多个功能"
 }
 
 capabilities 只能从以下枚举里选：
-["analysis","text_detection","ocr","official_document","pii","qr","impersonation","web_phishing","audio_verify","ai_face"]
+["analysis","text_detection","ocr","official_document","pii","qr","impersonation","web_phishing","audio_scam_insight","audio_verify","ai_face"]
 
-判断规则：
+强规则：
 - 只有当“本轮刚上传了图片/音频/文件”且用户意图不清时，才 action=clarify。
-- 如果用户已经提出明确问题，例如“是不是诈骗图”“帮我分析”“看真假”“识别二维码”“判断是否盗图”，直接 action=execute。
-- 不允许因为历史图片而反复 clarify。只有用户明确提到之前的材料时，才 use_previous_attachments=true。
-- 一般性的真假判断、诈骗判断、风险判断，优先 analysis。
-- 如果文本里直接有 URL，优先可包含 web_phishing。
-- 可以串行多个能力，但不要无意义地全选。
+- 如果用户明确要求做反诈判断、风险判断、真假识别、二维码/网址/网图/OCR/公章/敏感信息/AI换脸/语音深度分析/音频鉴别等，才 action=execute。
+- 如果只是普通助手任务，例如写 Python 代码、解释报错、总结文本、翻译、回忆上文、产品/前后端讨论，一律 action=chat。
+- 不能因为历史里曾经传过材料，就对后续所有普通对话继续 action=clarify 或 action=execute。
+- 只有用户明确提到之前那张图/那段音频/前面的材料时，才 use_previous_attachments=true。
+- 文本里直接包含 URL 时，可以优先包含 web_phishing。
+- 纯文本消息在没有明确反诈/检测意图时，不要进入 execute。
 """
+_EXECUTE_REWRITE_SYSTEM_PROMPT = """你是检测结果改写器。你的输入包含“当前轮用户问题 + 当前会话上下文 + 工具结构化结果”。
+你必须严格基于工具结果输出，禁止新增工具结果里没有的事实。
+输出要求：
+1) 先给结论（风险等级/是否可疑）；
+2) 再给 2-4 条证据点，优先引用 OCR、链接、二维码、网图命中等字段；
+3) 最后给一句可执行建议；
+4) 不要输出“我无法判断”“已完成检测流程”等流程话术；
+5) 使用中文，简洁、直接，不用 Markdown 标题。"""
 
 
 def _message_attachments(message: AssistantMessage | None) -> list[dict[str, Any]]:
@@ -118,6 +255,73 @@ def _attachment_modalities(attachments: list[dict[str, Any]]) -> set[str]:
         if kind in {"text", "audio", "image", "video"}:
             modalities.add(kind)
     return modalities
+
+
+def _has_antifraud_intent(user_text: str) -> bool:
+    collapsed = str(user_text or "").strip().lower().replace(" ", "")
+    if not collapsed:
+        return False
+    if _URL_RE.search(collapsed):
+        return True
+    return any(token in collapsed for token in _ANTIFRAUD_INTENT_MARKERS)
+
+
+def _is_general_task_text(user_text: str) -> bool:
+    collapsed = str(user_text or "").strip().lower().replace(" ", "")
+    if not collapsed:
+        return False
+    if _has_antifraud_intent(collapsed):
+        return False
+    return any(token in collapsed for token in _GENERAL_TASK_MARKERS)
+
+
+def _should_chain_ocr_before_analysis(
+    *,
+    user_text: str,
+    attachments: list[dict[str, Any]],
+    explicit_antifraud: bool,
+) -> bool:
+    if not attachments or not explicit_antifraud:
+        return False
+    has_image = any(
+        str(item.get("upload_type") or item.get("kind") or "").strip().lower() == "image"
+        for item in attachments
+    )
+    if not has_image:
+        return False
+    collapsed = str(user_text or "").strip().lower().replace(" ", "")
+    if not collapsed:
+        return False
+    if any(token in collapsed for token in _DIRECT_CAPABILITY_HINTS):
+        return False
+    return any(token in collapsed for token in _IMAGE_RISK_QUERY_HINTS)
+
+
+def _audio_attachment_paths(attachments: list[dict[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    for item in attachments:
+        if str(item.get("upload_type") or "").strip().lower() != "audio":
+            continue
+        file_path = str(item.get("file_path") or "").strip()
+        if file_path:
+            paths.append(file_path)
+    return paths
+
+
+def _recommend_audio_capabilities(user_text: str, attachments: list[dict[str, Any]]) -> list[str] | None:
+    audio_paths = _audio_attachment_paths(attachments)
+    if not audio_paths:
+        return None
+    collapsed = str(user_text or "").strip().lower().replace(" ", "")
+    if not collapsed:
+        return None
+    if any(token in collapsed for token in _AUDIO_VERIFY_HINTS):
+        return ["audio_verify"]
+    if any(token in collapsed for token in _AUDIO_SCAM_INSIGHT_HINTS):
+        return ["audio_scam_insight", "audio_verify"]
+    if _has_antifraud_intent(user_text):
+        return ["audio_scam_insight", "audio_verify"]
+    return ["audio_scam_insight"]
 
 
 def _resolve_saved_file(file_path: str | None) -> Path | None:
@@ -329,6 +533,73 @@ def _extract_json_object(raw: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _strip_code_fence(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("```"):
+        lines = [line for line in raw.splitlines() if not line.strip().startswith("```")]
+        return "\n".join(lines).strip()
+    return raw
+
+
+def _sanitize_for_llm_context(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 4:
+        return str(value)[:500]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        return text[:1200] if len(text) > 1200 else text
+    if isinstance(value, list):
+        return [_sanitize_for_llm_context(item, depth=depth + 1) for item in value[:16]]
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for index, (k, v) in enumerate(value.items()):
+            if index >= 40:
+                break
+            sanitized[str(k)] = _sanitize_for_llm_context(v, depth=depth + 1)
+        return sanitized
+    return str(value)[:1200]
+
+
+def _rewrite_execute_final_text_with_llm(
+    *,
+    llm_call: Callable[[list[dict[str, Any]]], str],
+    llm_messages_with_context: list[dict[str, Any]],
+    user_text: str,
+    plan_keys: list[str],
+    step_results: list[dict[str, Any]],
+    tool_context_blocks: list[dict[str, Any]],
+) -> str | None:
+    compact_steps: list[dict[str, Any]] = []
+    for item in step_results[:6]:
+        compact_steps.append(
+            {
+                "capability_key": item.get("capability_key") or item.get("id"),
+                "title": item.get("title"),
+                "summary": item.get("summary"),
+                "details": [str(x) for x in list(item.get("details") or [])[:6]],
+            }
+        )
+    payload = {
+        "user_query": user_text,
+        "executed_capabilities": plan_keys,
+        "tool_results": compact_steps,
+        "tool_context_blocks": tool_context_blocks[:12],
+    }
+    rewrite_messages = [
+        *llm_messages_with_context,
+        {"role": "system", "content": _EXECUTE_REWRITE_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        rewritten = _strip_code_fence(llm_call(rewrite_messages))
+    except Exception:
+        return None
+    return rewritten or None
+
+
 def _normalize_plan_result(
     payload: dict[str, Any] | None,
     *,
@@ -408,7 +679,10 @@ def _fallback_plan(
     if user_text.strip():
         modalities.add("text")
 
-    capability_keys = expand_capability_aliases(user_text, modalities)
+    explicit_antifraud = _has_antifraud_intent(user_text)
+    general_task = _is_general_task_text(user_text)
+
+    capability_keys = expand_capability_aliases(user_text, modalities) if (active_attachments or explicit_antifraud) else []
     if capability_keys:
         return {
             "action": "execute",
@@ -419,12 +693,32 @@ def _fallback_plan(
             "clarify_prompt": "可串行多个功能",
         }
 
+    audio_capabilities = _recommend_audio_capabilities(user_text, current_attachments)
+    if audio_capabilities:
+        return {
+            "action": "execute",
+            "reason": "fallback_audio_pipeline",
+            "use_previous_attachments": False,
+            "capabilities": audio_capabilities,
+            "clarify_title": "要做哪一种？",
+            "clarify_prompt": "可串行多个功能",
+        }
+
     if current_attachments and user_text.strip():
+        capabilities = (
+            ["ocr", "analysis"]
+            if _should_chain_ocr_before_analysis(
+                user_text=user_text,
+                attachments=current_attachments,
+                explicit_antifraud=explicit_antifraud,
+            )
+            else ["analysis"]
+        )
         return {
             "action": "execute",
             "reason": "fallback_general_analysis",
             "use_previous_attachments": False,
-            "capabilities": ["analysis"],
+            "capabilities": capabilities,
             "clarify_title": "要做哪一种？",
             "clarify_prompt": "可串行多个功能",
         }
@@ -437,6 +731,16 @@ def _fallback_plan(
             "capabilities": [],
             "clarify_title": "要做哪一种？",
             "clarify_prompt": "可串行多个功能",
+        }
+
+    if general_task and not active_attachments:
+        return {
+            "action": "chat",
+            "reason": "fallback_general_task_chat",
+            "use_previous_attachments": False,
+            "capabilities": [],
+            "clarify_title": "要做哪一种？",
+            "clarify_prompt": "可串行跑多个功能",
         }
 
     return {
@@ -458,6 +762,9 @@ def _choose_plan(
 ) -> dict[str, Any]:
     current_modalities = _attachment_modalities(current_attachments)
     can_reference_previous = _should_reuse_previous_attachments(user_text)
+    explicit_antifraud = _has_antifraud_intent(user_text)
+    general_task = _is_general_task_text(user_text)
+    audio_capabilities = _recommend_audio_capabilities(user_text, current_attachments)
     available_capabilities = available_capabilities_for_modalities(
         current_modalities | ({"text"} if user_text.strip() else set())
     )
@@ -471,11 +778,38 @@ def _choose_plan(
         can_reference_previous=can_reference_previous,
     )
     if llm_plan is not None:
+        if not current_attachments and general_task and not explicit_antifraud:
+            llm_plan["action"] = "chat"
+            llm_plan["capabilities"] = []
+            llm_plan["use_previous_attachments"] = False
         if llm_plan["action"] == "execute" and not llm_plan["capabilities"]:
-            if current_attachments and user_text.strip():
+            if audio_capabilities:
+                llm_plan["capabilities"] = audio_capabilities
+            elif current_attachments and user_text.strip():
                 llm_plan["capabilities"] = ["analysis"]
             elif _extract_first_url(user_text):
                 llm_plan["capabilities"] = ["web_phishing"]
+        if llm_plan["action"] == "execute" and audio_capabilities:
+            planned = list(llm_plan.get("capabilities") or [])
+            if not planned or planned == ["analysis"]:
+                llm_plan["capabilities"] = audio_capabilities
+            elif planned == ["audio_verify"] and "audio_scam_insight" in audio_capabilities:
+                llm_plan["capabilities"] = audio_capabilities
+            elif planned == ["audio_scam_insight"] and "audio_verify" in audio_capabilities:
+                llm_plan["capabilities"] = audio_capabilities
+        if (
+            llm_plan["action"] == "execute"
+            and llm_plan.get("capabilities") == ["analysis"]
+            and _should_chain_ocr_before_analysis(
+                user_text=user_text,
+                attachments=current_attachments,
+                explicit_antifraud=explicit_antifraud,
+            )
+        ):
+            llm_plan["capabilities"] = ["ocr", "analysis"]
+        if llm_plan["action"] == "clarify" and audio_capabilities:
+            llm_plan["action"] = "execute"
+            llm_plan["capabilities"] = audio_capabilities
         if llm_plan["action"] == "clarify" and not current_attachments:
             llm_plan["action"] = "chat"
         return llm_plan
@@ -509,12 +843,13 @@ def _run_direct_skill_for_images(
     result_key: str,
     runner: Callable[[dict[str, Any]], dict[str, Any]],
     with_ocr: bool = False,
-) -> tuple[str, list[str], list[dict[str, str]], list[dict[str, Any]]]:
+) -> tuple[str, list[str], list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     image_attachments = [item for item in attachments if str(item.get("upload_type") or "").strip().lower() == "image"]
     details: list[str] = []
     record_refs: list[dict[str, str]] = []
     gallery_items: list[dict[str, Any]] = []
     summaries: list[str] = []
+    raw_items: list[dict[str, Any]] = []
 
     for index, item in enumerate(image_attachments, start=1):
         binary = _read_attachment_bytes(item)
@@ -552,9 +887,20 @@ def _run_direct_skill_for_images(
         details.extend(_compact_json_lines(result, limit=5))
         if capability_key == "impersonation":
             gallery_items.extend(_normalize_gallery_items(result))
+        raw_items.append(
+            {
+                "filename": filename,
+                "result": _sanitize_for_llm_context(result),
+            }
+        )
 
     final_summary = summaries[0] if len(summaries) == 1 else f"共处理 {len(summaries)} 张图片"
-    return final_summary or "未处理到有效图片", details[:18], record_refs, gallery_items[:12]
+    llm_context = {
+        "capability_key": capability_key,
+        "kind": kind,
+        "items": raw_items,
+    }
+    return final_summary or "未处理到有效图片", details[:18], record_refs, gallery_items[:12], llm_context
 
 
 def _run_analysis(
@@ -564,7 +910,7 @@ def _run_analysis(
     relation_profile_id: uuid.UUID | None,
     user_text: str,
     attachments: list[dict[str, Any]],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
     bundles = _build_file_bundles_from_attachments(attachments)
     submission, job = detection_service.submit_detection(
         db,
@@ -582,17 +928,34 @@ def _run_analysis(
     summary = "综合分析已完成"
     details: list[str] = []
     if isinstance(result, dict):
-        summary = str(result.get("summary") or summary)
+        risk_level_raw = str(result.get("risk_level") or "").strip().lower()
+        risk_level_label = {
+            "high": "高风险",
+            "medium": "中风险",
+            "low": "低风险",
+            "safe": "低风险",
+            "unknown": "未知风险",
+        }.get(risk_level_raw, str(result.get("risk_level") or "风险待确认").strip() or "风险待确认")
+        final_reason = str(result.get("final_reason") or "").strip()
+        fallback_reason = str(result.get("summary") or "").strip()
+        conclusion = final_reason or fallback_reason or "未提供明确结论"
+        summary = f"{risk_level_label} · {conclusion}"
         details.extend(
             [
                 f"风险等级: {result.get('risk_level')}",
                 f"风险类型: {result.get('fraud_type') or '未命名'}",
-                f"结论: {result.get('final_reason') or result.get('summary') or ''}",
+                f"结论: {conclusion}",
             ]
         )
+    llm_context = {
+        "capability_key": "analysis",
+        "result": _sanitize_for_llm_context(result if isinstance(result, dict) else {}),
+        "job_id": str(job.id),
+        "submission_id": str(submission.id),
+    }
     return summary, [item for item in details if item][:12], [
         _build_record_ref(capability_key="analysis", label="综合分析", submission_id=submission.id, job_id=job.id)
-    ]
+    ], llm_context
 
 
 def _run_text_detection(
@@ -602,7 +965,7 @@ def _run_text_detection(
     relation_profile_id: uuid.UUID | None,
     user_text: str,
     attachments: list[dict[str, Any]],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
     text_payload = "\n\n".join(part for part in [user_text.strip(), _extract_text_from_attachments(attachments)] if part).strip()
     submission, job = detection_service.submit_detection(
         db,
@@ -622,9 +985,16 @@ def _run_text_detection(
     details = [f"文本长度: {len(text_payload)}"]
     if final_reason:
         details.append(f"结论: {final_reason}")
+    llm_context = {
+        "capability_key": "text_detection",
+        "result": _sanitize_for_llm_context(result if isinstance(result, dict) else {}),
+        "text_length": len(text_payload),
+        "submission_id": str(submission.id),
+        "job_id": str(job.id),
+    }
     return summary, details, [
         _build_record_ref(capability_key="text_detection", label="文本检测", submission_id=submission.id, job_id=job.id)
-    ]
+    ], llm_context
 
 
 def _run_web_phishing(
@@ -633,7 +1003,7 @@ def _run_web_phishing(
     user_id: uuid.UUID,
     user_text: str,
     attachments: list[dict[str, Any]],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
     text_blob = _extract_text_from_attachments(attachments)
     url = _extract_first_url(user_text, text_blob)
     if not url:
@@ -643,6 +1013,11 @@ def _run_web_phishing(
     summary = str(payload.get("summary") or payload.get("risk_level") or "网址钓鱼检测已完成")
     details = [f"URL: {url}"]
     details.extend(_compact_json_lines(payload, limit=6))
+    llm_context = {
+        "capability_key": "web_phishing",
+        "url": url,
+        "result": _sanitize_for_llm_context(payload),
+    }
     return summary, details, [
         _build_record_ref(
             capability_key="web_phishing",
@@ -651,7 +1026,7 @@ def _run_web_phishing(
             job_id=refs.get("job_id"),
             result_id=refs.get("result_id"),
         )
-    ]
+    ], llm_context
 
 
 def _run_audio_verify(
@@ -660,7 +1035,7 @@ def _run_audio_verify(
     user_id: uuid.UUID,
     relation_profile_id: uuid.UUID | None,
     attachments: list[dict[str, Any]],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
     audio_paths = [
         str(item.get("file_path") or "").strip()
         for item in attachments
@@ -680,9 +1055,149 @@ def _run_audio_verify(
     result = detail.get("result") if isinstance(detail, dict) else None
     summary = str((result or {}).get("summary") or "AI 音频鉴别已完成")
     details = _compact_json_lines(result if isinstance(result, dict) else {}, limit=8)
+    llm_context = {
+        "capability_key": "audio_verify",
+        "audio_paths": audio_paths,
+        "result": _sanitize_for_llm_context(result if isinstance(result, dict) else {}),
+        "submission_id": str(submission.id),
+        "job_id": str(job.id),
+    }
     return summary, details, [
         _build_record_ref(capability_key="audio_verify", label="AI音频鉴别", submission_id=submission.id, job_id=job.id)
-    ]
+    ], llm_context
+
+
+def _run_audio_scam_insight(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    attachments: list[dict[str, Any]],
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
+    audio_attachments = [item for item in attachments if str(item.get("upload_type") or "").strip().lower() == "audio"]
+    if not audio_attachments:
+        raise ValueError("未找到可分析的音频")
+
+    details: list[str] = []
+    record_refs: list[dict[str, str]] = []
+    summary_pool: list[str] = []
+    raw_items: list[dict[str, Any]] = []
+
+    for index, item in enumerate(audio_attachments, start=1):
+        audio_path = str(item.get("file_path") or "").strip()
+        filename = str(item.get("name") or "").strip() or Path(audio_path).name or f"audio-{index}"
+        if not audio_path:
+            details.append(f"{filename}: 音频路径缺失")
+            continue
+        try:
+            full_path = detection_service.resolve_owned_audio_upload_file(
+                db,
+                user_id=user_id,
+                audio_path=audio_path,
+            )
+            payload = analyze_audio_scam_insight_file(
+                str(full_path),
+                filename=filename,
+                language_hint="zh",
+            )
+            refs = detection_service.persist_audio_scam_insight_from_upload_path(
+                db,
+                user_id=user_id,
+                audio_path=audio_path,
+                filename=filename,
+                insight_payload=payload,
+            )
+        except (AudioScamInsightInputError, AudioScamInsightNotReadyError, AudioScamInsightUpstreamError) as exc:
+            details.append(f"{filename}: {exc}")
+            raw_items.append({"filename": filename, "error": str(exc)})
+            continue
+        except Exception as exc:  # noqa: BLE001
+            details.append(f"{filename}: {exc}")
+            raw_items.append({"filename": filename, "error": str(exc)})
+            continue
+
+        decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+        dynamics = payload.get("dynamics") if isinstance(payload.get("dynamics"), dict) else {}
+        evidence_segments = [entry for entry in list(payload.get("evidence_segments") or []) if isinstance(entry, dict)]
+
+        summary = str(decision.get("summary") or "").strip() or "语音深度分析已完成"
+        summary_pool.append(summary)
+
+        risk_level_raw = str(decision.get("risk_level") or "").strip().lower()
+        risk_level = {
+            "high": "高风险",
+            "medium": "中风险",
+            "low": "低风险",
+        }.get(risk_level_raw, risk_level_raw or "未知")
+        risk_score = decision.get("call_risk_score")
+        confidence = decision.get("confidence")
+        risk_score_text = f"{float(risk_score):.3f}" if isinstance(risk_score, (int, float)) else "-"
+        confidence_text = f"{float(confidence):.3f}" if isinstance(confidence, (int, float)) else "-"
+        details.append(f"{filename}: {risk_level} / 风险分={risk_score_text} / 置信度={confidence_text}")
+
+        stage_labels = [
+            str(stage.get("label") or stage.get("stage") or "").strip()
+            for stage in list(dynamics.get("stage_sequence") or [])
+            if isinstance(stage, dict) and str(stage.get("label") or stage.get("stage") or "").strip()
+        ]
+        if stage_labels:
+            details.append(f"{filename}: 阶段轨迹={' → '.join(stage_labels[:6])}")
+
+        key_moment_items: list[str] = []
+        for moment in list(dynamics.get("key_moments") or []):
+            if not isinstance(moment, dict):
+                continue
+            label = str(moment.get("label") or "").strip()
+            if not label:
+                continue
+            time_sec = moment.get("time_sec")
+            if isinstance(time_sec, (int, float)):
+                key_moment_items.append(f"{label}@{float(time_sec):.1f}s")
+            else:
+                key_moment_items.append(label)
+            if len(key_moment_items) >= 4:
+                break
+        if key_moment_items:
+            details.append(f"{filename}: 关键时刻={'；'.join(key_moment_items)}")
+
+        if evidence_segments:
+            evidence = evidence_segments[0]
+            stage_label = str(evidence.get("stage_label") or "").strip()
+            explanation = str(evidence.get("explanation") or "").strip()
+            transcript = str(evidence.get("transcript_excerpt") or "").strip()
+            evidence_parts = [part for part in [stage_label, explanation, transcript] if part]
+            if evidence_parts:
+                details.append(f"{filename}: 关键证据={' | '.join(evidence_parts)}")
+
+        record_refs.append(
+            _build_record_ref(
+                capability_key="audio_scam_insight",
+                label=f"语音深度分析 · {filename}",
+                submission_id=refs.get("submission_id"),
+                job_id=refs.get("job_id"),
+                result_id=refs.get("result_id"),
+            )
+        )
+        raw_items.append(
+            {
+                "filename": filename,
+                "result": _sanitize_for_llm_context(payload),
+                "submission_id": str(refs.get("submission_id") or ""),
+                "job_id": str(refs.get("job_id") or ""),
+                "result_id": str(refs.get("result_id") or ""),
+            }
+        )
+
+    success_count = len(summary_pool)
+    if success_count <= 0:
+        raise ValueError(details[0] if details else "语音深度分析失败")
+
+    final_summary = summary_pool[0] if success_count == 1 else f"共完成 {success_count} 段音频的语音深度分析"
+    llm_context = {
+        "capability_key": "audio_scam_insight",
+        "items": raw_items,
+        "success_count": success_count,
+    }
+    return final_summary, details[:24], record_refs, llm_context
 
 
 def _run_ai_face(
@@ -690,11 +1205,12 @@ def _run_ai_face(
     *,
     user_id: uuid.UUID,
     attachments: list[dict[str, Any]],
-) -> tuple[str, list[str], list[dict[str, str]]]:
+) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
     image_attachments = [item for item in attachments if str(item.get("upload_type") or "").strip().lower() == "image"]
     details: list[str] = []
     record_refs: list[dict[str, str]] = []
     hits = 0
+    raw_items: list[dict[str, Any]] = []
     for item in image_attachments:
         binary = _read_attachment_bytes(item)
         if binary is None:
@@ -709,6 +1225,12 @@ def _run_ai_face(
         )
         hits += 1
         details.append(f"{filename}: {payload.get('prediction')} / {payload.get('fake_probability')}")
+        raw_items.append(
+            {
+                "filename": filename,
+                "result": _sanitize_for_llm_context(payload),
+            }
+        )
         record_refs.append(
             _build_record_ref(
                 capability_key="ai_face",
@@ -718,7 +1240,11 @@ def _run_ai_face(
                 result_id=payload.get("result_id"),
             )
         )
-    return (f"共完成 {hits} 张图片的 AI 换脸检测" if hits else "未处理到有效图片"), details[:12], record_refs
+    llm_context = {
+        "capability_key": "ai_face",
+        "items": raw_items,
+    }
+    return (f"共完成 {hits} 张图片的 AI 换脸检测" if hits else "未处理到有效图片"), details[:12], record_refs, llm_context
 
 
 def _run_capability(
@@ -729,25 +1255,25 @@ def _run_capability(
     user_text: str,
     attachments: list[dict[str, Any]],
     capability_key: str,
-) -> tuple[str, list[str], list[dict[str, str]], list[dict[str, Any]]]:
+) -> tuple[str, list[str], list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     if capability_key == "analysis":
-        summary, details, record_refs = _run_analysis(
+        summary, details, record_refs, llm_context = _run_analysis(
             db,
             user_id=user_id,
             relation_profile_id=relation_profile_id,
             user_text=user_text,
             attachments=attachments,
         )
-        return summary, details, record_refs, []
+        return summary, details, record_refs, [], llm_context
     if capability_key == "text_detection":
-        summary, details, record_refs = _run_text_detection(
+        summary, details, record_refs, llm_context = _run_text_detection(
             db,
             user_id=user_id,
             relation_profile_id=relation_profile_id,
             user_text=user_text,
             attachments=attachments,
         )
-        return summary, details, record_refs, []
+        return summary, details, record_refs, [], llm_context
     if capability_key == "ocr":
         return _run_direct_skill_for_images(
             db,
@@ -806,34 +1332,45 @@ def _run_capability(
             runner=run_impersonation_checker,
         )
     if capability_key == "web_phishing":
-        summary, details, record_refs = _run_web_phishing(
+        summary, details, record_refs, llm_context = _run_web_phishing(
             db,
             user_id=user_id,
             user_text=user_text,
             attachments=attachments,
         )
-        return summary, details, record_refs, []
+        return summary, details, record_refs, [], llm_context
     if capability_key == "audio_verify":
-        summary, details, record_refs = _run_audio_verify(
+        summary, details, record_refs, llm_context = _run_audio_verify(
             db,
             user_id=user_id,
             relation_profile_id=relation_profile_id,
             attachments=attachments,
         )
-        return summary, details, record_refs, []
-    if capability_key == "ai_face":
-        summary, details, record_refs = _run_ai_face(
+        return summary, details, record_refs, [], llm_context
+    if capability_key == "audio_scam_insight":
+        summary, details, record_refs, llm_context = _run_audio_scam_insight(
             db,
             user_id=user_id,
             attachments=attachments,
         )
-        return summary, details, record_refs, []
+        return summary, details, record_refs, [], llm_context
+    if capability_key == "ai_face":
+        summary, details, record_refs, llm_context = _run_ai_face(
+            db,
+            user_id=user_id,
+            attachments=attachments,
+        )
+        return summary, details, record_refs, [], llm_context
     raise ValueError(f"Unsupported capability: {capability_key}")
 
 
 def _build_final_text(plan_keys: list[str], step_results: list[dict[str, Any]]) -> str:
     if not step_results:
         return "已完成。"
+    if len(plan_keys) == 1:
+        summary = str(step_results[0].get("summary") or "").strip()
+        if summary:
+            return summary
     lines: list[str] = []
     if len(plan_keys) == 1:
         lines.append(f"已完成 {step_results[0].get('title') or '检测'}。")
@@ -935,6 +1472,7 @@ def iter_assistant_agent_stream(
 
         step_results: list[dict[str, Any]] = []
         record_refs: list[dict[str, str]] = []
+        tool_context_blocks: list[dict[str, Any]] = []
         for key in requested_keys:
             spec = get_capability(key)
             if spec is None:
@@ -947,13 +1485,20 @@ def iter_assistant_agent_stream(
                 },
             }
             try:
-                summary, details, step_refs, gallery_items = _run_capability(
+                summary, details, step_refs, gallery_items, llm_context = _run_capability(
                     db,
                     user_id=user_id,
                     relation_profile_id=relation_profile_id,
                     user_text=user_text,
                     attachments=active_attachments,
                     capability_key=key,
+                )
+                tool_context_blocks.append(
+                    {
+                        "capability_key": key,
+                        "title": spec.label,
+                        "context": _sanitize_for_llm_context(llm_context),
+                    }
                 )
                 step = _step_payload(
                     capability_key=key,
@@ -1003,9 +1548,31 @@ def iter_assistant_agent_stream(
                 }
             )
 
+        tool_final_text = _build_final_text(requested_keys, step_results)
+        prompt_messages_source, compressed_summary, compression = compress_messages(
+            messages,
+            usage_ratio=float(budget.get("usage_ratio") or 0.0),
+        )
+        llm_messages, _, _, _ = prepare_llm_request(
+            db,
+            messages=messages,
+            prompt_history_messages=prompt_messages_source,
+            compressed_summary=compressed_summary,
+            user_text=user_text,
+            relation_profile_id=relation_profile_id,
+        )
+        rewritten_final_text = _rewrite_execute_final_text_with_llm(
+            llm_call=llm_call,
+            llm_messages_with_context=llm_messages,
+            user_text=user_text,
+            plan_keys=requested_keys,
+            step_results=step_results,
+            tool_context_blocks=tool_context_blocks,
+        )
+        final_budget = apply_actual_usage_to_budget(budget, None, compressed=bool(compression))
         yield {
             "event": "final",
-            "content": _build_final_text(requested_keys, step_results),
+            "content": rewritten_final_text or tool_final_text,
             "extra_payload": {
                 "assistant_agent": {
                     "mode": "tool",
@@ -1018,8 +1585,8 @@ def iter_assistant_agent_stream(
                     "steps": step_results,
                     "record_refs": record_refs,
                 },
-                "context_budget": budget,
-                "compression": None,
+                "context_budget": final_budget,
+                "compression": compression,
             },
         }
         return

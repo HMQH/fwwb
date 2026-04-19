@@ -249,6 +249,8 @@ const styles = StyleSheet.create({
   headerSlot: {
     gap: 16,
     marginBottom: 16,
+    overflow: "visible",
+    zIndex: 1,
   },
   itemGap: {
     height: 12,

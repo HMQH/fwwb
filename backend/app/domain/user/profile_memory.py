@@ -357,11 +357,13 @@ def _fallback_detection_event_risk_score(result: DetectionResult) -> int:
 
 def _fallback_detection_urgency_delta(result: DetectionResult) -> int:
     score = _fallback_detection_event_risk_score(result)
-    delta = max(4, round(score * 0.36))
-    if str(result.risk_level or "").lower() == "high":
-        delta += 6
-    elif str(result.risk_level or "").lower() == "medium":
-        delta += 3
+    level = str(result.risk_level or "").lower()
+    if level == "high":
+        delta = max(10, round(score * 0.34))
+    elif level == "medium":
+        delta = max(4, round(score * 0.22))
+    else:
+        delta = round(score * 0.08)
     if result.need_manual_review:
         delta += 2
     if result.fraud_type and str(result.fraud_type).strip() not in {"", "未知", "待人工复核"}:
@@ -373,9 +375,12 @@ def _fallback_detection_safety_score(user: User, result: DetectionResult) -> int
     current = user.safety_score if isinstance(user.safety_score, int) else settings.user_profile_default_safety_score
     event_risk = _fallback_detection_event_risk_score(result)
     event_safety = max(10, min(99, 100 - event_risk))
-    if str(result.risk_level or "").lower() == "low" and not result.need_manual_review:
-        event_safety = max(event_safety, 92)
-    return max(0, min(100, round(current * 0.6 + event_safety * 0.4)))
+    level = str(result.risk_level or "").lower()
+    if level == "low" and not result.need_manual_review:
+        target = max(event_safety, 94)
+        return max(0, min(100, round(current * 0.88 + target * 0.12)))
+    weight = 0.4 if level == "high" else 0.34 if level == "medium" else 0.25
+    return max(0, min(100, round(current * (1 - weight) + event_safety * weight)))
 
 
 def _fallback_assistant_event_risk_score(event: dict[str, Any]) -> int:
@@ -386,14 +391,16 @@ def _fallback_assistant_event_risk_score(event: dict[str, Any]) -> int:
     user_text = _clean_text(event.get("user_message"), max_length=220)
     keyword_hits = sum(1 for item in _RISK_KEYWORDS if item in user_text)
     score = base + len(hit_rules) * 6 + len(fraud_hints) * 5 + len(stage_tags) * 3 + keyword_hits * 5
-    if score <= 0 and user_text:
-        score = 12
+    if score <= 0 and user_text and keyword_hits > 0:
+        score = min(30, 8 + keyword_hits * 4)
     return max(0, min(90, score))
 
 
 def _fallback_assistant_urgency_delta(event: dict[str, Any]) -> int:
     risk_score = _fallback_assistant_event_risk_score(event)
-    delta = max(2, round(risk_score * 0.26))
+    if risk_score <= 0:
+        return 0
+    delta = max(1, round(risk_score * 0.22))
     if event.get("relation_name"):
         delta += 2
     if event.get("hit_rules"):
@@ -405,10 +412,54 @@ def _fallback_assistant_safety_score(user: User, event: dict[str, Any]) -> int:
     current = user.safety_score if isinstance(user.safety_score, int) else settings.user_profile_default_safety_score
     event_risk = _fallback_assistant_event_risk_score(event)
     user_text = _clean_text(event.get("user_message"), max_length=220)
+    has_protection_signal = any(token in user_text for token in ("帮我判断", "帮我看看", "先问你", "核验", "确认一下"))
+    if event_risk <= 0 and not has_protection_signal:
+        return max(0, min(100, current))
     event_safety = max(18, min(98, 100 - event_risk))
-    if any(token in user_text for token in ("帮我判断", "帮我看看", "先问你", "核验", "确认一下")):
+    if has_protection_signal:
         event_safety = max(event_safety, 86)
     return max(0, min(100, round(current * 0.72 + event_safety * 0.28)))
+
+
+def _resolve_urgency_delta(
+    *,
+    fallback_delta: int,
+    llm_delta: int | None,
+) -> int:
+    baseline = _clamp_int(fallback_delta, minimum=0, maximum=40, fallback=0)
+    if llm_delta is None:
+        return baseline
+    candidate = _clamp_int(llm_delta, minimum=0, maximum=40, fallback=baseline)
+    if candidate <= 0 and baseline > 0:
+        return baseline
+    mixed = round(baseline * 0.72 + candidate * 0.28)
+    if mixed <= 0 and baseline > 0:
+        return baseline
+    return max(0, min(40, mixed))
+
+
+def _resolve_safety_score(
+    *,
+    current_score: int,
+    fallback_score: int,
+    llm_score: int | None,
+) -> int:
+    current = _clamp_int(current_score, minimum=0, maximum=100, fallback=settings.user_profile_default_safety_score)
+    baseline = _clamp_int(fallback_score, minimum=0, maximum=100, fallback=current)
+    if llm_score is None:
+        return baseline
+    candidate = _clamp_int(llm_score, minimum=0, maximum=100, fallback=baseline)
+    # 防止模型把 schema 默认值（95）当作占位返回，导致长期不更新。
+    if (
+        candidate == settings.user_profile_default_safety_score
+        and abs(candidate - baseline) >= 2
+    ):
+        return baseline
+    # 若模型只回了“接近当前值”的保守分，而事件本身风险显著，则仍按事件驱动调整。
+    if abs(candidate - current) <= 1 and abs(baseline - current) >= 3:
+        return baseline
+    mixed = round(baseline * 0.76 + candidate * 0.24)
+    return max(0, min(100, mixed))
 
 
 def _fallback_detection_candidate_memory(event: dict[str, Any]) -> str:
@@ -745,10 +796,16 @@ def _evaluate_event_for_memory(
 ) -> tuple[dict[str, Any], str | None]:
     user_context = _build_user_context_payload(user, memory_path=get_user_memory_path(user.id))
     urgency_before = max(0, min(100, int(user.memory_urgency_score or 0)))
+    current_safety_before = _clamp_int(
+        user.safety_score,
+        minimum=0,
+        maximum=100,
+        fallback=settings.user_profile_default_safety_score,
+    )
 
     should_promote = False
-    urgency_delta = fallback_urgency_delta
-    safety_score = fallback_safety_score
+    llm_urgency_delta: int | None = None
+    llm_safety_score: int | None = None
     candidate_memory = ""
     event_title = _clean_text(current_event.get("title"), max_length=24)
     memory_bucket = _fallback_memory_bucket(current_event)
@@ -765,8 +822,18 @@ def _evaluate_event_for_memory(
         )
         payload = _run_json_prompt(system_prompt, user_prompt)
         should_promote = _safe_bool(payload.get("should_promote"))
-        urgency_delta = _clamp_int(payload.get("urgency_delta"), minimum=0, maximum=40, fallback=fallback_urgency_delta)
-        safety_score = _clamp_int(payload.get("safety_score"), minimum=0, maximum=100, fallback=fallback_safety_score)
+        llm_urgency_delta = _clamp_int(
+            payload.get("urgency_delta"),
+            minimum=0,
+            maximum=40,
+            fallback=fallback_urgency_delta,
+        )
+        llm_safety_score = _clamp_int(
+            payload.get("safety_score"),
+            minimum=0,
+            maximum=100,
+            fallback=fallback_safety_score,
+        )
         candidate_memory = _clean_text(payload.get("candidate_memory"), max_length=settings.user_profile_summary_max_length)
         event_title = _clean_text(payload.get("event_title"), max_length=24, fallback=event_title)
         memory_bucket_candidate = _clean_text(payload.get("memory_bucket"), max_length=32)
@@ -777,6 +844,16 @@ def _evaluate_event_for_memory(
         salience_score = _clamp_float(payload.get("salience_score"), minimum=0.0, maximum=1.0, fallback=salience_score)
     except Exception:  # noqa: BLE001
         logger.exception("User profile assessment failed for user=%s event=%s", user.id, current_event.get("event_id"))
+
+    urgency_delta = _resolve_urgency_delta(
+        fallback_delta=fallback_urgency_delta,
+        llm_delta=llm_urgency_delta,
+    )
+    safety_score = _resolve_safety_score(
+        current_score=current_safety_before,
+        fallback_score=fallback_safety_score,
+        llm_score=llm_safety_score,
+    )
 
     current_event = {
         **current_event,
@@ -802,7 +879,14 @@ def _evaluate_event_for_memory(
         and signals["recall_count"] >= settings.user_memory_promotion_min_recall_count
         and signals["unique_query_count"] >= settings.user_memory_promotion_min_unique_queries
     )
-    promote_now = should_promote or score_hit or threshold_hit
+    event_risk_score = _clamp_int(current_event.get("final_score"), minimum=0, maximum=100, fallback=0)
+    risk_promotion_hit = (
+        _clean_text(current_event.get("source"), max_length=16) == "detection"
+        and str(current_event.get("risk_level") or "").lower() == "high"
+        and event_risk_score >= 70
+        and not _safe_bool(current_event.get("need_manual_review"), False)
+    )
+    promote_now = should_promote or score_hit or threshold_hit or risk_promotion_hit
 
     if promote_now and not current_event["candidate_memory"]:
         current_event["candidate_memory"] = _clean_text(
@@ -840,6 +924,7 @@ def _evaluate_event_for_memory(
         "query_tags": current_event["query_tags"],
         "should_promote": should_promote,
         "score_hit": score_hit,
+        "risk_promotion_hit": risk_promotion_hit,
         "promoted_now": promote_now,
         "promoted": promote_now,
         "threshold_hit": threshold_hit,

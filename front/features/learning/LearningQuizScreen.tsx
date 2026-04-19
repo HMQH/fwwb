@@ -13,6 +13,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
+import { homeApi } from "@/features/home/api";
 import { fontFamily, palette, radius } from "@/shared/theme";
 
 import { learningApi } from "./api";
@@ -54,7 +55,7 @@ function ResultChip({ label }: { label: string }) {
 export default function LearningQuizScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const params = useLocalSearchParams<{ topic?: string | string[] }>();
   const topicKey = getTopicParam(params.topic);
 
@@ -64,6 +65,7 @@ export default function LearningQuizScreen() {
   const [error, setError] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [rewardedThisRound, setRewardedThisRound] = useState(false);
 
   const fetchQuizSet = useCallback(async () => {
     setError(null);
@@ -77,6 +79,7 @@ export default function LearningQuizScreen() {
       setQuizSet(response);
       setCurrentIndex(0);
       setSelectedAnswers({});
+      setRewardedThisRound(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "题目加载失败");
     } finally {
@@ -109,6 +112,23 @@ export default function LearningQuizScreen() {
       ),
     [questions, selectedAnswers]
   );
+
+  useEffect(() => {
+    if (!completed || rewardedThisRound || total <= 0) {
+      return;
+    }
+    setRewardedThisRound(true);
+    if (!token) {
+      return;
+    }
+    void homeApi.grantWateringReward(
+      {
+        source: "quiz",
+        units: 1,
+      },
+      token
+    );
+  }, [completed, rewardedThisRound, token, total]);
 
   const renderQuestion = (question: LearningQuizQuestion) => {
     const answerId = selectedAnswers[question.id];

@@ -1,6 +1,8 @@
 import { request } from "@/shared/api";
 
 import type {
+  AudioScamInsightJobResponse,
+  AudioScamInsightJobSubmitResponse,
   AIFaceCheckResponse,
   AudioVerifyBatchJobResponse,
   AudioVerifyBatchJobSubmitResponse,
@@ -12,6 +14,7 @@ import type {
   DetectionSubmitAcceptedResponse,
   DirectImageSkillCheckResponse,
   PickedFile,
+  ScamCallInsight,
   WebPhishingPredictRequest,
   WebPhishingPredictResponse,
 } from "./types";
@@ -44,6 +47,15 @@ function buildAudioVerifyBatchFormData(files: PickedFile[]): FormData {
       { uri: file.uri, name: file.name, type: file.type || "audio/wav" } as unknown as Blob
     );
   }
+  return form;
+}
+
+function buildAudioScamInsightFormData(
+  file: PickedFile,
+  languageHint = "zh"
+): FormData {
+  const form = buildAudioVerifyFormData(file);
+  form.append("language_hint", languageHint);
   return form;
 }
 
@@ -81,6 +93,7 @@ export function buildDetectionSubmitFormData(input: {
   text_content?: string;
   relation_profile_id?: string | null;
   deep_reasoning?: boolean;
+  video_analysis_target?: "ai" | "physiology";
   text_files?: PickedFile[];
   audio_files?: PickedFile[];
   image_files?: PickedFile[];
@@ -97,6 +110,9 @@ export function buildDetectionSubmitFormData(input: {
   if (typeof input.deep_reasoning === "boolean") {
     form.append("deep_reasoning", String(input.deep_reasoning));
     form.append("analysis_mode", input.deep_reasoning ? "deep" : "standard");
+  }
+  if (input.video_analysis_target) {
+    form.append("video_analysis_target", input.video_analysis_target);
   }
   appendRnFiles(form, "text_files", input.text_files ?? []);
   appendRnFiles(form, "audio_files", input.audio_files ?? []);
@@ -168,6 +184,66 @@ export const detectionsApi = {
   getAudioVerifyBatchJob(token: string, batchId: string) {
     return request<AudioVerifyBatchJobResponse>(
       `/api/detections/audio/verify/batch/jobs/${batchId}`,
+      {},
+      token
+    );
+  },
+
+  analyzeAudioScamInsight(
+    token: string,
+    file: PickedFile,
+    languageHint = "zh"
+  ) {
+    return request<ScamCallInsight>(
+      "/api/detections/audio/scam-insight",
+      {
+        method: "POST",
+        body: buildAudioScamInsightFormData(file, languageHint),
+      },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  analyzeAudioScamInsightFromUploads(token: string, input: {
+    audio_path: string;
+    filename?: string | null;
+    language_hint?: string;
+  }) {
+    return request<ScamCallInsight>(
+      "/api/detections/audio/scam-insight/from-uploads",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          audio_path: input.audio_path,
+          filename: input.filename ?? null,
+          language_hint: input.language_hint ?? "zh",
+        }),
+      },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  submitAudioScamInsight(
+    token: string,
+    file: PickedFile,
+    languageHint = "zh"
+  ) {
+    return request<AudioScamInsightJobSubmitResponse>(
+      "/api/detections/audio/scam-insight/submit",
+      {
+        method: "POST",
+        body: buildAudioScamInsightFormData(file, languageHint),
+      },
+      token,
+      { timeoutMs: SUBMIT_TIMEOUT_MS }
+    );
+  },
+
+  getAudioScamInsightJob(token: string, jobId: string) {
+    return request<AudioScamInsightJobResponse>(
+      `/api/detections/audio/scam-insight/jobs/${jobId}`,
       {},
       token
     );

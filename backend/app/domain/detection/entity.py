@@ -149,3 +149,120 @@ class DetectionResult(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class DetectionReasoningStage(Base):
+    __tablename__ = "detection_reasoning_stages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_submissions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    result_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stage_code: Mapped[str] = mapped_column(Text, nullable=False)
+    stage_label: Mapped[str] = mapped_column(Text, nullable=False)
+    stage_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    support_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sql_text("false"))
+    tone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class DetectionReasoningNode(Base):
+    __tablename__ = "detection_reasoning_nodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_submissions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    result_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_key: Mapped[str] = mapped_column(Text, nullable=False)
+    node_label: Mapped[str] = mapped_column(Text, nullable=False)
+    node_type: Mapped[str] = mapped_column(Text, nullable=False)
+    tone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lane: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stage_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class DetectionReasoningEdge(Base):
+    __tablename__ = "detection_reasoning_edges"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_submissions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    result_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("detection_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    edge_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    target_key: Mapped[str] = mapped_column(Text, nullable=False)
+    relation_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

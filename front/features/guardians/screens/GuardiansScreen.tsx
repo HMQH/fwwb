@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthBackdrop, useAuth } from "@/features/auth";
+import { homeApi } from "@/features/home/api";
 import { ApiError } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
 
@@ -146,6 +147,10 @@ export default function GuardiansScreen() {
     [router]
   );
 
+  const handleOpenReports = useCallback(() => {
+    router.push("/guardians/reports" as never);
+  }, [router]);
+
   const handleCreate = useCallback(async () => {
     if (!token || submitting) {
       return;
@@ -162,6 +167,13 @@ export default function GuardiansScreen() {
           guardian_name: guardianName.trim() || null,
           relation,
           is_primary: wardBindings.length === 0,
+        },
+        token
+      );
+      void homeApi.grantWateringReward(
+        {
+          source: "guardian",
+          units: 1,
         },
         token
       );
@@ -183,6 +195,14 @@ export default function GuardiansScreen() {
       setSubmitting(true);
       try {
         await guardiansApi.confirmBinding(bindingId, token);
+        void homeApi.grantWateringReward(
+          {
+            source: "guardian",
+            units: 1,
+            dedupe_key: `guardian-confirm:${bindingId}`,
+          },
+          token
+        );
         await loadAll();
       } catch (err) {
         Alert.alert("确认失败", err instanceof ApiError ? err.message : "请稍后重试");
@@ -230,6 +250,22 @@ export default function GuardiansScreen() {
               </View>
             </View>
           </View>
+
+          <Pressable
+            onPress={handleOpenReports}
+            style={({ pressed }) => [styles.reportEntryCard, pressed && styles.buttonPressed]}
+          >
+            <View style={styles.reportEntryTop}>
+              <View style={styles.reportEntryIcon}>
+                <MaterialCommunityIcons name="file-chart-outline" size={20} color={palette.accentStrong} />
+              </View>
+              <View style={styles.headerCopy}>
+                <Text style={styles.reportEntryTitle}>安全监测报告</Text>
+                <Text style={styles.reportEntryMeta}>日报 · 月报 · 年报</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={22} color={palette.lineStrong} />
+            </View>
+          </Pressable>
 
           <View style={styles.formCard}>
             <View style={styles.cardHeader}>
@@ -507,6 +543,41 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
     gap: 12,
     ...panelShadow,
+  },
+  reportEntryCard: {
+    borderRadius: radius.xl,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.line,
+    ...panelShadow,
+  },
+  reportEntryTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  reportEntryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.accentSoft,
+  },
+  reportEntryTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    fontFamily: fontFamily.display,
+  },
+  reportEntryMeta: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamily.body,
   },
   sectionCard: {
     borderRadius: radius.xl,

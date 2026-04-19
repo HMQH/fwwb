@@ -77,6 +77,18 @@ def _default_web_phishing_url_feature_columns_path() -> str:
     return str(_BACKEND_ROOT / "checkpoints" / "chiphish_url_feature_columns.json")
 
 
+def _default_video_ai_code_root() -> str:
+    return str(_BACKEND_ROOT / "checkpoints" / "D3" / "code")
+
+
+def _default_video_ai_runtime_root() -> str:
+    return str(_BACKEND_ROOT / "checkpoints" / "D3" / "runtime")
+
+
+def _default_video_deception_face_landmarker_path() -> str:
+    return str(_BACKEND_ROOT / "checkpoints" / "mediapipe" / "face_landmarker_v2_with_blendshapes.task")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_BACKEND_ROOT / ".env"),
@@ -191,6 +203,14 @@ class Settings(BaseSettings):
     detection_history_limit_default: int = 20
     detection_history_limit_max: int = 100
     detection_text_storage_limit: int = 20000
+    audio_scam_insight_model: str = "qwen3.5-omni-plus"
+    audio_scam_insight_base_url: str | None = None
+    audio_scam_insight_api_key: str | None = None
+    audio_scam_insight_timeout_seconds: int = 180
+    audio_scam_insight_temperature: float = 0.1
+    audio_scam_insight_max_tokens: int = 2200
+    audio_scam_insight_max_file_bytes: int = 9_500_000
+    audio_scam_insight_language_hint: str = "zh"
     image_fraud_reference_dir: str = Field(default_factory=_default_image_fraud_reference_dir)
     image_fraud_cache_path: str = Field(default_factory=_default_image_fraud_cache_path)
     image_fraud_reference_limit: int = 0
@@ -206,6 +226,29 @@ class Settings(BaseSettings):
     ai_face_face_nms_threshold: float = 0.4
     ai_face_retinaface_max_size: int = 4096
     audio_verify_model_path: str = Field(default_factory=_default_audio_verify_model_path)
+    video_ai_detector_enabled: bool = True
+    video_ai_code_root: str = Field(default_factory=_default_video_ai_code_root)
+    video_ai_runtime_root: str = Field(default_factory=_default_video_ai_runtime_root)
+    video_ai_encoder: str = "XCLIP-16"
+    video_ai_loss: str = "l2"
+    video_ai_device: str = "auto"
+    video_ai_timeout_seconds: int = 300
+    video_ai_keep_frames: bool = False
+    video_ai_generate_explanation: bool = True
+    video_ai_std_low_threshold: float = 1.5
+    video_ai_std_normal_upper: float = 3.5
+    video_ai_std_high_threshold: float = 5.0
+    video_deception_enabled: bool = True
+    video_deception_face_landmarker_path: str = Field(default_factory=_default_video_deception_face_landmarker_path)
+    video_deception_target_fps: float = 10.0
+    video_deception_max_duration_seconds: int = 60
+    video_deception_min_face_frames: int = 24
+    video_deception_hr_low_hz: float = 0.7
+    video_deception_hr_high_hz: float = 3.0
+    video_deception_hr_window_seconds: float = 8.0
+    video_deception_hr_stride_seconds: float = 1.5
+    video_deception_medium_threshold: float = 0.42
+    video_deception_high_threshold: float = 0.68
     web_phishing_model_path: str = Field(default_factory=_default_web_phishing_model_path)
     web_phishing_scaler_path: str = Field(default_factory=_default_web_phishing_scaler_path)
     web_phishing_feature_columns_path: str = Field(default_factory=_default_web_phishing_feature_columns_path)

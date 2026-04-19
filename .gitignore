@@ -40,3 +40,6 @@ storage/uploads/*
 /merge
 # 模型检查点（体积大，勿提交）
 backend/checkpoints/
+
+/backend-linux
+/front-release

@@ -37,7 +37,7 @@ from app.shared.storage.upload_paths import (
     save_upload_bytes,
 )
 
-_DEFAULT_TITLE = "反诈助手"
+_DEFAULT_TITLE = "灵獴反诈"
 _URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
 _TEXT_DECODE_SUFFIXES = {".txt", ".md", ".json", ".csv", ".log", ".html", ".htm"}
@@ -564,6 +564,101 @@ _LOW_INFO_TEXT_MARKERS = (
     "法院",
 )
 
+_ANTIFRAUD_INTENT_MARKERS = (
+    "诈骗",
+    "骗",
+    "被骗",
+    "风险",
+    "可疑",
+    "真假",
+    "真伪",
+    "钓鱼",
+    "验证码",
+    "转账",
+    "汇款",
+    "收款",
+    "打款",
+    "银行卡",
+    "身份证",
+    "二维码",
+    "链接",
+    "网址",
+    "域名",
+    "网图",
+    "以图识图",
+    "ocr",
+    "公章",
+    "敏感信息",
+    "换脸",
+    "deepfake",
+    "录音鉴别",
+    "音频鉴别",
+    "网址钓鱼",
+    "短信检测",
+    "话术检测",
+)
+
+_GENERAL_ASSISTANT_MARKERS = (
+    "python",
+    "代码",
+    "脚本",
+    "函数",
+    "接口",
+    "报错",
+    "bug",
+    "爬虫",
+    "爬取",
+    "网站数据",
+    "前端",
+    "后端",
+    "sql",
+    "翻译",
+    "总结",
+    "改写",
+    "润色",
+    "解释",
+    "怎么写",
+    "怎么做",
+    "示例",
+    "demo",
+    "算法",
+    "prompt",
+    "提示词",
+)
+
+
+def _empty_retrieval_context() -> tuple[dict[str, Any], list[str]]:
+    return {
+        "rule_score": 0,
+        "hit_rules": [],
+        "fraud_type_hints": [],
+        "stage_tags": [],
+        "references": [],
+    }, []
+
+
+
+def _has_antifraud_intent(value: str | None) -> bool:
+    normalized = detection_rules.normalize_text(value or "")
+    if not normalized:
+        return False
+    collapsed = normalized.replace(" ", "").lower()
+    if _URL_RE.search(collapsed):
+        return True
+    return any(marker in collapsed for marker in _ANTIFRAUD_INTENT_MARKERS)
+
+
+
+def _is_general_assistant_request(value: str | None) -> bool:
+    normalized = detection_rules.normalize_text(value or "")
+    if not normalized:
+        return False
+    collapsed = normalized.replace(" ", "").lower()
+    if _has_antifraud_intent(collapsed):
+        return False
+    return any(marker in collapsed for marker in _GENERAL_ASSISTANT_MARKERS)
+
+
 
 def _is_low_information_chat_text(value: str | None) -> bool:
     normalized = detection_rules.normalize_text(value or "")
@@ -584,6 +679,7 @@ def _is_low_information_chat_text(value: str | None) -> bool:
     return False
 
 
+
 def _build_retrieval_context(
     db: Session,
     *,
@@ -591,21 +687,12 @@ def _build_retrieval_context(
 ) -> tuple[dict[str, Any], list[str]]:
     normalized = detection_rules.normalize_text(user_text)
     if not normalized:
-        return {
-            "rule_score": 0,
-            "hit_rules": [],
-            "fraud_type_hints": [],
-            "stage_tags": [],
-            "references": [],
-        }, []
+        return _empty_retrieval_context()
     if _is_low_information_chat_text(normalized):
-        return {
-            "rule_score": 0,
-            "hit_rules": [],
-            "fraud_type_hints": [],
-            "stage_tags": [],
-            "references": [],
-        }, []
+        return _empty_retrieval_context()
+    if not _has_antifraud_intent(normalized):
+        return _empty_retrieval_context()
+
     rule_analysis = detection_rules.analyze_text(normalized)
 
     snippets: list[str] = []
@@ -628,8 +715,8 @@ def _build_retrieval_context(
                     "similarity_score": round(float(hit.score), 4),
                 }
             )
-            fraud_type = hit.fraud_type or "风险样本"
-            snippets.append(f"风险参照·{fraud_type}：{snippet}")
+            fraud_type = hit.fraud_type or "未知类型"
+            snippets.append(f"风险参考｜{fraud_type}｜{snippet}")
         for hit in retrieval_bundle.white_hits[:1]:
             snippet = _short_text(hit.chunk_text)
             if not snippet:
@@ -642,7 +729,7 @@ def _build_retrieval_context(
                     "similarity_score": round(float(hit.score), 4),
                 }
             )
-            snippets.append(f"正常参照：{snippet}")
+            snippets.append(f"安全参考｜{snippet}")
     except Exception:
         references = []
 
@@ -654,6 +741,7 @@ def _build_retrieval_context(
         "references": references,
     }
     return summary, snippets
+
 
 
 def _build_context_blob(
@@ -695,11 +783,15 @@ def _build_context_blob(
     return "\n\n".join(blocks)
 
 
+
 def _assistant_system_prompt(role_prompt: str | None = None) -> str:
     base_prompt = (
-        "你是移动端反诈助手。"
+        "你是移动端智能助手，默认先判断当前需求属于普通助手任务还是反诈判断任务。"
         "只用简体中文回答。"
-        "必须把当前消息、整段会话、附件内容、用户画像、对象记忆一起对照分析。"
+        "如果用户是在写代码、解释报错、总结文本、翻译、改写、方案讨论、回忆上文或一般问答，就按普通助手直接回答。"
+        "这类普通任务不要强行输出风险等级、风险类型、结论模板，不要硬往诈骗方向解释。"
+        "只有当用户明确要求判断诈骗/风险/真假，或者当前轮、关联记录里有待检测的聊天、截图、链接、二维码、图片、音频等材料时，才进入反诈分析模式。"
+        "进入反诈模式后，必须把当前消息、整段会话、附件内容、用户画像、对象记忆一起对照分析。"
         "用户可能临时选择一个对象作为补充记忆，这不会创建新会话，但你必须使用这部分资料辅助判断。"
         "重点判断身份是否匹配、语气是否异常、诉求是否突然变化、是否存在借钱转账、验证码、远程控制、下载 App、保密施压等风险。"
         "如果会话绑定了某条记录，必须结合这条记录的全部上下文，不要只看摘要。"
@@ -720,6 +812,7 @@ def _assistant_system_prompt(role_prompt: str | None = None) -> str:
         + "以下是当前用户所属人群的内部防诈侧重点，仅用于推理，不得逐条向用户复述：\n"
         + role_prompt.strip()
     )
+
 
 def _extract_chat_content(payload: dict[str, Any]) -> str:
     choices = payload.get("choices")
@@ -860,6 +953,9 @@ def _build_fallback_reply(
     retrieval_summary: dict[str, Any],
     relation_name: str | None = None,
 ) -> str:
+    if _is_general_assistant_request(user_text) and not _has_antifraud_intent(user_text):
+        return "这是普通问题，不是反诈判断。我刚才生成失败了。请把需求再说具体一点，我直接按普通助手方式回答。"
+
     if _is_low_information_chat_text(user_text):
         return "这句话本身看不出风险。要我判断是否诈骗，请发完整聊天、图片、链接或具体诉求。"
 
@@ -1070,7 +1166,11 @@ def _prepare_assistant_request(
     current_upload_context = _build_current_upload_context(current_uploads)
 
     analysis_text = _compose_analysis_text(user_text, current_uploads)
-    retrieval_summary, retrieval_lines = _build_retrieval_context(db, user_text=analysis_text)
+    needs_antifraud_context = bool(current_uploads) or session.source_submission_id is not None or _has_antifraud_intent(analysis_text)
+    if needs_antifraud_context:
+        retrieval_summary, retrieval_lines = _build_retrieval_context(db, user_text=analysis_text)
+    else:
+        retrieval_summary, retrieval_lines = _empty_retrieval_context()
     context_blob = _build_context_blob(
         user_context=user_context,
         relation_context=relation_context,

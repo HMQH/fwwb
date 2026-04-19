@@ -16,20 +16,41 @@ except ImportError:  # pragma: no cover
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _langsmith_enabled() -> bool:
+    return bool(
+        settings.langsmith_tracing
+        and _traceable is not None
+        and str(settings.langsmith_api_key or "").strip()
+    )
+
+
 def configure_langsmith_environment() -> None:
-    if settings.langsmith_api_key:
-        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    if not _langsmith_enabled():
+        os.environ["LANGSMITH_TRACING"] = "false"
+        os.environ.pop("LANGSMITH_API_KEY", None)
+        os.environ.pop("LANGSMITH_PROJECT", None)
+        os.environ.pop("LANGSMITH_ENDPOINT", None)
+        os.environ.pop("LANGSMITH_WORKSPACE_ID", None)
+        return
+
+    os.environ["LANGSMITH_API_KEY"] = str(settings.langsmith_api_key or "").strip()
     if settings.langsmith_project:
         os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    else:
+        os.environ.pop("LANGSMITH_PROJECT", None)
     if settings.langsmith_endpoint:
         os.environ["LANGSMITH_ENDPOINT"] = settings.langsmith_endpoint
+    else:
+        os.environ.pop("LANGSMITH_ENDPOINT", None)
     if settings.langsmith_workspace_id:
         os.environ["LANGSMITH_WORKSPACE_ID"] = settings.langsmith_workspace_id
-    os.environ["LANGSMITH_TRACING"] = "true" if settings.langsmith_tracing else "false"
+    else:
+        os.environ.pop("LANGSMITH_WORKSPACE_ID", None)
+    os.environ["LANGSMITH_TRACING"] = "true"
 
 
 def traceable(*args: Any, **kwargs: Any):
-    if _traceable is None:
+    if _traceable is None or not _langsmith_enabled():
         if args and callable(args[0]) and len(args) == 1 and not kwargs:
             return args[0]
 
@@ -44,6 +65,6 @@ def traceable(*args: Any, **kwargs: Any):
 
 def tracing_session() -> Any:
     configure_langsmith_environment()
-    if _tracing_context is None or not settings.langsmith_tracing:
+    if _tracing_context is None or not _langsmith_enabled():
         return nullcontext()
     return _tracing_context(enabled=True)

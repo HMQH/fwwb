@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -9,6 +10,13 @@ import {
   Text,
   View,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/features/auth";
@@ -28,6 +36,8 @@ import type {
 
 const DEFAULT_TOPIC: LearningTopicKey = "financial_fraud";
 const DEFAULT_CASE_CATEGORY: LearningCaseCategoryKey = "recommended";
+
+const MEERKAT_TEACHER = require("../../assets/images/meerkat_teacher.png");
 
 type LearningMode = "cases" | "study";
 
@@ -52,6 +62,11 @@ export default function LearningHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ mode?: string | string[]; topic?: string | string[] }>();
   const { user } = useAuth();
+
+  const modeMascotFloat = useSharedValue(0);
+  const modeMascotFloatStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: modeMascotFloat.value }],
+  }));
 
   const [mode, setMode] = useState<LearningMode>("study");
   const [topics, setTopics] = useState<LearningTopicSummary[]>([]);
@@ -121,6 +136,14 @@ export default function LearningHomeScreen() {
   useEffect(() => {
     void loadTopics();
   }, [loadTopics]);
+
+  useEffect(() => {
+    modeMascotFloat.value = withRepeat(
+      withTiming(-16, { duration: 2200, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true
+    );
+  }, [modeMascotFloat]);
 
   useEffect(() => {
     void loadCases(activeCaseCategory);
@@ -272,6 +295,17 @@ export default function LearningHomeScreen() {
                     </Pressable>
                   );
                 })}
+                <Animated.View
+                  style={[styles.modeMascotLayer, modeMascotFloatStyle]}
+                  pointerEvents="none"
+                >
+                  <Image
+                    source={MEERKAT_TEACHER}
+                    style={styles.modeMascotImage}
+                    resizeMode="contain"
+                    accessibilityLabel="教学狐獴"
+                  />
+                </Animated.View>
               </View>
             </View>
 
@@ -378,6 +412,7 @@ const styles = StyleSheet.create({
   },
   headerCopy: {
     flex: 1,
+    minWidth: 0,
     gap: 4,
   },
   pageTitle: {
@@ -412,6 +447,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.body,
   },
   modeSwitch: {
+    position: "relative",
     flexDirection: "row",
     gap: 6,
     borderRadius: radius.xl,
@@ -419,6 +455,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
     padding: 5,
+    overflow: "visible",
+  },
+  modeMascotLayer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+  },
+  modeMascotImage: {
+    width: 104,
+    height: 104,
+    marginTop: -22,
   },
   modeButton: {
     flex: 1,
@@ -426,6 +474,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 36,
   },
   modeButtonActive: {
     backgroundColor: palette.surface,

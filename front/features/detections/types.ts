@@ -45,6 +45,107 @@ export type AudioVerifyBatchJobResponse = AudioVerifyBatchJobSubmitResponse & {
   failed_count: number;
 };
 
+export type ScamInsightRiskLevel = "low" | "medium" | "high" | "critical" | string;
+
+export type ScamBehaviorProfile = {
+  urgency_score: number;
+  dominance_score: number;
+  command_score: number;
+  victim_compliance_score: number;
+  speech_pressure_score: number;
+  summary: string;
+};
+
+export type ScamModalityContribution = {
+  audio_behavior: number;
+  semantic_content: number;
+  process_dynamics: number;
+};
+
+export type ScamStageSlice = {
+  id: string;
+  stage: string;
+  label: string;
+  start_sec: number;
+  end_sec: number;
+  color: string;
+  risk_score?: number;
+  summary?: string;
+  cue_tags?: string[];
+};
+
+export type ScamRiskCurvePoint = {
+  time_sec: number;
+  risk_score: number;
+};
+
+export type ScamTimelineMarker = {
+  id: string;
+  label: string;
+  time_sec: number;
+  description: string;
+  tone: "warning" | "danger" | "peak" | "info" | string;
+  stage_label?: string;
+  user_meaning?: string;
+};
+
+export type ScamDynamics = {
+  total_duration_sec: number;
+  earliest_risk_sec: number;
+  escalation_sec: number;
+  peak_risk_sec: number;
+  stage_sequence: ScamStageSlice[];
+  risk_curve: ScamRiskCurvePoint[];
+  key_moments: ScamTimelineMarker[];
+};
+
+export type ScamEvidenceSegment = {
+  id: string;
+  start_sec: number;
+  end_sec: number;
+  stage: string;
+  stage_label: string;
+  risk_score: number;
+  transcript_excerpt: string;
+  audio_tags: string[];
+  semantic_tags: string[];
+  explanation: string;
+};
+
+export type ScamDecision = {
+  call_risk_score: number;
+  risk_level: ScamInsightRiskLevel;
+  confidence: number;
+  summary: string;
+  explanation: string;
+  suggested_actions: string[];
+};
+
+export type ScamCallInsight = {
+  behavior_profile: ScamBehaviorProfile;
+  dynamics: ScamDynamics;
+  evidence_segments: ScamEvidenceSegment[];
+  decision: ScamDecision;
+  modality_contrib: ScamModalityContribution;
+};
+
+export type AudioScamInsightJobSubmitResponse = {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  filename: string | null;
+};
+
+export type AudioScamInsightJobResponse = {
+  job_id: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  created_at: string;
+  updated_at: string;
+  filename: string | null;
+  error_message: string | null;
+  result: ScamCallInsight | null;
+};
+
 export type AudioVerifyRecordItem = {
   file_path?: string | null;
   file_name: string;
@@ -57,6 +158,120 @@ export type AudioVerifyRecordItem = {
   duration_sec?: number | null;
   model_version?: string | null;
   feature_version?: string | null;
+};
+
+export type VideoAIRecordItem = {
+  file_path?: string | null;
+  file_name: string;
+  status: "completed" | "failed" | string;
+  error_message?: string | null;
+  encoder?: string | null;
+  loss_type?: string | null;
+  device?: string | null;
+  frame_count?: number | null;
+  second_order_mean?: number | null;
+  second_order_std?: number | null;
+  risk_level?: "low" | "medium" | "high" | string | null;
+  is_ai_generated_suspect?: boolean | null;
+  confidence?: number | null;
+  pattern?: string | null;
+  summary?: string | null;
+  final_reason?: string | null;
+  model_name?: string | null;
+  thresholds?: Record<string, number> | null;
+  key_time_sec?: number | null;
+  explanation?: {
+    top_anomalies?: Array<{
+      rank?: number | null;
+      key_second_order_index?: number | null;
+      key_frame_index?: number | null;
+      key_time_sec?: number | null;
+      peak_second_order_score?: number | null;
+      second_order_flow_peak_magnitude?: number | null;
+      second_order_flow_mean_magnitude?: number | null;
+      frame_indices?: Record<string, number> | null;
+      paths?: Record<string, string> | null;
+      summary?: string | null;
+    }> | null;
+    key_second_order_index?: number | null;
+    key_frame_index?: number | null;
+    key_time_sec?: number | null;
+    peak_second_order_score?: number | null;
+    second_order_flow_peak_magnitude?: number | null;
+    second_order_flow_mean_magnitude?: number | null;
+    frame_indices?: Record<string, number> | null;
+    paths?: Record<string, string> | null;
+    summary?: string | null;
+    error?: string | null;
+  } | null;
+};
+
+export type VideoSignalSeries = {
+  times: number[];
+  values: number[];
+};
+
+export type VideoDeceptionAnalysisFinding = {
+  dimension?: string | null;
+  level?: "low" | "medium" | "high" | string | null;
+  title?: string | null;
+  description?: string | null;
+  evidence?: Record<string, unknown> | null;
+};
+
+export type VideoDeceptionTimelineEvent = {
+  time_sec?: number | null;
+  type?: string | null;
+  severity?: "low" | "medium" | "high" | string | null;
+  title?: string | null;
+  description?: string | null;
+  evidence?: Record<string, unknown> | null;
+};
+
+export type VideoDeceptionAnalysis = {
+  overview?: string | null;
+  findings?: VideoDeceptionAnalysisFinding[] | null;
+  timeline_events?: VideoDeceptionTimelineEvent[] | null;
+  confidence_note?: string | null;
+  limitations?: string[] | null;
+};
+
+export type VideoDeceptionRecordItem = {
+  file_path?: string | null;
+  file_name: string;
+  status: "completed" | "failed" | string;
+  error_message?: string | null;
+  model_name?: string | null;
+  person_detected?: boolean | null;
+  sampled_fps?: number | null;
+  sampled_frames?: number | null;
+  face_frames?: number | null;
+  face_frame_ratio?: number | null;
+  duration_sec?: number | null;
+  confidence?: number | null;
+  face_behavior_score?: number | null;
+  physiology_score?: number | null;
+  overall_score?: number | null;
+  risk_level?: "low" | "medium" | "high" | string | null;
+  signal_quality?: number | null;
+  hr_mean_bpm?: number | null;
+  hr_std_bpm?: number | null;
+  blink_rate_per_min?: number | null;
+  behavior_components?: Record<string, number> | null;
+  physiology_components?: Record<string, number> | null;
+  series?: {
+    gaze_x?: VideoSignalSeries | null;
+    gaze_y?: VideoSignalSeries | null;
+    head_pitch?: VideoSignalSeries | null;
+    head_yaw?: VideoSignalSeries | null;
+    head_roll?: VideoSignalSeries | null;
+    hr_bpm?: VideoSignalSeries | null;
+    rppg_signal?: VideoSignalSeries | null;
+  } | null;
+  summary?: string | null;
+  final_reason?: string | null;
+  analysis?: VideoDeceptionAnalysis | null;
+  raw?: Record<string, unknown> | null;
 };
 
 export type KnownDetectionPipelineStep =
@@ -280,6 +495,95 @@ export type DetectionKagEvidenceItem = {
   stage?: string | null;
 };
 
+export type DetectionKagStageRow = {
+  code: string;
+  label: string;
+  score: number;
+  support_score?: number | null;
+  active?: boolean;
+  tone?: string | null;
+  black_count?: number | null;
+  white_count?: number | null;
+  keywords?: string[];
+};
+
+export type DetectionKagStageRetrieval = {
+  code: string;
+  label: string;
+  score?: number | null;
+  support_score?: number | null;
+  query_text?: string;
+  keywords?: string[];
+  black_hits?: DetectionEvidence[];
+  white_hits?: DetectionEvidence[];
+  black_count?: number | null;
+  white_count?: number | null;
+};
+
+export type DetectionKagMetrics = {
+  final_score?: number | null;
+  chain_score?: number | null;
+  action_score?: number | null;
+  deception_score?: number | null;
+  pressure_score?: number | null;
+  support_score?: number | null;
+  safety_score?: number | null;
+  contradiction_score?: number | null;
+  entity_score?: number | null;
+};
+
+export type DetectionKagDecision = {
+  final_score?: number | null;
+  risk_level?: string | null;
+  confidence?: number | null;
+  is_fraud?: boolean | null;
+  need_manual_review?: boolean | null;
+  summary?: string | null;
+  final_reason?: string | null;
+  advice?: string[];
+  risk_evidence?: string[];
+  counter_evidence?: string[];
+};
+
+export type DetectionReasoningStorageStage = {
+  stage_code: string;
+  stage_label: string;
+  stage_order: number;
+  score?: number | null;
+  support_score?: number | null;
+  is_active?: boolean;
+  tone?: string | null;
+  detail?: string | null;
+};
+
+export type DetectionReasoningStorageNode = {
+  node_key: string;
+  node_label: string;
+  node_type: string;
+  tone?: string | null;
+  lane?: number | null;
+  sort_order?: number | null;
+  weight?: number | null;
+  stage_code?: string | null;
+  detail?: string | null;
+};
+
+export type DetectionReasoningStorageEdge = {
+  edge_key: string;
+  source_key: string;
+  target_key: string;
+  relation_type?: string | null;
+  tone?: string | null;
+  weight?: number | null;
+  detail?: string | null;
+};
+
+export type DetectionReasoningStorageSnapshot = {
+  stages?: DetectionReasoningStorageStage[];
+  nodes?: DetectionReasoningStorageNode[];
+  edges?: DetectionReasoningStorageEdge[];
+};
+
 export type DetectionKagPayload = {
   enabled: boolean;
   mode: "deep" | "standard" | string;
@@ -287,6 +591,8 @@ export type DetectionKagPayload = {
   predicted_next_step?: string | null;
   trajectory?: string[];
   stage_scores?: DetectionKagStage[];
+  stage_rows?: DetectionKagStageRow[];
+  stage_retrievals?: DetectionKagStageRetrieval[];
   key_relations?: string[];
   intervention_focus?: string[];
   evidence_map?: DetectionKagEvidenceItem[];
@@ -294,6 +600,11 @@ export type DetectionKagPayload = {
   relation_count?: number | null;
   signal_count?: number | null;
   counter_signal_count?: number | null;
+  metrics?: DetectionKagMetrics | null;
+  merged_black_evidence?: DetectionEvidence[];
+  merged_white_evidence?: DetectionEvidence[];
+  decision?: DetectionKagDecision | null;
+  storage_snapshot?: DetectionReasoningStorageSnapshot | null;
   reasoning_graph?: DetectionReasoningGraph | null;
   reasoning_path?: string[];
 };
@@ -312,9 +623,15 @@ export type DetectionResultDetail = {
   semantic_rule_model?: string | null;
   risk_evidence?: string[];
   counter_evidence?: string[];
+  stage_retrievals?: DetectionKagStageRetrieval[];
+  storage_snapshot?: DetectionReasoningStorageSnapshot | null;
   similar_images?: SimilarImageItem[];
   similar_images_count?: number | null;
   audio_verify_items?: AudioVerifyRecordItem[];
+  video_ai_items?: VideoAIRecordItem[];
+  video_ai_summary?: Record<string, unknown> | null;
+  video_deception_items?: VideoDeceptionRecordItem[];
+  video_deception_summary?: Record<string, unknown> | null;
   kag?: DetectionKagPayload | null;
   [key: string]: unknown;
 };

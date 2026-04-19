@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { fontFamily, radius } from "@/shared/theme";
 
 import type { HomeFunctionEntry } from "../config/functionCatalog";
+import { HomeFunctionIconGlass } from "./HomeFunctionIconGlass";
 
 export function HomeMoreFunctionsCard({
   entries,
@@ -15,7 +17,23 @@ export function HomeMoreFunctionsCard({
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>更多功能</Text>
+      <LinearGradient
+        colors={["rgba(255,255,255,0.92)", "rgba(246,250,255,0.72)"]}
+        start={{ x: 0.08, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.cardFill}
+      />
+      <View style={styles.cardHighlight} />
+
+      <View style={styles.titlePill}>
+        <LinearGradient
+          colors={["rgba(255,255,255,0.92)", "rgba(247,251,255,0.66)"]}
+          start={{ x: 0.1, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.titlePillFill}
+        />
+        <Text style={styles.title}>更多功能</Text>
+      </View>
       <View style={styles.grid}>
         {entries.map((entry) => (
           <Pressable
@@ -26,16 +44,18 @@ export function HomeMoreFunctionsCard({
               pressed && styles.itemPressed,
             ]}
           >
-            <View style={[styles.iconWrap, { backgroundColor: entry.soft }]}>
-              <MaterialCommunityIcons
-                name={entry.icon}
-                size={18}
-                color={entry.tint}
-              />
+            <View style={styles.itemContent}>
+              <HomeFunctionIconGlass soft={entry.soft} outerSize={40} borderRadius={12}>
+                <MaterialCommunityIcons
+                  name={entry.icon}
+                  size={20}
+                  color={entry.tint}
+                />
+              </HomeFunctionIconGlass>
+              <Text style={styles.label} numberOfLines={2}>
+                {entry.label}
+              </Text>
             </View>
-            <Text style={styles.label} numberOfLines={2}>
-              {entry.label}
-            </Text>
           </Pressable>
         ))}
       </View>
@@ -45,49 +65,85 @@ export function HomeMoreFunctionsCard({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: radius.lg,
-    backgroundColor: palette.surface,
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 30,
     borderWidth: 1,
-    borderColor: palette.line,
+    borderColor: "rgba(220, 231, 247, 0.96)",
+    backgroundColor: "rgba(255,255,255,0.58)",
     paddingHorizontal: 14,
     paddingTop: 14,
     paddingBottom: 10,
     gap: 14,
-    ...panelShadow,
+    shadowColor: "#C7DDFB",
+    shadowOpacity: 0.24,
+    shadowRadius: 24,
+    shadowOffset: {
+      width: 0,
+      height: 14,
+    },
+    elevation: 10,
+  },
+  cardFill: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  cardHighlight: {
+    position: "absolute",
+    top: 1,
+    left: 18,
+    right: 18,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.94)",
+  },
+  titlePill: {
+    position: "relative",
+    alignSelf: "flex-start",
+    overflow: "hidden",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(221, 232, 248, 0.92)",
+    backgroundColor: "rgba(255,255,255,0.56)",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  titlePillFill: {
+    ...StyleSheet.absoluteFillObject,
   },
   title: {
-    color: palette.ink,
-    fontSize: 16,
-    lineHeight: 22,
+    color: "#234A78",
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: "800",
     fontFamily: fontFamily.display,
   },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
+    rowGap: 16,
   },
   item: {
+    position: "relative",
     width: "20%",
     alignItems: "center",
-    gap: 8,
-    paddingBottom: 14,
+    gap: 10,
+    paddingBottom: 6,
+    paddingTop: 2,
+    borderRadius: 18,
   },
   itemPressed: {
-    opacity: 0.88,
+    transform: [{ scale: 0.97 }],
   },
-  iconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+  itemContent: {
     alignItems: "center",
     justifyContent: "center",
+    gap: 10,
   },
   label: {
-    color: palette.ink,
+    color: "#406285",
     fontSize: 10,
     lineHeight: 13,
     textAlign: "center",
-    fontWeight: "700",
+    fontWeight: "800",
     fontFamily: fontFamily.body,
   },
 });

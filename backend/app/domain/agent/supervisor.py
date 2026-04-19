@@ -38,19 +38,19 @@ def run_supervisor(state: AgentState) -> AgentState:
         selected.append("text_rag_skill")
         notes.append("这是文本优先输入，先直接进入文本 RAG 语义判断。")
     elif has_text and has_image:
-        notes.append("检测到图片 + 文本输入；文本 RAG 将在 OCR 完成后按条件触发，以合并图片文字与用户原始文本。")
+        notes.append("检测到图片 + 文本输入；文本 RAG 将在 OCR 完成后按条件触发，以合并图中识别文字与用户原始文本。")
     elif has_image:
         notes.append("检测到图片输入；先根据视觉规划调用图像工具，再根据 OCR 结果决定是否进入文本 RAG。")
     else:
-        notes.append("当前没有图像或文本输入，agent 不会启动实质分析。")
+        notes.append("当前没有图片或文本输入，图像/文本分支不会启动实质分析。")
+
+    if has_video:
+        selected.extend(["video_ai_detection", "video_physiology_judgement"])
+        notes.append("检测到视频输入；视频将进入 agent graph，依次执行 AI 视频检测、人物生理特征判断和最终判定。")
 
     if has_audio:
         unsupported.append("audio")
-        notes.append("已上传音频，但音频反诈分析能力尚未实现。")
-
-    if has_video:
-        unsupported.append("video")
-        notes.append("已上传视频，但视频帧反诈分析能力尚未实现。")
+        notes.append("已上传音频，但音频 agent 技能暂未接入当前图。")
 
     payload: AgentState = {
         "selected_skills": selected,

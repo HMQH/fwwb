@@ -26,6 +26,30 @@ export const primaryEntries: HomeFunctionEntry[] = [
     tint: "#6C63FF",
     soft: "#F2EEFF",
   },
+  {
+    title: "语音检测",
+    label: "语音检测",
+    route: "/detect-audio",
+    icon: "waveform",
+    tint: "#169C8C",
+    soft: "#EAF9F6",
+  },
+  {
+    title: "AI视频检测",
+    label: "AI视频检测",
+    route: "/detect-visual?feature=video-ai",
+    icon: "movie-open-play-outline",
+    tint: "#476CFF",
+    soft: "#EEF2FF",
+  },
+  {
+    title: "视频判谎",
+    label: "视频判谎",
+    route: "/detect-visual?feature=video-physiology",
+    icon: "account-heart-outline",
+    tint: "#E06E55",
+    soft: "#FFF0EA",
+  },
 ];
 
 export const secondaryEntries: HomeFunctionEntry[] = [
@@ -86,12 +110,12 @@ export const secondaryEntries: HomeFunctionEntry[] = [
     soft: "#FFF7E8",
   },
   {
-    title: "AI仿造音频鉴别",
-    label: "AI音频\n鉴别",
-    route: "/detect-audio",
-    icon: "waveform",
-    tint: "#169C8C",
-    soft: "#EAF9F6",
+    title: "AI语音识别",
+    label: "AI语音\n识别",
+    route: "/detect-audio-verify",
+    icon: "microphone-outline",
+    tint: "#18A999",
+    soft: "#E9FBF7",
   },
   {
     title: "AI换脸检测",
