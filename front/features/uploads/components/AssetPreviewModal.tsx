@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -16,6 +15,7 @@ import Animated, { FadeInUp } from "react-native-reanimated";
 
 import { formatAssetTime, type GalleryAsset } from "@/features/uploads/asset-utils";
 import { fontFamily, palette, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 type Props = {
   asset: GalleryAsset | null;
@@ -137,7 +137,7 @@ export default function AssetPreviewModal({ asset, onClose, onOpenRecord }: Prop
             </View>
 
             {asset.upload_type === "image" && asset.file_url ? (
-              <Image source={{ uri: asset.file_url }} style={styles.previewImage} contentFit="contain" />
+              <Image source={{ uri: asset.file_url }} style={styles.previewImage} contentFit="contain" imagePreset="detail" />
             ) : asset.upload_type === "video" && asset.file_url && videoAvailable ? (
               <NativeVideoPreview uri={asset.file_url} />
             ) : asset.upload_type === "text" ? (

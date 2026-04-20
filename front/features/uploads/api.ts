@@ -1,4 +1,5 @@
 import { request } from "@/shared/api";
+import { prepareImageForUpload } from "@/shared/image-cache";
 
 import type { AssignUploadPayload, UserUpload } from "./types";
 
@@ -15,11 +16,20 @@ export const uploadsApi = {
     return request<UserUpload[]>(`/api/uploads?limit=${limit}`, {}, token);
   },
 
-  uploadImage(file: UploadImageFile, token: string) {
+  async uploadImage(file: UploadImageFile, token: string) {
+    const prepared = await prepareImageForUpload(
+      {
+        uri: file.uri,
+        name: file.name,
+        type: file.type,
+      },
+      "upload"
+    );
+
     const formData = new FormData();
     formData.append(
       "image_file",
-      { uri: file.uri, name: file.name, type: file.type } as unknown as Blob
+      { uri: prepared.uri, name: prepared.name, type: prepared.type } as unknown as Blob
     );
 
     return request<UserUpload>(

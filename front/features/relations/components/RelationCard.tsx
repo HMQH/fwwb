@@ -1,10 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
 import { resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 type Props = {
   relation: RelationProfileSummary;
@@ -50,7 +50,7 @@ export default function RelationCard({ relation, size, onPress }: Props) {
       <View style={[styles.card, { borderColor: `${meta.accent}2C`, backgroundColor: meta.soft }]}>
         <View style={styles.topRow}>
           {avatarUri ? (
-            <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" />
+            <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" imagePreset="avatar" />
           ) : (
             <View style={[styles.avatarFallback, { backgroundColor: palette.surface }]}>
               <MaterialCommunityIcons

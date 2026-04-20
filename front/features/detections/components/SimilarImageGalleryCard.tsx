@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Image } from "expo-image";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import type { SimilarImageItem } from "../types";
 
@@ -115,7 +115,7 @@ export function SimilarImageGalleryCard({
                   }}
                 >
                   {imageUrl ? (
-                    <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" transition={120} />
+                    <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" imagePreset="tile" transition={120} />
                   ) : (
                     <View style={styles.imageFallback}>
                       <Text style={styles.imageFallbackText}>暂无缩略图</Text>
@@ -193,7 +193,7 @@ export function SimilarImageGalleryCard({
             </View>
 
             {previewUrl ? (
-              <Image source={{ uri: previewUrl }} style={styles.previewImage} contentFit="contain" transition={120} />
+              <Image source={{ uri: previewUrl }} style={styles.previewImage} contentFit="contain" imagePreset="detail" transition={120} />
             ) : null}
 
             <View style={styles.previewActions}>

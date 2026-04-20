@@ -1,7 +1,7 @@
-import { Image } from "expo-image";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import { localizeFraudType, sanitizeDisplayText } from "../displayText";
 import { getEvidenceReasonText, resolveEvidenceLinkUrl, resolveEvidencePreviewUrl } from "../evidencePreview";
@@ -61,6 +61,7 @@ export function EvidenceListCard({
                       source={{ uri: previewUrl }}
                       style={styles.previewImage}
                       contentFit="cover"
+                      imagePreset="preview"
                       transition={120}
                     />
                   </Pressable>

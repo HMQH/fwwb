@@ -1,4 +1,5 @@
 import { request } from "@/shared/api";
+import { prepareImageForUpload } from "@/shared/image-cache";
 
 import type {
   AudioScamInsightJobResponse,
@@ -26,6 +27,23 @@ function appendRnFiles(form: FormData, fieldName: string, files: PickedFile[]) {
     form.append(
       fieldName,
       { uri: f.uri, name: f.name, type: f.type } as unknown as Blob
+    );
+  }
+}
+
+async function appendPreparedImageFiles(form: FormData, fieldName: string, files: PickedFile[]) {
+  for (const file of files) {
+    const prepared = await prepareImageForUpload(
+      {
+        uri: file.uri,
+        name: file.name,
+        type: file.type,
+      },
+      "upload"
+    );
+    form.append(
+      fieldName,
+      { uri: prepared.uri, name: prepared.name, type: prepared.type } as unknown as Blob
     );
   }
 }
@@ -80,16 +98,24 @@ function buildWebPhishingUploadFormData(input: {
   return form;
 }
 
-function buildSingleImageFormData(fieldName: string, imageFile: PickedFile): FormData {
+async function buildSingleImageFormData(fieldName: string, imageFile: PickedFile): Promise<FormData> {
+  const prepared = await prepareImageForUpload(
+    {
+      uri: imageFile.uri,
+      name: imageFile.name,
+      type: imageFile.type,
+    },
+    "upload"
+  );
   const form = new FormData();
   form.append(
     fieldName,
-    { uri: imageFile.uri, name: imageFile.name, type: imageFile.type || "image/jpeg" } as unknown as Blob
+    { uri: prepared.uri, name: prepared.name, type: prepared.type || "image/jpeg" } as unknown as Blob
   );
   return form;
 }
 
-export function buildDetectionSubmitFormData(input: {
+export async function buildDetectionSubmitFormData(input: {
   text_content?: string;
   relation_profile_id?: string | null;
   deep_reasoning?: boolean;
@@ -98,7 +124,7 @@ export function buildDetectionSubmitFormData(input: {
   audio_files?: PickedFile[];
   image_files?: PickedFile[];
   video_files?: PickedFile[];
-}): FormData {
+}): Promise<FormData> {
   const form = new FormData();
   const tc = input.text_content?.trim();
   if (tc) {
@@ -116,7 +142,7 @@ export function buildDetectionSubmitFormData(input: {
   }
   appendRnFiles(form, "text_files", input.text_files ?? []);
   appendRnFiles(form, "audio_files", input.audio_files ?? []);
-  appendRnFiles(form, "image_files", input.image_files ?? []);
+  await appendPreparedImageFiles(form, "image_files", input.image_files ?? []);
   appendRnFiles(form, "video_files", input.video_files ?? []);
   return form;
 }
@@ -291,55 +317,55 @@ export const detectionsApi = {
     );
   },
 
-  checkAIFace(token: string, imageFile: PickedFile) {
+  async checkAIFace(token: string, imageFile: PickedFile) {
     return request<AIFaceCheckResponse>(
       "/api/detections/ai-face/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 
-  checkOcrPhishing(token: string, imageFile: PickedFile) {
+  async checkOcrPhishing(token: string, imageFile: PickedFile) {
     return request<DirectImageSkillCheckResponse>(
       "/api/detections/ocr-phishing/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 
-  checkOfficialDocument(token: string, imageFile: PickedFile) {
+  async checkOfficialDocument(token: string, imageFile: PickedFile) {
     return request<DirectImageSkillCheckResponse>(
       "/api/detections/official-document/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 
-  checkPii(token: string, imageFile: PickedFile) {
+  async checkPii(token: string, imageFile: PickedFile) {
     return request<DirectImageSkillCheckResponse>(
       "/api/detections/pii/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 
-  checkQr(token: string, imageFile: PickedFile) {
+  async checkQr(token: string, imageFile: PickedFile) {
     return request<DirectImageSkillCheckResponse>(
       "/api/detections/qr/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );
   },
 
-  checkImpersonation(token: string, imageFile: PickedFile) {
+  async checkImpersonation(token: string, imageFile: PickedFile) {
     return request<DirectImageSkillCheckResponse>(
       "/api/detections/impersonation/check",
-      { method: "POST", body: buildSingleImageFormData("image_file", imageFile) },
+      { method: "POST", body: await buildSingleImageFormData("image_file", imageFile) },
       token,
       { timeoutMs: SUBMIT_TIMEOUT_MS }
     );

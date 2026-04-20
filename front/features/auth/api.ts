@@ -1,4 +1,5 @@
 import { request } from "@/shared/api";
+import { prepareImageForUpload } from "@/shared/image-cache";
 import type {
   LoginPayload,
   LocalImageAsset,
@@ -12,17 +13,26 @@ import type {
 
 const AVATAR_UPLOAD_TIMEOUT_MS = 60_000;
 
-function appendImage(formData: FormData, key: string, file: LocalImageAsset | null | undefined) {
+async function appendImage(formData: FormData, key: string, file: LocalImageAsset | null | undefined) {
   if (!file) {
     return;
   }
 
-  formData.append(
-    key,
+  const prepared = await prepareImageForUpload(
     {
       uri: file.uri,
       name: file.name,
-      type: file.mimeType,
+      mimeType: file.mimeType,
+    },
+    "avatar"
+  );
+
+  formData.append(
+    key,
+    {
+      uri: prepared.uri,
+      name: prepared.name,
+      type: prepared.mimeType,
     } as any
   );
 }
@@ -34,7 +44,7 @@ export const authApi = {
       body: JSON.stringify(payload),
     });
   },
-  register(payload: RegisterPayload) {
+  async register(payload: RegisterPayload) {
     const formData = new FormData();
     formData.append("phone", payload.phone);
     formData.append("password", payload.password);
@@ -43,7 +53,7 @@ export const authApi = {
     formData.append("display_name", payload.display_name);
     formData.append("role", payload.role);
     formData.append("agree_terms", String(payload.agree_terms));
-    appendImage(formData, "avatar_file", payload.avatar_file);
+    await appendImage(formData, "avatar_file", payload.avatar_file);
 
     return request<TokenResponse>("/api/auth/register", {
       method: "POST",
@@ -74,14 +84,23 @@ export const authApi = {
     );
   },
   /** 更换头像：multipart，字段 avatar_file */
-  uploadAvatar(file: LocalImageAsset, token: string) {
+  async uploadAvatar(file: LocalImageAsset, token: string) {
+    const prepared = await prepareImageForUpload(
+      {
+        uri: file.uri,
+        name: file.name,
+        mimeType: file.mimeType,
+      },
+      "avatar"
+    );
+
     const formData = new FormData();
     formData.append(
       "avatar_file",
       {
-        uri: file.uri,
-        name: file.name,
-        type: file.mimeType,
+        uri: prepared.uri,
+        name: prepared.name,
+        type: prepared.mimeType,
       } as any
     );
     return request<UserPublic>(

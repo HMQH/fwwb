@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,6 +22,7 @@ import {
 } from "@/features/auth";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 const fallbackAvatar = require("../../assets/images/anti-fraud-logo.png");
 
@@ -128,7 +128,7 @@ export default function ProfileScreen() {
                 ]}
               >
                 <View style={styles.avatarWrap}>
-                  <Image source={avatarUri ? { uri: avatarUri } : fallbackAvatar} style={styles.avatar} resizeMode="cover" />
+                  <Image source={avatarUri ? { uri: avatarUri } : fallbackAvatar} style={styles.avatar} resizeMode="cover" imagePreset="avatar" />
                   {uploadingAvatar ? (
                     <View style={styles.avatarLoadingOverlay}>
                       <ActivityIndicator color={palette.white} />

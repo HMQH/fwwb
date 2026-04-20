@@ -1,4 +1,4 @@
-package com.anonymous.myapp
+package com.zhimeng.antifraud
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -26,8 +26,8 @@ import kotlin.math.abs
 
 class FloatingBubbleService : Service() {
   companion object {
-    const val ACTION_START = "com.anonymous.myapp.FLOATING_CAPTURE_START"
-    const val ACTION_STOP = "com.anonymous.myapp.FLOATING_CAPTURE_STOP"
+const val ACTION_START = "com.zhimeng.antifraud.FLOATING_CAPTURE_START"
+const val ACTION_STOP = "com.zhimeng.antifraud.FLOATING_CAPTURE_STOP"
 
     private const val TAG = "FloatingBubbleService"
     private const val CHANNEL_ID = "floating_capture_channel"

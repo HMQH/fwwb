@@ -1,4 +1,4 @@
-package com.anonymous.myapp
+package com.zhimeng.antifraud
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

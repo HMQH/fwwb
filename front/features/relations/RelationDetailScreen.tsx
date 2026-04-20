@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -26,6 +25,7 @@ import AssetPreviewModal from "@/features/uploads/components/AssetPreviewModal";
 import UploadAssetTile from "@/features/uploads/components/UploadAssetTile";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import { relationsApi } from "./api";
 import type { MemoryScope, RelationAiProfilePayload, RelationDetail, RelationMemory } from "./types";
@@ -468,7 +468,7 @@ export default function RelationDetailScreen() {
                 <View style={styles.heroTop}>
                   <Pressable onPress={() => void handlePickAvatar()} style={styles.avatarButton}>
                     {avatarUri ? (
-                      <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" />
+                      <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" imagePreset="avatar" />
                     ) : (
                       <View style={[styles.avatarFallback, { backgroundColor: relationMeta.soft }]}>
                         <MaterialCommunityIcons

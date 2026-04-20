@@ -182,7 +182,7 @@ object PendingIntentFactory {
   ): android.app.PendingIntent {
     val deepLink = Uri.parse(
       buildString {
-        append("myapp://call-intervention")
+        append("zhimengantifraud://call-intervention")
         val query = mutableListOf<String>()
         if (!callId.isNullOrBlank()) query += "callId=$callId"
         if (!riskLevel.isNullOrBlank()) query += "riskLevel=$riskLevel"

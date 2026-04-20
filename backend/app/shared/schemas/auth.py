@@ -62,6 +62,7 @@ class UserPublic(BaseModel):
     birth_date: date
     avatar_url: str | None = None
     guardian_relation: GuardianRelation | None = None
+    is_admin: bool = False
     profile_summary: str | None = None
     safety_score: int = 95
     memory_urgency_score: int = 0

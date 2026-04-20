@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -21,6 +20,7 @@ import { relationsApi } from "@/features/relations/api";
 import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import { clearUploadArchiveDraft, getUploadArchiveDraft } from "./archive-session";
 import type { GalleryAsset } from "./asset-utils";
@@ -185,7 +185,7 @@ export default function UploadArchiveScreen() {
                     ]}
                   >
                     {avatarUri ? (
-                      <Image source={{ uri: avatarUri }} style={styles.relationAvatar} contentFit="cover" />
+                      <Image source={{ uri: avatarUri }} style={styles.relationAvatar} contentFit="cover" imagePreset="avatar" />
                     ) : (
                       <View style={[styles.relationAvatarFallback, { backgroundColor: meta.soft }]}>
                         <MaterialCommunityIcons

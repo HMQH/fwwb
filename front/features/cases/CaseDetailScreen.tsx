@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +16,7 @@ import { useAuth } from "@/features/auth";
 import { homeApi } from "@/features/home/api";
 import { ApiError, resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import { casesApi } from "./api";
 import type { FraudCaseDetail } from "./types";
@@ -207,6 +207,7 @@ export default function CaseDetailScreen() {
                     source={{ uri: heroImage }}
                     style={styles.heroImage}
                     contentFit="cover"
+                    imagePreset="preview"
                     transition={120}
                   />
                 </View>

@@ -1,4 +1,4 @@
-package com.anonymous.myapp
+package com.zhimeng.antifraud
 
 import android.app.Activity
 import android.app.Notification
@@ -28,8 +28,8 @@ import java.io.FileOutputStream
 
 class ProjectionSessionService : Service() {
   companion object {
-    const val ACTION_START = "com.anonymous.myapp.PROJECTION_SESSION_START"
-    const val ACTION_STOP = "com.anonymous.myapp.PROJECTION_SESSION_STOP"
+const val ACTION_START = "com.zhimeng.antifraud.PROJECTION_SESSION_START"
+const val ACTION_STOP = "com.zhimeng.antifraud.PROJECTION_SESSION_STOP"
     const val EXTRA_RESULT_CODE = "projection_result_code"
     const val EXTRA_RESULT_DATA = "projection_result_data"
 

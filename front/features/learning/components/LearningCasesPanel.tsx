@@ -1,9 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import type {
   LearningCaseCategory,
@@ -115,6 +115,7 @@ export function LearningCasesPanel({
                     source={{ uri: coverUrl }}
                     style={styles.caseImage}
                     contentFit="cover"
+                    imagePreset="tile"
                     transition={120}
                   />
                 ) : (

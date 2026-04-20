@@ -1,4 +1,4 @@
-package com.anonymous.myapp
+package com.zhimeng.antifraud
 
 import android.app.Application
 import android.content.res.Configuration

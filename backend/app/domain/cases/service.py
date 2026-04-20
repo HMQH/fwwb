@@ -1,4 +1,4 @@
-﻿"""反诈案例模块服务：用户端案例展示、管理员审核与定时同步。"""
+"""反诈案例模块服务：用户端案例展示、管理员审核与定时同步。"""
 from __future__ import annotations
 
 import hashlib
@@ -419,6 +419,42 @@ def review_case(
         return _case_to_payload(case)
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的审核动作")
+
+
+def approve_all_pending_cases(
+    db: Session,
+    *,
+    actor: str,
+    note: str | None,
+) -> dict[str, Any]:
+    repository.ensure_case_review_schema(db)
+    pending_cases = repository.list_pending_cases(db)
+    approved_count = 0
+    failed_cases: list[dict[str, str]] = []
+
+    for case in pending_cases:
+        try:
+            review_case(
+                db,
+                case_id=case.id,
+                action="approve",
+                note=note,
+                actor=actor,
+            )
+            approved_count += 1
+        except HTTPException as exc:
+            db.rollback()
+            failed_cases.append({"id": str(case.id), "error": str(exc.detail)})
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            failed_cases.append({"id": str(case.id), "error": str(exc)})
+
+    return {
+        "total": len(pending_cases),
+        "approved_count": approved_count,
+        "failed_count": len(failed_cases),
+        "failed_cases": failed_cases,
+    }
 
 
 def get_latest_sync_run(db: Session):

@@ -1,4 +1,4 @@
-package com.anonymous.myapp
+package com.zhimeng.antifraud
 
 import android.content.Intent
 import android.graphics.Color
@@ -138,7 +138,7 @@ class CapturePreviewActivity : AppCompatActivity() {
 
     val intent = Intent(
       Intent.ACTION_VIEW,
-      Uri.parse("myapp://detect-visual?captured=1")
+      Uri.parse("zhimengantifraud://detect-visual?captured=1")
     ).apply {
       setPackage(packageName)
       addFlags(

@@ -770,17 +770,16 @@ export function DetectionModeScreen({ mode }: { mode: DetectionMode }) {
       return;
     }
 
-    const formData = buildDetectionSubmitFormData({
-      text_content: textContent,
-      deep_reasoning: deepReasoning,
-      video_analysis_target: videoAnalysisTarget,
-      text_files: textFiles,
-      image_files: imageFiles,
-      video_files: videoFiles,
-    });
-
     setSubmitting(true);
     try {
+      const formData = await buildDetectionSubmitFormData({
+        text_content: textContent,
+        deep_reasoning: deepReasoning,
+        video_analysis_target: videoAnalysisTarget,
+        text_files: textFiles,
+        image_files: imageFiles,
+        video_files: videoFiles,
+      });
       const response = await detectionsApi.submit(token, formData);
       setTextContent("");
       setTextFiles([]);

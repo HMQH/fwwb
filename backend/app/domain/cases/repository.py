@@ -1,4 +1,4 @@
-﻿"""反诈案例模块数据访问。"""
+"""反诈案例模块数据访问。"""
 from __future__ import annotations
 
 import uuid
@@ -222,6 +222,20 @@ def list_admin_cases(
         FraudCase.created_at.desc(),
     )
     stmt = stmt.limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_pending_cases(db: Session) -> list[FraudCase]:
+    ensure_case_review_schema(db)
+    stmt = (
+        select(FraudCase)
+        .where(FraudCase.review_status == "pending")
+        .order_by(
+            FraudCase.source_published_at.desc().nullslast(),
+            FraudCase.updated_at.desc(),
+            FraudCase.created_at.desc(),
+        )
+    )
     return list(db.execute(stmt).scalars().all())
 
 

@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -854,7 +854,7 @@ function VideoKeyframesSection({ items }: { items: VideoAIRecordItem[] }) {
       <View style={styles.videoKeyframeGrid}>
         {cards.map((entry) => (
           <View key={entry.key} style={styles.videoKeyframeCard}>
-            <Image source={{ uri: entry.keyframeUrl! }} style={styles.videoKeyframeImage} contentFit="cover" transition={160} cachePolicy="memory-disk" />
+            <Image source={{ uri: entry.keyframeUrl! }} style={styles.videoKeyframeImage} contentFit="cover" imagePreset="preview" transition={160} cachePolicy="memory-disk" />
             <View style={styles.videoKeyframeMeta}>
               <Text style={styles.videoKeyframeTitle} numberOfLines={1}>{entry.displayName}</Text>
               <Text style={styles.videoKeyframeInfo}>异常时刻 {formatVideoTime(entry.time)}</Text>
@@ -914,7 +914,7 @@ function VideoAnalysisSection({
                 style={({ pressed }) => [styles.videoAnalysisImageCard, pressed && styles.buttonPressed]}
                 onPress={() => onOpenImage(entry.flowUrl!, `${entry.displayName} · 二阶光流`)}
               >
-                <Image source={{ uri: entry.flowUrl }} style={styles.videoAnalysisImage} contentFit="contain" transition={160} cachePolicy="memory-disk" />
+                <Image source={{ uri: entry.flowUrl }} style={styles.videoAnalysisImage} contentFit="contain" imagePreset="detail" transition={160} cachePolicy="memory-disk" />
                 <Text style={styles.videoAnalysisImageLabel}>二阶光流</Text>
               </Pressable>
             ) : null}
@@ -923,7 +923,7 @@ function VideoAnalysisSection({
                 style={({ pressed }) => [styles.videoAnalysisImageCard, pressed && styles.buttonPressed]}
                 onPress={() => onOpenImage(entry.overlayUrl!, `${entry.displayName} · 异常叠加`)}
               >
-                <Image source={{ uri: entry.overlayUrl }} style={styles.videoAnalysisImage} contentFit="cover" transition={160} cachePolicy="memory-disk" />
+                <Image source={{ uri: entry.overlayUrl }} style={styles.videoAnalysisImage} contentFit="cover" imagePreset="detail" transition={160} cachePolicy="memory-disk" />
                 <Text style={styles.videoAnalysisImageLabel}>异常叠加</Text>
               </Pressable>
             ) : null}
@@ -975,7 +975,7 @@ function SubmissionImageGrid({ items }: { items: string[] }) {
     <View style={styles.materialImageGrid}>
       {resolvedItems.map((item) => (
         <View key={item.path} style={styles.materialImageTile}>
-          <Image source={{ uri: item.url }} style={styles.materialImage} contentFit="cover" transition={120} />
+          <Image source={{ uri: item.url }} style={styles.materialImage} contentFit="cover" imagePreset="tile" transition={120} />
           <Text style={styles.materialImageName} numberOfLines={2}>
             {item.name}
           </Text>
@@ -1086,12 +1086,13 @@ function EvidenceCarouselSection({
               </View>
 
               {previewUrl ? (
-                <Image
-                  source={{ uri: previewUrl }}
-                  style={styles.evidencePreviewImage}
-                  contentFit="cover"
-                  transition={120}
-                />
+                  <Image
+                    source={{ uri: previewUrl }}
+                    style={styles.evidencePreviewImage}
+                    contentFit="cover"
+                    imagePreset="preview"
+                    transition={120}
+                  />
               ) : null}
 
               <Text style={styles.evidencePreviewText} numberOfLines={previewUrl ? 4 : 5}>
@@ -1816,6 +1817,7 @@ export default function RecordDetailScreen() {
                     source={{ uri: evidenceSheetImageUrl }}
                     style={styles.sheetPreviewImage}
                     contentFit="cover"
+                    imagePreset="detail"
                     transition={120}
                   />
                 ) : null}
@@ -1850,13 +1852,14 @@ export default function RecordDetailScreen() {
                   <MaterialCommunityIcons name="close" size={18} color="#EAF2FF" />
                 </Pressable>
               </View>
-              <Image
-                source={{ uri: videoImagePreview.uri }}
-                style={styles.videoImageModalImage}
-                contentFit="contain"
-                transition={120}
-                cachePolicy="memory-disk"
-              />
+                <Image
+                  source={{ uri: videoImagePreview.uri }}
+                  style={styles.videoImageModalImage}
+                  contentFit="contain"
+                  imagePreset="detail"
+                  transition={120}
+                  cachePolicy="memory-disk"
+                />
             </View>
           ) : null}
         </View>

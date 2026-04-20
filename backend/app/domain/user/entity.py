@@ -30,6 +30,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     guardian_relation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sql_text("false"))
     profile_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     safety_score: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("95"))
     memory_urgency_score: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sql_text("0"))

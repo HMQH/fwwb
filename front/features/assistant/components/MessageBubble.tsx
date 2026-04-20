@@ -1,11 +1,11 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
 import { Linking, Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { Image } from "expo-image";
 import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { resolveUploadFileUrl } from "@/shared/api";
 import { fontFamily, palette, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 import { AssistantExecutionBlock } from "./AssistantExecutionBlock";
 import {
@@ -67,7 +67,7 @@ function AttachmentList({
                     setPreviewTitle(item.name);
                   }}
                 >
-                  {uri ? <Image source={{ uri }} style={styles.image} contentFit="cover" /> : null}
+                  {uri ? <Image source={{ uri }} style={styles.image} contentFit="cover" imagePreset="tile" /> : null}
                 </Pressable>
               );
             })}
@@ -117,7 +117,7 @@ function AttachmentList({
                 <Text style={styles.previewCloseText}>关闭</Text>
               </Pressable>
             </View>
-            {previewUri ? <Image source={{ uri: previewUri }} style={styles.previewImage} contentFit="contain" /> : null}
+            {previewUri ? <Image source={{ uri: previewUri }} style={styles.previewImage} contentFit="contain" imagePreset="detail" /> : null}
           </View>
         </View>
       </Modal>

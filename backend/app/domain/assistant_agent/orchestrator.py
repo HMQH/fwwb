@@ -324,6 +324,37 @@ def _recommend_audio_capabilities(user_text: str, attachments: list[dict[str, An
     return ["audio_scam_insight"]
 
 
+_AUDIO_CAPABILITY_KEYS = {"audio_scam_insight", "audio_verify"}
+
+
+def _has_mixed_audio_with_other_modalities(attachments: list[dict[str, Any]]) -> bool:
+    modalities = _attachment_modalities(attachments)
+    return "audio" in modalities and bool(modalities & {"text", "image", "video"})
+
+
+def _merge_capability_keys(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for item in group:
+            key = str(item or "").strip()
+            if key and key not in merged:
+                merged.append(key)
+    return merged
+
+
+def _insert_capability_before(capabilities: list[str], *, target: str, item: str) -> list[str]:
+    merged = _merge_capability_keys(capabilities)
+    if item in merged:
+        return merged
+    try:
+        index = merged.index(target)
+    except ValueError:
+        merged.append(item)
+        return merged
+    merged.insert(index, item)
+    return merged
+
+
 def _resolve_saved_file(file_path: str | None) -> Path | None:
     normalized = str(file_path or "").strip()
     if not normalized:
@@ -676,13 +707,30 @@ def _fallback_plan(
     can_reference_previous = _should_reuse_previous_attachments(user_text)
     active_attachments = current_attachments or (previous_attachments if can_reference_previous else [])
     modalities = _attachment_modalities(active_attachments)
+    mixed_audio_with_other = _has_mixed_audio_with_other_modalities(current_attachments)
     if user_text.strip():
         modalities.add("text")
 
     explicit_antifraud = _has_antifraud_intent(user_text)
     general_task = _is_general_task_text(user_text)
+    audio_capabilities = _recommend_audio_capabilities(user_text, current_attachments)
 
     capability_keys = expand_capability_aliases(user_text, modalities) if (active_attachments or explicit_antifraud) else []
+    if capability_keys and mixed_audio_with_other and audio_capabilities:
+        if any(key not in _AUDIO_CAPABILITY_KEYS for key in capability_keys):
+            capability_keys = _merge_capability_keys(capability_keys, audio_capabilities)
+        else:
+            capability_keys = _merge_capability_keys(["analysis"], capability_keys, audio_capabilities)
+    if (
+        capability_keys
+        and "analysis" in capability_keys
+        and _should_chain_ocr_before_analysis(
+            user_text=user_text,
+            attachments=current_attachments,
+            explicit_antifraud=explicit_antifraud,
+        )
+    ):
+        capability_keys = _insert_capability_before(capability_keys, target="analysis", item="ocr")
     if capability_keys:
         return {
             "action": "execute",
@@ -693,13 +741,26 @@ def _fallback_plan(
             "clarify_prompt": "可串行多个功能",
         }
 
-    audio_capabilities = _recommend_audio_capabilities(user_text, current_attachments)
     if audio_capabilities:
+        capabilities = (
+            _merge_capability_keys(["analysis"], audio_capabilities)
+            if mixed_audio_with_other
+            else list(audio_capabilities)
+        )
+        if (
+            "analysis" in capabilities
+            and _should_chain_ocr_before_analysis(
+                user_text=user_text,
+                attachments=current_attachments,
+                explicit_antifraud=explicit_antifraud,
+            )
+        ):
+            capabilities = _insert_capability_before(capabilities, target="analysis", item="ocr")
         return {
             "action": "execute",
             "reason": "fallback_audio_pipeline",
             "use_previous_attachments": False,
-            "capabilities": audio_capabilities,
+            "capabilities": capabilities,
             "clarify_title": "要做哪一种？",
             "clarify_prompt": "可串行多个功能",
         }
@@ -765,6 +826,7 @@ def _choose_plan(
     explicit_antifraud = _has_antifraud_intent(user_text)
     general_task = _is_general_task_text(user_text)
     audio_capabilities = _recommend_audio_capabilities(user_text, current_attachments)
+    mixed_audio_with_other = _has_mixed_audio_with_other_modalities(current_attachments)
     available_capabilities = available_capabilities_for_modalities(
         current_modalities | ({"text"} if user_text.strip() else set())
     )
@@ -784,32 +846,51 @@ def _choose_plan(
             llm_plan["use_previous_attachments"] = False
         if llm_plan["action"] == "execute" and not llm_plan["capabilities"]:
             if audio_capabilities:
-                llm_plan["capabilities"] = audio_capabilities
+                llm_plan["capabilities"] = (
+                    _merge_capability_keys(["analysis"], audio_capabilities)
+                    if mixed_audio_with_other
+                    else list(audio_capabilities)
+                )
             elif current_attachments and user_text.strip():
                 llm_plan["capabilities"] = ["analysis"]
             elif _extract_first_url(user_text):
                 llm_plan["capabilities"] = ["web_phishing"]
         if llm_plan["action"] == "execute" and audio_capabilities:
             planned = list(llm_plan.get("capabilities") or [])
-            if not planned or planned == ["analysis"]:
-                llm_plan["capabilities"] = audio_capabilities
-            elif planned == ["audio_verify"] and "audio_scam_insight" in audio_capabilities:
-                llm_plan["capabilities"] = audio_capabilities
-            elif planned == ["audio_scam_insight"] and "audio_verify" in audio_capabilities:
-                llm_plan["capabilities"] = audio_capabilities
+            if mixed_audio_with_other:
+                if not planned:
+                    planned = ["analysis"]
+                elif not any(key not in _AUDIO_CAPABILITY_KEYS for key in planned):
+                    planned = _merge_capability_keys(["analysis"], planned)
+                llm_plan["capabilities"] = _merge_capability_keys(planned, audio_capabilities)
+            else:
+                if not planned or planned == ["analysis"]:
+                    llm_plan["capabilities"] = audio_capabilities
+                elif planned == ["audio_verify"] and "audio_scam_insight" in audio_capabilities:
+                    llm_plan["capabilities"] = audio_capabilities
+                elif planned == ["audio_scam_insight"] and "audio_verify" in audio_capabilities:
+                    llm_plan["capabilities"] = audio_capabilities
         if (
             llm_plan["action"] == "execute"
-            and llm_plan.get("capabilities") == ["analysis"]
+            and "analysis" in list(llm_plan.get("capabilities") or [])
             and _should_chain_ocr_before_analysis(
                 user_text=user_text,
                 attachments=current_attachments,
                 explicit_antifraud=explicit_antifraud,
             )
         ):
-            llm_plan["capabilities"] = ["ocr", "analysis"]
+            llm_plan["capabilities"] = _insert_capability_before(
+                list(llm_plan.get("capabilities") or []),
+                target="analysis",
+                item="ocr",
+            )
         if llm_plan["action"] == "clarify" and audio_capabilities:
             llm_plan["action"] = "execute"
-            llm_plan["capabilities"] = audio_capabilities
+            llm_plan["capabilities"] = (
+                _merge_capability_keys(["analysis"], audio_capabilities)
+                if mixed_audio_with_other
+                else list(audio_capabilities)
+            )
         if llm_plan["action"] == "clarify" and not current_attachments:
             llm_plan["action"] = "chat"
         return llm_plan
@@ -911,7 +992,17 @@ def _run_analysis(
     user_text: str,
     attachments: list[dict[str, Any]],
 ) -> tuple[str, list[str], list[dict[str, str]], dict[str, Any]]:
-    bundles = _build_file_bundles_from_attachments(attachments)
+    split_audio_from_analysis = _has_mixed_audio_with_other_modalities(attachments)
+    analysis_attachments = (
+        [
+            item
+            for item in attachments
+            if str(item.get("upload_type") or "").strip().lower() != "audio"
+        ]
+        if split_audio_from_analysis
+        else attachments
+    )
+    bundles = _build_file_bundles_from_attachments(analysis_attachments)
     submission, job = detection_service.submit_detection(
         db,
         user_id=user_id,
@@ -947,11 +1038,14 @@ def _run_analysis(
                 f"结论: {conclusion}",
             ]
         )
+    if split_audio_from_analysis:
+        details.append("说明: 当前综合分析仅处理非音频材料，音频已拆分到独立步骤")
     llm_context = {
         "capability_key": "analysis",
         "result": _sanitize_for_llm_context(result if isinstance(result, dict) else {}),
         "job_id": str(job.id),
         "submission_id": str(submission.id),
+        "audio_split_from_analysis": split_audio_from_analysis,
     }
     return summary, [item for item in details if item][:12], [
         _build_record_ref(capability_key="analysis", label="综合分析", submission_id=submission.id, job_id=job.id)

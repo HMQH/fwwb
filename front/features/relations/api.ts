@@ -1,5 +1,6 @@
 import type { LocalImageAsset } from "@/features/auth";
 import { request } from "@/shared/api";
+import { prepareImageForUpload } from "@/shared/image-cache";
 
 import type {
   CreateMemoryPayload,
@@ -38,14 +39,23 @@ export const relationsApi = {
     );
   },
 
-  uploadAvatar(relationId: string, file: LocalImageAsset, token: string) {
+  async uploadAvatar(relationId: string, file: LocalImageAsset, token: string) {
+    const prepared = await prepareImageForUpload(
+      {
+        uri: file.uri,
+        name: file.name,
+        mimeType: file.mimeType,
+      },
+      "avatar"
+    );
+
     const formData = new FormData();
     formData.append(
       "avatar_file",
       {
-        uri: file.uri,
-        name: file.name,
-        type: file.mimeType,
+        uri: prepared.uri,
+        name: prepared.name,
+        type: prepared.mimeType,
       } as any
     );
 

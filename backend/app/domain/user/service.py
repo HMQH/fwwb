@@ -56,6 +56,7 @@ def _user_public(u: User) -> UserPublic:
         birth_date=u.birth_date,
         avatar_url=u.avatar_url,
         guardian_relation=u.guardian_relation,
+        is_admin=bool(getattr(u, "is_admin", False)),
         profile_summary=u.profile_summary,
         safety_score=u.safety_score,
         memory_urgency_score=u.memory_urgency_score,

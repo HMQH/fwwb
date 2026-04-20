@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "智獴反诈",
+    "slug": "zhimeng-antifraud",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/anti-fraud-logo.png",
-    "scheme": "myapp",
+    "icon": "./assets/images/zhimeng-antifraud-icon.png",
+    "scheme": "zhimengantifraud",
     "ios": {
       "supportsTablet": true
     },
@@ -13,8 +13,8 @@
       "softwareKeyboardLayoutMode": "resize",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/anti-fraud-logo.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/zhimeng-antifraud-icon-foreground.png"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",
@@ -23,18 +23,18 @@
         "android.permission.READ_CONTACTS",
         "android.permission.SYSTEM_ALERT_WINDOW"
       ],
-      "package": "com.anonymous.myapp"
+      "package": "com.zhimeng.antifraud"
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/anti-fraud-logo.png"
+      "favicon": "./assets/images/zhimeng-antifraud-icon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/anti-fraud-logo.png",
+          "image": "./assets/images/zhimeng-antifraud-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",

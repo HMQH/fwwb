@@ -12,6 +12,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.domain.admin import service as admin_service
 from app.domain.agent.skills.impersonation_checker import run_impersonation_checker
 from app.domain.agent.skills.ocr_phishing import run_ocr_phishing
 from app.domain.agent.skills.official_document_checker import run_official_document_checker
@@ -58,6 +59,7 @@ from app.shared.schemas.audio_verify import (
     AudioVerifyResponse,
     AudioVerifyUploadsSubmitRequest,
 )
+from app.shared.schemas.admin import DetectionFeedbackCreateRequest, DetectionFeedbackResponse
 from app.shared.schemas.detections import (
     DetectionHistoryItemResponse,
     DetectionHistoryStatisticsResponse,
@@ -367,6 +369,25 @@ def get_job(
 ) -> DetectionJobResponse:
     detail = detection_service.get_job_detail(db, user_id=current.id, job_id=job_id)
     return DetectionJobResponse.model_validate(detail)
+
+
+@router.post("/jobs/{job_id}/feedback", response_model=DetectionFeedbackResponse)
+def submit_feedback(
+    job_id: uuid.UUID,
+    body: DetectionFeedbackCreateRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> DetectionFeedbackResponse:
+    item = admin_service.record_feedback(
+        db,
+        user_id=current.id,
+        job_id=job_id,
+        user_label=body.user_label,
+        reviewed_fraud_type=body.reviewed_fraud_type,
+        helpful=body.helpful,
+        note=body.note,
+    )
+    return DetectionFeedbackResponse.model_validate(item)
 
 
 @router.get("/submissions", response_model=list[DetectionHistoryItemResponse])

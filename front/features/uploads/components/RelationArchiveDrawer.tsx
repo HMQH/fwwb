@@ -1,10 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { relationTypeMeta, type RelationProfileSummary } from "@/features/relations/types";
 import { resolveApiFileUrl } from "@/shared/api";
 import { fontFamily, palette, panelShadow, radius } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 type Props = {
   relations: RelationProfileSummary[];
@@ -58,7 +58,7 @@ export default function RelationArchiveDrawer({
               ]}
             >
               {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" />
+                <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" imagePreset="avatar" />
               ) : (
                 <View style={[styles.avatarFallback, { backgroundColor: meta.soft }]}>
                   <MaterialCommunityIcons

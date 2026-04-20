@@ -1,10 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import type { GalleryAsset } from "@/features/uploads/asset-utils";
 import { palette } from "@/shared/theme";
+import { ManagedImage as Image } from "@/shared/ui/ManagedImage";
 
 type ExpoVideoThumbnailsModule = typeof import("expo-video-thumbnails");
 
@@ -106,7 +106,7 @@ export default function UploadAssetTile({
       ]}
     >
       {visualUri ? (
-        <Image source={{ uri: visualUri }} style={styles.previewImage} contentFit="cover" />
+        <Image source={{ uri: visualUri }} style={styles.previewImage} contentFit="cover" imagePreset="tile" />
       ) : (
         <View style={[styles.previewFallback, { backgroundColor: `${accent}14` }]}>
           <View style={[styles.fallbackOrb, { backgroundColor: `${accent}18` }]} />

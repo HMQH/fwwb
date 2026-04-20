@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.api.routes import admin as admin_routes
 from app.api.routes import ai_face as ai_face_routes
 from app.api.routes import auth as auth_routes
 from app.api.routes import assistant as assistant_routes
@@ -42,6 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin_routes.router)
 app.include_router(ai_face_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(assistant_routes.router)
